@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -339,6 +338,22 @@ class Selection:
 
 
 @dataclass(slots=True)
+class GameSnapshot:
+    """Undo snapshot of the mutable gameplay state."""
+
+    stock: StockPile
+    waste: WastePile
+    foundations: list[FoundationPile]
+    tableau: list[TableauPile]
+    selected: Selection | None
+    message: str
+    move_count: int
+    draw_count: int
+    start_time: float | None
+    won: bool
+
+
+@dataclass(slots=True)
 class GameState:
     """Top-level container for a single game session."""
 
@@ -352,3 +367,4 @@ class GameState:
     draw_count: int = 0
     start_time: float | None = None
     won: bool = False
+    history: list[GameSnapshot] = field(default_factory=list, repr=False)
