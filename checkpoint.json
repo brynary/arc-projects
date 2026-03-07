@@ -1,0 +1,35 @@
+{
+  "timestamp": "2026-03-07T23:40:51.692597Z",
+  "current_node": "start",
+  "completed_nodes": [
+    "start"
+  ],
+  "node_retries": {
+    "start": 1
+  },
+  "context_values": {
+    "internal.fidelity": "compact",
+    "graph.retry_target": "impl_setup",
+    "failure_class": "",
+    "internal.thread_id": null,
+    "internal.node_visit_count": 1,
+    "outcome": "success",
+    "current_node": "start",
+    "graph.rankdir": "LR",
+    "internal.run_id": "01KK5ASPF7S30N5RTYKXNTA3G7",
+    "failure_signature": "",
+    "graph.default_max_retry": "3",
+    "current.preamble": "Goal: Build a terminal-based solitaire (Klondike) game in Python\n",
+    "graph.goal": "Build a terminal-based solitaire (Klondike) game in Python",
+    "internal.retry_count.start": 1,
+    "graph.fallback_retry_target": "impl_logic",
+    "graph.model_stylesheet": "\n            *       { llm_model: claude-sonnet; llm_provider: anthropic; }\n            .hard   { llm_model: claude-opus;   llm_provider: anthropic; }\n            .verify { llm_model: claude-haiku;  llm_provider: anthropic; }\n        "
+  },
+  "logs": [],
+  "node_outcomes": {
+    "start": {
+      "status": "success"
+    }
+  },
+  "next_node_id": "expand_spec"
+}
