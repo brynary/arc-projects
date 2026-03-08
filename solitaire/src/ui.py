@@ -3,6 +3,7 @@ from __future__ import annotations
 import curses
 from dataclasses import dataclass
 import locale
+import random
 import time
 from typing import Literal
 
@@ -15,7 +16,7 @@ from game import (
     recycle_waste,
     undo,
 )
-from models import Card, CursorPosition, CursorRegion, GameState, Selection, Suit, TableauPile
+from models import Card, CursorPosition, CursorRegion, FoundationPile, GameState, Selection, Suit, TableauPile
 
 
 MIN_TERMINAL_WIDTH = 100
@@ -442,6 +443,7 @@ class SolitaireUI:
         self.pending_action: Literal["new", "quit"] | None = None
         self.use_unicode = supports_unicode_suits()
         self.colors_enabled = False
+        self.win_animation_played = False
 
         self.stdscr.keypad(True)
         try:
@@ -512,6 +514,8 @@ class SolitaireUI:
             recycle_waste(self.state)
         elif key in (ord("f"), ord("F")):
             self._move_selected_to_foundation()
+        elif key == ord("W"):
+            self._trigger_secret_win()
         elif key != -1:
             self.state.message = "Unsupported key. Press ? for help."
 
@@ -540,6 +544,15 @@ class SolitaireUI:
         if self.help_visible:
             self._draw_help_menu()
         if self.state.won and self.pending_action is None:
+            if not self.win_animation_played:
+                self.stdscr.refresh()
+                self._play_win_animation(layout)
+                self.win_animation_played = True
+                self.stdscr.erase()
+                self._draw_header(layout)
+                self._draw_top_row(layout)
+                self._draw_tableau(layout)
+                self._draw_status(layout)
             self._draw_game_over_screen()
         self.stdscr.refresh()
 
@@ -706,6 +719,88 @@ class SolitaireUI:
         """Draw a centered help overlay with key bindings and goals."""
         self._draw_centered_panel(help_menu_lines(), bold_first_line=True)
 
+    def _play_win_animation(self, layout: BoardLayout) -> None:
+        """Play the classic bouncing-cards celebration animation."""
+        # Collect cards from foundations, top (King) first
+        anim_cards: list[tuple[Card, int]] = []
+        for foundation_index in range(4):
+            pile = self.state.foundations[foundation_index]
+            for card in reversed(pile.cards):
+                anim_cards.append((card, foundation_index))
+
+        if not anim_cards:
+            return
+
+        height, width = self.stdscr.getmaxyx()
+        bottom_y = height - CARD_HEIGHT - 1
+        rng = random.Random()
+
+        # Active bouncing cards: (card, x, y, vx, vy)
+        active: list[tuple[Card, float, float, float, float]] = []
+        launch_index = 0
+        frames_since_launch = 0
+        launch_interval = 3
+
+        gravity = 0.6
+        damping = 0.75
+
+        self.stdscr.nodelay(True)
+        try:
+            while launch_index < len(anim_cards) or active:
+                # Check for keypress to skip
+                key = self.stdscr.getch()
+                if key != -1:
+                    return
+
+                # Launch a new card every launch_interval frames
+                if launch_index < len(anim_cards) and frames_since_launch >= launch_interval:
+                    card, fi = anim_cards[launch_index]
+                    start_x = float(layout.foundation_x[fi])
+                    start_y = float(TOP_CARD_Y)
+                    # Alternate direction: even foundations go left, odd go right
+                    direction = -1.0 if fi % 2 == 0 else 1.0
+                    vx = direction * (rng.uniform(1.5, 3.5))
+                    vy = rng.uniform(0.5, 2.0)
+                    active.append((card, start_x, start_y, vx, vy))
+                    launch_index += 1
+                    frames_since_launch = 0
+
+                # Update physics and draw
+                next_active: list[tuple[Card, float, float, float, float]] = []
+                for card, x, y, vx, vy in active:
+                    vy += gravity
+                    x += vx
+                    y += vy
+
+                    # Bounce off bottom
+                    if y >= bottom_y:
+                        y = float(bottom_y)
+                        vy = -abs(vy) * damping
+                        # Stop bouncing when velocity is negligible
+                        if abs(vy) < 1.0:
+                            vy = 0.0
+
+                    # Draw the card at its current position (trail effect: no erase)
+                    ix, iy = int(x), int(y)
+                    if 0 <= ix < width - CARD_WIDTH and 0 <= iy <= bottom_y:
+                        attr = self._card_attr(card, hidden=False, focused=False, selected=False)
+                        for offset, line in enumerate(
+                            card_lines(card, use_unicode=self.use_unicode)
+                        ):
+                            self._draw_text(iy + offset, ix, line, attr)
+
+                    # Keep card if still on screen horizontally
+                    if -CARD_WIDTH < x < width:
+                        next_active.append((card, x, y, vx, vy))
+
+                active = next_active
+                frames_since_launch += 1
+
+                self.stdscr.refresh()
+                curses.napms(33)
+        finally:
+            self.stdscr.nodelay(False)
+
     def _draw_game_over_screen(self) -> None:
         """Draw a centered game-over overlay when the player wins."""
         self._draw_centered_panel(game_over_lines(self.state), bold_first_line=True)
@@ -793,6 +888,35 @@ class SolitaireUI:
         if move_card_to_foundation(self.state, source) and foundation_index is not None:
             self.cursor = CursorPosition(region=CursorRegion.FOUNDATION, pile_index=foundation_index)
 
+    def _trigger_secret_win(self) -> None:
+        """Move all cards into foundations to trigger the win state."""
+        state = self.state
+        # Gather every card from stock, waste, and tableau
+        all_cards: list[Card] = []
+        all_cards.extend(state.stock.cards)
+        state.stock.cards.clear()
+        all_cards.extend(state.waste.cards)
+        state.waste.cards.clear()
+        for pile in state.tableau:
+            all_cards.extend(pile.cards)
+            pile.cards.clear()
+        # Sort into suits, then by rank ascending
+        suit_order = [Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES]
+        by_suit: dict[Suit, list[Card]] = {s: [] for s in suit_order}
+        for card in all_cards:
+            card.face_up = True
+            by_suit[card.suit].append(card)
+        for cards in by_suit.values():
+            cards.sort(key=lambda c: c.rank)
+        # Place into foundations
+        state.foundations = [
+            FoundationPile(cards=by_suit[s], suit=s) for s in suit_order
+        ]
+        state.won = True
+        state.selected = None
+        state.message = "You won!"
+        self.win_animation_played = False
+
     def _handle_pending_action(self, key: int) -> bool:
         """Handle confirmation input for new-game and quit prompts."""
         if key in (ord("y"), ord("Y"), 10, 13, curses.KEY_ENTER):
@@ -803,6 +927,7 @@ class SolitaireUI:
 
             self.state = new_game()
             self.cursor = CursorPosition(region=CursorRegion.STOCK)
+            self.win_animation_played = False
             return False
 
         if key in (27, ord("n"), ord("N")):
