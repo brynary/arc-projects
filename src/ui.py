@@ -55,6 +55,19 @@ SUIT_SYMBOLS_UNICODE = {
     Suit.SPADES: "♠",
 }
 
+HELP_MENU_LINES: tuple[str, ...] = (
+    "Help",
+    "",
+    "Goal: Move all 52 cards to the four foundations.",
+    "Arrows: move cursor between piles and tableau cards",
+    "Enter/Space: select a source or place selected card(s)",
+    "D: draw from stock      R: recycle waste into stock",
+    "F: move the top eligible card to a foundation",
+    "U: undo last action     Esc: clear the current selection",
+    "N: start a new game     Q: quit",
+    "H or ?: close this help menu",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class BoardLayout:
@@ -398,6 +411,26 @@ def _card_at_source(state: GameState, source: CursorPosition) -> Card | None:
     return None
 
 
+def help_menu_lines() -> tuple[str, ...]:
+    """Return the help menu lines shown in the in-game overlay."""
+    return HELP_MENU_LINES
+
+
+def game_over_lines(state: GameState) -> tuple[str, ...]:
+    """Return the centered game-over panel contents for a won game."""
+    return (
+        "Game Over - You Won!",
+        "",
+        f"Moves: {state.move_count}",
+        f"Draws: {state.draw_count}",
+        f"Time: {_format_elapsed_time(state.start_time)}",
+        "",
+        "Press N to start a new game.",
+        "Press U to undo the winning move.",
+        "Press Q to quit.",
+    )
+
+
 class SolitaireUI:
     """Terminal controller and renderer for the curses-based game."""
 
@@ -405,7 +438,7 @@ class SolitaireUI:
         self.stdscr = stdscr
         self.state = new_game()
         self.cursor = CursorPosition(region=CursorRegion.STOCK)
-        self.help_visible = True
+        self.help_visible = False
         self.pending_action: Literal["new", "quit"] | None = None
         self.use_unicode = supports_unicode_suits()
         self.colors_enabled = False
@@ -440,45 +473,50 @@ class SolitaireUI:
         while True:
             self.cursor = clamp_cursor(self.state, self.cursor)
             self.render()
-            key = self.stdscr.getch()
+            if self.handle_key(self.stdscr.getch()):
+                return
 
-            if self.pending_action is not None:
-                if self._handle_pending_action(key):
-                    return
-                continue
+    def handle_key(self, key: int) -> bool:
+        """Handle a single keypress. Return ``True`` when the UI should exit."""
+        if self.pending_action is not None:
+            return self._handle_pending_action(key)
 
-            if key == curses.KEY_RESIZE:
-                continue
-            if key == curses.KEY_LEFT:
-                self.cursor = move_cursor(self.state, self.cursor, "left")
-            elif key == curses.KEY_RIGHT:
-                self.cursor = move_cursor(self.state, self.cursor, "right")
-            elif key == curses.KEY_UP:
-                self.cursor = move_cursor(self.state, self.cursor, "up")
-            elif key == curses.KEY_DOWN:
-                self.cursor = move_cursor(self.state, self.cursor, "down")
-            elif key in (10, 13, curses.KEY_ENTER, ord(" ")):
-                self._activate_cursor()
-            elif key == 27:
-                self._cancel_selection()
-            elif key in (ord("d"), ord("D")):
-                draw_from_stock(self.state)
-            elif key in (ord("r"), ord("R")):
-                recycle_waste(self.state)
-            elif key in (ord("f"), ord("F")):
-                self._move_selected_to_foundation()
-            elif key in (ord("u"), ord("U")):
-                undo(self.state)
-            elif key in (ord("n"), ord("N")):
-                self.pending_action = "new"
-            elif key in (ord("q"), ord("Q")):
-                self.pending_action = "quit"
-            elif key in (ord("h"), ord("H"), ord("?")):
-                self.help_visible = not self.help_visible
-            elif key != -1:
-                self.state.message = "Unsupported key. Press ? for help."
+        if key == curses.KEY_RESIZE:
+            return False
+        if key == curses.KEY_LEFT:
+            self.cursor = move_cursor(self.state, self.cursor, "left")
+        elif key == curses.KEY_RIGHT:
+            self.cursor = move_cursor(self.state, self.cursor, "right")
+        elif key == curses.KEY_UP:
+            self.cursor = move_cursor(self.state, self.cursor, "up")
+        elif key == curses.KEY_DOWN:
+            self.cursor = move_cursor(self.state, self.cursor, "down")
+        elif key in (ord("h"), ord("H"), ord("?")):
+            self.help_visible = not self.help_visible
+        elif key in (ord("u"), ord("U")):
+            undo(self.state)
+        elif key in (ord("n"), ord("N")):
+            self.pending_action = "new"
+        elif key in (ord("q"), ord("Q")):
+            self.pending_action = "quit"
+        elif self.state.won:
+            if key != -1:
+                self.state.message = "Game over. Press N for a new game, U to undo, or Q to quit."
+        elif key in (10, 13, curses.KEY_ENTER, ord(" ")):
+            self._activate_cursor()
+        elif key == 27:
+            self._cancel_selection()
+        elif key in (ord("d"), ord("D")):
+            draw_from_stock(self.state)
+        elif key in (ord("r"), ord("R")):
+            recycle_waste(self.state)
+        elif key in (ord("f"), ord("F")):
+            self._move_selected_to_foundation()
+        elif key != -1:
+            self.state.message = "Unsupported key. Press ? for help."
 
-            self.cursor = clamp_cursor(self.state, self.cursor)
+        self.cursor = clamp_cursor(self.state, self.cursor)
+        return False
 
     def render(self) -> None:
         """Redraw the full board state."""
@@ -499,6 +537,10 @@ class SolitaireUI:
         self._draw_top_row(layout)
         self._draw_tableau(layout)
         self._draw_status(layout)
+        if self.help_visible:
+            self._draw_help_menu()
+        if self.state.won and self.pending_action is None:
+            self._draw_game_over_screen()
         self.stdscr.refresh()
 
     def _draw_header(self, layout: BoardLayout) -> None:
@@ -659,6 +701,14 @@ class SolitaireUI:
             2,
             "      N new | Q quit | H/? help | Esc cancel selection | Enter on Stock draws",
         )
+
+    def _draw_help_menu(self) -> None:
+        """Draw a centered help overlay with key bindings and goals."""
+        self._draw_centered_panel(help_menu_lines(), bold_first_line=True)
+
+    def _draw_game_over_screen(self) -> None:
+        """Draw a centered game-over overlay when the player wins."""
+        self._draw_centered_panel(game_over_lines(self.state), bold_first_line=True)
 
     def _mode_text(self) -> str:
         """Return the current mode line text."""
@@ -829,6 +879,27 @@ class SolitaireUI:
             self.stdscr.addstr(y, x, clipped, attr)
         except curses.error:
             pass
+
+    def _draw_centered_panel(self, lines: tuple[str, ...], *, bold_first_line: bool = False) -> None:
+        """Draw a simple centered bordered panel over the current board."""
+        height, width = self.stdscr.getmaxyx()
+        if height < 6 or width < 20:
+            return
+
+        inner_width = max(len(line) for line in lines)
+        panel_width = min(width - 4, inner_width + 4)
+        panel_height = len(lines) + 2
+        start_y = max(1, (height - panel_height) // 2)
+        start_x = max(2, (width - panel_width) // 2)
+
+        border = "+" + "-" * (panel_width - 2) + "+"
+        self._draw_text(start_y, start_x, border, curses.A_BOLD)
+        for index, line in enumerate(lines, start=1):
+            text = line[: panel_width - 4]
+            padded = text.ljust(panel_width - 4)
+            attr = curses.A_BOLD if bold_first_line and index == 1 else 0
+            self._draw_text(start_y + index, start_x, f"| {padded} |", attr)
+        self._draw_text(start_y + panel_height - 1, start_x, border, curses.A_BOLD)
 
     def _render_too_small(self, width: int, height: int) -> None:
         """Render a resize warning when the terminal is too small."""
