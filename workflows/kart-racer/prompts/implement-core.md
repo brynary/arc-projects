@@ -26,7 +26,7 @@ Implement Phases 1-4 from the plan (Core Engine):
 - Create `output/js/track.js` — track data format and geometry builder
 - Create `output/js/tracks/` — individual track definition files
 - Voxel-style track rendering (roads, walls, scenery) using BoxGeometry
-- Implement at least the first 3 tracks from the spec
+- Implement all 4 tracks from the spec
 - Racing line spline system (THREE.CatmullRomCurve3) for AI pathing
 - Track scenery and environment (skybox, ground plane)
 

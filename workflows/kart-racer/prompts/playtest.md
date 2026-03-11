@@ -13,7 +13,7 @@ Your job is to thoroughly playtest the game using Playwright and identify bugs, 
 
 ### Menu Flow
 - [ ] Game loads without JS errors (check console)
-- [ ] Track selection shows 8 tracks
+- [ ] Track selection shows 4 tracks
 - [ ] Character selection shows 8 characters with stats
 - [ ] Difficulty selection works (Chill/Standard/Mean)
 - [ ] Mirror Mode toggle works

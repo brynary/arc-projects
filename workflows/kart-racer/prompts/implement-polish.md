@@ -15,7 +15,7 @@ Implement Phases 7-8 from the plan (UI, Audio, Polish):
 - Create/update `output/js/minimap.js` — minimap renderer
 - Update `output/css/style.css` for menu and HUD styling
 - Pre-race flow (HTML overlays on the canvas):
-  - Track selection screen (8 tracks with name, description)
+  - Track selection screen (4 tracks with name, description)
   - Character selection (8 characters with stat bars)
   - Difficulty picker: Chill / Standard / Mean
   - Mirror Mode toggle
@@ -60,7 +60,7 @@ imagegen "voxel desert canyon skybox, red rocks, sunset" output/textures/skybox-
 imagegen "voxel neon cyberpunk city skybox, night scene, glowing lights" output/textures/skybox-neon.png
 ```
 
-Ensure remaining tracks (4-8) from the spec are fully implemented if not already.
+Ensure all 4 tracks from the spec are fully implemented.
 
 After implementation, verify:
 1. `output/index.html` loads without JS errors

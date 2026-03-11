@@ -1,7 +1,7 @@
 digraph FabroRacer {
     graph [
         goal="Build Fabro Racer — a 3D voxel kart racer using Three.js with \
-8 tracks, 8 characters, items, drifting, and CPU opponents. Output is static \
+4 tracks, 8 characters, items, drifting, and CPU opponents. Output is static \
 HTML + JS files (no Node.js, no React, no build step) served directly from disk.",
         rankdir=LR,
         default_max_retry=3,
@@ -33,7 +33,7 @@ HTML + JS files (no Node.js, no React, no build step) served directly from disk.
         review_spec [
             label="Review Spec",
             prompt="Read .workflow/spec.md critically. Check for:\n\
-- Completeness: all 8 tracks, 8 characters, 8 items, drift system, \
+- Completeness: all 4 tracks, 8 characters, 6 items, drift system, \
 AI behavior, HUD, and audio are specified\n\
 - Internal consistency: no contradictions in physics/timing values\n\
 - Testability: every requirement can be verified by playing the game\n\

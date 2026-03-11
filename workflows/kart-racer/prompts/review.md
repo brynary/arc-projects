@@ -22,9 +22,9 @@ Read `.workflow/playtest-report.md` for playtest results.
 - [ ] Off-road slowdown, reduced 50% during boost
 
 ### Content
-- [ ] 8 distinct tracks (each with unique theme/layout/hazards)
+- [ ] 4 distinct tracks (each with unique theme/layout/hazards)
 - [ ] 8 characters with stat variations (Speed/Accel/Handling/Weight)
-- [ ] 8 items with position-weighted distribution
+- [ ] 6 items with position-weighted distribution
 - [ ] Mild item effects (max 1.2s loss of control, max 0.6s steering disabled)
 
 ### AI
@@ -35,7 +35,7 @@ Read `.workflow/playtest-report.md` for playtest results.
 
 ### Race Structure
 - [ ] Single Race mode, always 3 laps
-- [ ] All tracks available immediately
+- [ ] All 4 tracks available immediately
 
 ### UI/HUD
 - [ ] Pre-race flow (track, character, difficulty, mirror, clones, start)

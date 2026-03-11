@@ -14,8 +14,8 @@ The spec must cover every aspect needed for a complete, playable game:
 - Baseline speed: fast but readable, pack racing on wide roads
 - Off-road slowdown (reduced 50% during active boosts)
 
-## Tracks (8 total, all unlocked)
-Define 8 distinct tracks with unique themes, layouts, and hazards. Each needs:
+## Tracks (4 total, all unlocked)
+Define 4 distinct tracks with unique themes, layouts, and hazards. Each needs:
 - Name, theme, visual description
 - Layout shape (loops, figure-8, etc.)
 - Track-specific hazards and shortcuts
@@ -28,8 +28,8 @@ Define 8 characters with:
 - Stats: Speed, Acceleration, Handling, Weight (each 1-5 scale)
 - AI personality/tendencies (aggressive, defensive, item-focused, etc.)
 
-## Items (8 total, one-item capacity)
-Define 8 items with:
+## Items (6 total, one-item capacity)
+Define 6 items with:
 - Name, visual appearance, effect
 - Position-weighted distribution (leaders get defensive, trailers get offensive)
 - Mild effects only: max loss of control <=1.2s, max steering disabled <=0.6s
@@ -46,10 +46,10 @@ Define 8 items with:
 - Single Race mode only (no career/progression)
 - Always 3 laps
 - 1 human vs 7 CPU
-- All 8 tracks available immediately
+- All 4 tracks available immediately
 
 ## Pre-Race Flow
-- Track selection (8 tracks with previews)
+- Track selection (4 tracks with previews)
 - Character selection (8 characters with stat display)
 - Difficulty selection: Chill / Standard / Mean
 - Optional: Mirror Mode toggle

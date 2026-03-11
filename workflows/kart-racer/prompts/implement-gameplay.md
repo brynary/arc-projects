@@ -18,7 +18,7 @@ Implement Phases 5-6 from the plan (Gameplay Systems):
   - 1st-2nd place: mostly defensive items (shield, banana)
   - 3rd-5th place: balanced mix
   - 6th-8th place: mostly offensive items (homing missile, lightning)
-- Implement all 8 items from the spec with their effects
+- Implement all 6 items from the spec with their effects
 - Item use animation and particle effects
 - Respawn item boxes after a delay
 - Max loss of control: 1.2s, max steering disabled: 0.6s

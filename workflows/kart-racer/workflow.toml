@@ -1,5 +1,5 @@
 version = 1
-goal = "Build Fabro Racer — a 3D voxel kart racer using Three.js with 8 tracks, 8 characters, items, drifting, and CPU opponents. Output is static HTML + JS files."
+goal = "Build Fabro Racer — a 3D voxel kart racer using Three.js with 4 tracks, 8 characters, items, drifting, and CPU opponents. Output is static HTML + JS files."
 graph = "workflow.dot"
 
 [llm]
@@ -12,13 +12,13 @@ provider = "daytona"
 OPENAI_API_KEY = "${env.OPENAI_API_KEY}"
 
 [sandbox.daytona]
-auto_stop_interval = 30
+auto_stop_interval = 60
 
 [sandbox.daytona.labels]
 project = "kart-racer"
 
 [sandbox.daytona.snapshot]
-name = "kart-racer-v1"
+name = "kart-racer-v2"
 cpu = 4
 memory = 8
 disk = 10
@@ -31,5 +31,5 @@ include = ["output/**"]
 type = "sandbox"
 command = ["npx", "@playwright/mcp@latest", "--port", "3100", "--headless", "--browser", "chromium"]
 port = 3100
-startup_timeout_secs = 60
-tool_timeout_secs = 120
+startup_timeout_secs = 120
+tool_timeout_secs = 180

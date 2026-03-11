@@ -44,7 +44,7 @@ output/
 ### Phase 2: Track System
 - Track data format (waypoints, road width, wall positions, off-road zones)
 - Voxel-style track renderer using Three.js BoxGeometry
-- At least 3 tracks fully defined, remaining 5 as variations
+- All 4 tracks fully defined
 - Racing line spline system (CatmullRomCurve3) for AI pathing
 - Track scenery and environment (sky, ground plane)
 
@@ -64,7 +64,7 @@ output/
 
 ### Phase 5: Items
 - Item box placement on tracks
-- 8 items with effects
+- 6 items with effects
 - Position-weighted distribution
 - Item UI slot
 
