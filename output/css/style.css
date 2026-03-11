@@ -1,165 +1,119 @@
-/* Reset */
+/* ═══════════════ Reset ═══════════════ */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: #fff; }
 
-/* Font */
-body {
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  color: #fff;
-}
-
-/* Game container */
-#game-container {
-  position: relative;
-  width: 100vw;
-  height: 100vh;
-}
+/* ═══════════════ Game Container ═══════════════ */
+#game-container { position: relative; width: 100vw; height: 100vh; }
 
 #game-canvas {
-  position: absolute;
-  top: 0; left: 0;
+  position: absolute; top: 0; left: 0;
   width: 100%; height: 100%;
-  z-index: 0;
-  display: block;
+  z-index: 0; display: block;
 }
 
-/* HUD Layer */
+/* ═══════════════ HUD Layer ═══════════════ */
 #hud-layer {
-  position: absolute;
-  top: 0; left: 0;
+  position: absolute; top: 0; left: 0;
   width: 100%; height: 100%;
-  z-index: 10;
-  pointer-events: none;
+  z-index: 10; pointer-events: none;
 }
-
-#hud-layer > * {
-  pointer-events: auto;
-}
+#hud-layer > * { pointer-events: auto; }
 
 #hud-position {
-  position: absolute;
-  top: 20px; left: 24px;
-  font-size: 48px;
-  font-weight: 900;
-  text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+  position: absolute; top: 20px; left: 24px;
+  font-size: 48px; font-weight: 900;
+  text-shadow: 2px 2px 4px rgba(0,0,0,0.7), 0 0 12px rgba(0,0,0,0.4);
   letter-spacing: -1px;
 }
 
 #hud-lap {
-  position: absolute;
-  top: 76px; left: 24px;
-  font-size: 22px;
-  font-weight: 600;
+  position: absolute; top: 76px; left: 24px;
+  font-size: 22px; font-weight: 600;
   text-shadow: 1px 1px 3px rgba(0,0,0,0.7);
 }
 
 #hud-timer {
-  position: absolute;
-  top: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 28px;
-  font-weight: 700;
+  position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+  font-size: 28px; font-weight: 700;
   font-variant-numeric: tabular-nums;
   text-shadow: 1px 1px 3px rgba(0,0,0,0.7);
   font-family: 'Courier New', monospace;
 }
 
 #hud-speed-bar {
-  position: absolute;
-  bottom: 30px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 240px;
-  height: 12px;
+  position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+  width: 240px; height: 12px;
   background: rgba(255,255,255,0.15);
-  border-radius: 6px;
-  overflow: hidden;
+  border-radius: 6px; overflow: hidden;
   border: 1px solid rgba(255,255,255,0.3);
 }
-
 #hud-speed-fill {
-  height: 100%;
-  width: 0%;
+  height: 100%; width: 0%;
   background: linear-gradient(90deg, #4ade80, #facc15, #ef4444);
   border-radius: 6px;
   transition: width 0.05s linear;
 }
 
 #hud-item {
-  position: absolute;
-  top: 20px; right: 24px;
+  position: absolute; top: 20px; right: 24px;
   width: 64px; height: 64px;
   background: rgba(0,0,0,0.5);
   border: 2px solid rgba(255,255,255,0.3);
   border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   font-size: 32px;
+  transition: border-color 0.2s;
 }
 
 #hud-drift-tier {
-  position: absolute;
-  bottom: 60px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 18px;
-  font-weight: 700;
+  position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%);
+  font-size: 18px; font-weight: 700;
   text-shadow: 0 0 10px currentColor;
-  opacity: 0;
-  transition: opacity 0.15s;
+  opacity: 0; transition: opacity 0.15s;
 }
 
 #hud-boost-indicator {
-  position: absolute;
-  bottom: 50px;
-  right: 24px;
-  font-size: 14px;
-  font-weight: 700;
-  color: #facc15;
-  text-shadow: 0 0 8px #facc15;
+  position: absolute; bottom: 50px; right: 24px;
+  font-size: 14px; font-weight: 700;
+  color: #facc15; text-shadow: 0 0 8px #facc15;
   opacity: 0;
 }
 
-/* Minimap */
+/* ═══════════════ Minimap ═══════════════ */
 #minimap-canvas {
-  position: absolute;
-  bottom: 16px;
-  right: 16px;
-  width: 180px;
-  height: 180px;
+  position: absolute; top: 16px; right: 96px;
+  width: 140px; height: 140px;
   z-index: 10;
   background: rgba(0, 0, 0, 0.5);
   border-radius: 8px;
   border: 1px solid rgba(255,255,255,0.2);
 }
 
-/* Menu Layer */
+/* ═══════════════ Menu Layer ═══════════════ */
 #menu-layer {
-  position: absolute;
-  top: 0; left: 0;
+  position: absolute; top: 0; left: 0;
   width: 100%; height: 100%;
   z-index: 20;
   display: none;
-  align-items: center;
-  justify-content: center;
+  align-items: center; justify-content: center;
   flex-direction: column;
+  background: rgba(0,0,0,0.4);
 }
 
-/* Common menu classes */
+/* ═══════════════ Menu Panel ═══════════════ */
 .menu-panel {
-  background: rgba(0, 0, 0, 0.85);
-  border: 2px solid rgba(255,255,255,0.15);
+  background: rgba(10, 10, 30, 0.92);
+  border: 2px solid rgba(255,255,255,0.12);
   border-radius: 16px;
-  padding: 32px 48px;
+  padding: 32px 40px;
   text-align: center;
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 40px rgba(0,0,0,0.6);
 }
 
 .menu-title {
-  font-size: 48px;
-  font-weight: 900;
+  font-size: 48px; font-weight: 900;
   margin-bottom: 24px;
   background: linear-gradient(135deg, #f97316, #eab308, #22c55e, #3b82f6, #a855f7);
   -webkit-background-clip: text;
@@ -168,66 +122,62 @@ body {
 }
 
 .menu-button {
-  display: block;
-  width: 200px;
-  margin: 8px auto;
-  padding: 12px 24px;
-  font-size: 18px;
-  font-weight: 700;
-  background: rgba(255,255,255,0.1);
+  display: block; width: 200px;
+  margin: 8px auto; padding: 12px 24px;
+  font-size: 18px; font-weight: 700;
+  background: rgba(255,255,255,0.08);
   border: 2px solid rgba(255,255,255,0.2);
-  border-radius: 8px;
-  color: #fff;
-  cursor: pointer;
-  transition: all 0.15s;
+  border-radius: 8px; color: #fff;
+  cursor: pointer; transition: all 0.15s;
+  font-family: inherit;
 }
-
 .menu-button:hover, .menu-button.selected {
-  background: rgba(255,255,255,0.25);
+  background: rgba(255,255,255,0.18);
   border-color: #facc15;
-  transform: scale(1.05);
+  transform: scale(1.04);
 }
+.menu-button:active { transform: scale(0.98); }
 
-/* Countdown overlay */
+/* ═══════════════ Countdown ═══════════════ */
 #countdown-overlay {
-  position: absolute;
-  top: 50%; left: 50%;
+  position: absolute; top: 50%; left: 50%;
   transform: translate(-50%, -50%);
-  font-size: 120px;
-  font-weight: 900;
-  text-shadow: 4px 4px 8px rgba(0,0,0,0.8);
-  z-index: 15;
-  opacity: 0;
-  transition: opacity 0.2s, transform 0.3s;
+  font-size: 120px; font-weight: 900;
+  text-shadow: 4px 4px 8px rgba(0,0,0,0.8), 0 0 40px rgba(255,255,255,0.3);
+  z-index: 15; opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
 }
 
-/* Final lap banner */
+/* ═══════════════ Final Lap Banner ═══════════════ */
 .final-lap-banner {
-  position: absolute;
-  top: 50%; left: 50%;
+  position: absolute; top: 50%; left: 50%;
   transform: translate(-50%, -50%);
-  font-size: 64px;
-  font-weight: 900;
+  font-size: 64px; font-weight: 900;
   color: #ef4444;
   text-shadow: 0 0 20px #ef4444, 2px 2px 4px rgba(0,0,0,0.8);
   z-index: 15;
-  animation: finalLapPulse 1.5s ease-out forwards;
+  animation: finalLapPulse 1.8s ease-out forwards;
+  pointer-events: none;
 }
-
 @keyframes finalLapPulse {
   0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
-  20% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
-  80% { transform: translate(-50%, -50%) scale(1.0); opacity: 1; }
+  15% { transform: translate(-50%, -50%) scale(1.15); opacity: 1; }
+  70% { transform: translate(-50%, -50%) scale(1.0); opacity: 1; }
   100% { transform: translate(-50%, -50%) scale(1.0); opacity: 0; }
 }
 
-/* Debug info */
+/* ═══════════════ Debug Info ═══════════════ */
 #debug-info {
-  position: absolute;
-  top: 4px; right: 200px;
+  position: absolute; bottom: 4px; left: 8px;
   font-size: 11px;
-  color: rgba(255,255,255,0.5);
+  color: rgba(255,255,255,0.4);
   font-family: monospace;
-  z-index: 30;
-  pointer-events: none;
+  z-index: 30; pointer-events: none;
+}
+
+/* ═══════════════ Pulse Animation ═══════════════ */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
