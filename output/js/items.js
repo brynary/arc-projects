@@ -470,6 +470,14 @@ export function updateProjectiles(allKarts, dt) {
 }
 
 function checkStarCollisions(allKarts) {
+  // Short-circuit: skip the O(n²) loop when no kart has a star active.
+  // Stars are rare, so this early-out fires on the vast majority of frames.
+  let anyStarActive = false;
+  for (let i = 0; i < allKarts.length; i++) {
+    if (allKarts[i].starActive) { anyStarActive = true; break; }
+  }
+  if (!anyStarActive) return;
+
   for (let i = 0; i < allKarts.length; i++) {
     const kartA = allKarts[i];
     if (!kartA.starActive) continue;

@@ -223,6 +223,7 @@ function visualUpdate(dt) {
 
 /* ═══════════════════════  HUD  ═══════════════════════ */
 function buildHUD() {
+  minimapCtx = null; // invalidate cached context — canvas element is about to be replaced
   hudEl.innerHTML = `
     <div class="hud-position" id="hp"></div>
     <div class="hud-lap" id="hl"></div>
@@ -301,6 +302,7 @@ function showFinalLapBanner() {
 /* ═══════════════════════  MINIMAP  ═══════════════════════ */
 let minimapFrame = 0;
 let minimapCache = null; // { pts, minX, maxX, minZ, maxZ, sc, offX, offZ, charColors, tx, tz }
+let minimapCtx = null;   // cached 2D context — avoids per-frame getContext lookup
 
 function buildMinimapCache(trackData) {
   if (!trackData?.centerCurve) { minimapCache = null; return; }
@@ -325,9 +327,16 @@ function buildMinimapCache(trackData) {
 function updateMinimap() {
   minimapFrame++;
   if (minimapFrame % 2 !== 0) return;  // 30 Hz
-  const cv = document.getElementById('minimap-cv');
-  if (!cv || !minimapCache) return;
-  const ctx = cv.getContext('2d');
+  if (!minimapCache) return;
+
+  // Cache the 2D context on first use (avoid repeated getContext calls)
+  if (!minimapCtx) {
+    const cv = document.getElementById('minimap-cv');
+    if (!cv) return;
+    minimapCtx = cv.getContext('2d');
+    if (!minimapCtx) return;
+  }
+  const ctx = minimapCtx;
   const W = 130, H = 130;
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = 'rgba(0,0,0,0.25)';

@@ -69,6 +69,8 @@ export function spawnParticle(x, y, z, vx, vy, vz, color, life = 0.3, size = 0.3
  */
 export function updateParticles(dt) {
   if (!instancedMesh) return;
+  // Skip all work when no particles are alive
+  if (activeParticles.length === 0) return;
 
   // Iterate forward; use swap-and-pop for O(1) removal instead of splice
   let i = 0;

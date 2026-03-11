@@ -213,44 +213,61 @@ export function updateAI(kart, trackData, allKarts, dt) {
 /**
  * Return a virtual input object that mirrors the player input interface.
  * updateKart() and updateDrift() consume this each frame.
+ *
+ * Uses a pre-allocated _AIInput object per kart (created lazily and stored
+ * on kart.ai._input) instead of constructing a new closure object every
+ * frame. With 7 AI karts at 60fps, this avoids ~420 object allocations/sec.
  */
 export function getAIInput(kart) {
   const ai = kart.ai;
   if (!ai) return _nullInput;
 
-  // Snapshot current desires into a frozen input for this frame
-  const accel      = ai.wantsAccel;
-  const brake      = ai.wantsBrake;
-  const left       = ai.wantsSteerLeft;
-  const right      = ai.wantsSteerRight;
-  const drift      = ai.wantsDrift;
-  const useItem    = ai.wantsUseItem;
-  const driftStart = ai.wantsDriftStart;
-  const driftRel   = ai.wantsDriftRelease;
+  // Lazily create the reusable input object
+  let inp = ai._input;
+  if (!inp) {
+    inp = ai._input = new _AIInput();
+  }
 
-  return {
-    isDown(action) {
-      switch (action) {
-        case 'accelerate': return accel;
-        case 'brake':      return brake;
-        case 'steerLeft':  return left;
-        case 'steerRight': return right;
-        case 'drift':      return drift;
-        case 'useItem':    return useItem;
-        default:           return false;
-      }
-    },
-    justPressed(action) {
-      if (action === 'drift') return driftStart;
-      if (action === 'useItem') return useItem;
-      return false;
-    },
-    justReleased(action) {
-      if (action === 'drift') return driftRel;
-      return false;
-    },
-  };
+  // Snapshot current desires
+  inp._accel      = ai.wantsAccel;
+  inp._brake      = ai.wantsBrake;
+  inp._left       = ai.wantsSteerLeft;
+  inp._right      = ai.wantsSteerRight;
+  inp._drift      = ai.wantsDrift;
+  inp._useItem    = ai.wantsUseItem;
+  inp._driftStart = ai.wantsDriftStart;
+  inp._driftRel   = ai.wantsDriftRelease;
+
+  return inp;
 }
+
+/** Pre-allocatable AI input object — avoids per-frame closure creation. */
+function _AIInput() {
+  this._accel = false; this._brake = false;
+  this._left = false;  this._right = false;
+  this._drift = false; this._useItem = false;
+  this._driftStart = false; this._driftRel = false;
+}
+_AIInput.prototype.isDown = function(action) {
+  switch (action) {
+    case 'accelerate': return this._accel;
+    case 'brake':      return this._brake;
+    case 'steerLeft':  return this._left;
+    case 'steerRight': return this._right;
+    case 'drift':      return this._drift;
+    case 'useItem':    return this._useItem;
+    default:           return false;
+  }
+};
+_AIInput.prototype.justPressed = function(action) {
+  if (action === 'drift') return this._driftStart;
+  if (action === 'useItem') return this._useItem;
+  return false;
+};
+_AIInput.prototype.justReleased = function(action) {
+  if (action === 'drift') return this._driftRel;
+  return false;
+};
 
 /**
  * Set the global difficulty and update all AI karts in the provided array.
@@ -272,12 +289,14 @@ const _nullInput = {
 function updateSteering(kart, trackData) {
   const ai = kart.ai;
 
-  // 1. Find where we are on the center curve (Y-aware for multi-level tracks)
-  const nearest = findNearestSplinePoint(
+  // 1. Reuse the nearest spline point cached by updatePhysics (computed once
+  //    per kart per frame) instead of recomputing with 80 test points.
+  //    Falls back to a fresh computation only if cache is missing.
+  const nearest = kart._cachedNearest || findNearestSplinePoint(
     trackData.centerCurve,
     kart.position.x,
     kart.position.z,
-    80,
+    50,
     kart.position.y,
   );
   ai.targetT = nearest.t;
