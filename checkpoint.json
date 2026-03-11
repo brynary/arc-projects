@@ -1,11 +1,13 @@
 {
-  "timestamp": "2026-03-11T06:13:14.268271Z",
-  "current_node": "expand_spec",
+  "timestamp": "2026-03-11T06:19:18.919742Z",
+  "current_node": "review_spec",
   "completed_nodes": [
     "start",
-    "expand_spec"
+    "expand_spec",
+    "review_spec"
   ],
   "node_retries": {
+    "review_spec": 1,
     "start": 1,
     "expand_spec": 1
   },
@@ -14,21 +16,23 @@
     "graph.model_stylesheet": "\n            *         { llm_model: claude-opus-4-6;  llm_provider: anthropic; }\n            .gpt      { llm_model: gpt-5.4;         llm_provider: openai;    }\n            .review-b { llm_model: gpt-5.4;         llm_provider: openai;    }\n        ",
     "graph.default_max_retry": "3",
     "failure_signature": "",
-    "thread.spec-expansion.current_node": "expand_spec",
-    "last_response": "The complete spec has been written to `.workflow/spec.md`. Here's a summary of what it covers:\n\n**18 sections, ~2,700 lines** covering every aspect of Fabro Racer:\n\n| Section | Key Decisions |\n|---|--",
+    "thread.spec-expansion.current_node": "review_spec",
+    "last_response": "Everything looks clean and consistent. Let me do a final summary of what was done:\n\n---\n\n## Summary of changes\n\n### spec-review.md (new file)\nDocumented all findings organized into 4 categories:\n- **3",
+    "response.review_spec": "Everything looks clean and consistent. Let me do a final summary of what was done:\n\n---\n\n## Summary of changes\n\n### spec-review.md (new file)\nDocumented all findings organized into 4 categories:\n- **3 internal contradictions** (Tusk stats, base speed formula mismatch, boost stacking)\n- **5 completeness gaps** (respawn behavior, item box respawn timing, mirror mode, start boost wording, position calculation)\n- **12 missing edge cases** (race ties, homing pigeon from 1st, simultaneous item effects, global kill plane, shortcut checkpoints, off-road drift, pause availability, celebration for low finishes, clone selection, fizz bomb interactions, projectile-to-projectile, post-finish behavior)\n- **4 minor clarifications** (turn rate formula, rubber banding context, hazard timing, timer format)\n\n### spec.md (updated)\nAll improvements applied directly:\n\n1. **Tusk's stats fixed**: Raised from 12 to 14 budget (3/3/3/5), removed the confusing self-correction block, Immovable trait is now explicitly a free flavor trait\n2. **Base top speed**: Changed from hardcoded \"90\" to reference the formula with range 81–105\n3. **Acceleration**: Changed from \"~1.8s\" to \"~1.3–2.4s depending on character\"\n4. **Turn rate**: Aligned prose with stat formula, added 1.5× multiplier at low speed\n5. **Boost stacking rule**: Single clear rule — higher multiplier wins, then longer duration\n6. **Start boost**: Rewritten to \"press at GO\" instead of the confusing \"hold and release\"\n7. **Respawn rules**: Full spec (facing, speed, invincibility, items, time penalty)\n8. **Item box respawn**: 8s cooldown with 0.5s fade-in\n9. **Position calculation**: Precise formula using checkpoint index + fractional distance\n10. **Race finish ties**: Tiebreaker defined (further past line, then racer index)\n11. **Celebration camera**: Only for 1st–3rd place finishes\n12. **Homing Pigeon from 1st**: Flies as unguided projectile\n13. **Item effect stacking**: New hit replaces existing debuff\n14. **Item projectile interactions**: Clarified all projectile-to-projectile and projectile-to-world rules\n15. **Global kill plane**: Y = -50 on all tracks\n16. **Shortcut/checkpoint rule**: All shortcuts must pass through every checkpoint\n17. **Off-road drift**: Explicitly allowed, penalty applies to drift top speed\n18. **Pause scope**: Available during COUNTDOWN, RACING, and RACE_FINISH\n19. **Mirror mode**: Implementation details (negate X components)\n20. **Allow Clones**: Explicit selection algorithm\n21. **Rubber banding context**: \"~10–12% of average track length\"\n22. **Timer format**: M:SS.s for HUD, M:SS.sss for results\n23. **Hazard timing**: Clarified as global time, not per-lap\n24. **Post-finish karts**: Become intangible, drive at 80% speed\n25. **Fizz Bomb**: Clarified passes through scenery",
     "internal.run_id": "01KKDR2CQRA94BXYBPPRHCDPPG",
-    "last_stage": "expand_spec",
+    "last_stage": "review_spec",
     "internal.node_visit_count": 1,
     "graph.label": "Review",
     "outcome": "success",
+    "internal.retry_count.review_spec": 1,
     "graph.rankdir": "LR",
     "graph.goal": "Build Fabro Racer — a 3D voxel kart racer using Three.js with 4 tracks, 8 characters, items, drifting, and CPU opponents. Output is static HTML + JS files.",
     "failure_class": "",
     "internal.retry_count.expand_spec": 1,
     "response.expand_spec": "The complete spec has been written to `.workflow/spec.md`. Here's a summary of what it covers:\n\n**18 sections, ~2,700 lines** covering every aspect of Fabro Racer:\n\n| Section | Key Decisions |\n|---|---|\n| **Architecture** | Pure static files, Three.js r162 via import map, ES modules in `js/`, no build step |\n| **Driving Model** | Base 90 u/s top speed, 3-tier drift-boost (0.7s/1.1s/1.5s), analog-feel steering ramp, start boost |\n| **4 Tracks** | Sunset Bay (beginner oval), Mossy Canyon (winding figure-S), Neon Grid (angular cyber circuit), Volcano Peak (ascending spiral) — each with hazards, shortcuts, AI splines, item box placements |\n| **8 Characters** | Bolt, Pebble, Flare, Mochi, Tusk, Zippy, Cinder, Rex — 14-point stat budget, unique AI personalities |\n| **6 Items** | Fizz Bomb, Oil Slick, Shield Bubble, Turbo Pepper, Homing Pigeon, Shortcut Star — position-weighted distribution, max 1.2s control loss |\n| **AI** | 3 difficulty tiers (Chill/Standard/Mean), spline following with variation lanes, drift zone awareness, rubber banding |\n| **HUD** | HTML/CSS overlay — position, laps, timer, minimap, item slot, drift tier indicator |\n| **Audio** | Fully procedural via Web Audio API — no audio files needed. Per-track music loops, 15+ distinct SFX |\n| **Menus** | Title → Track Select → Character Select → Difficulty → Countdown → Race → Results |\n| **Visual Style** | Flat-color voxels, per-track palettes, 7 particle effect types, fog-based draw distance |\n| **Implementation Priority** | 4-phase plan: Core Loop → Track & AI → Content → Polish |",
     "internal.thread_id": "spec-expansion",
-    "current.preamble": "Goal: Build Fabro Racer — a 3D voxel kart racer using Three.js with 4 tracks, 8 characters, items, drifting, and CPU opponents. Output is static HTML + JS files.\n",
-    "current_node": "expand_spec",
+    "current.preamble": "Goal: Build Fabro Racer — a 3D voxel kart racer using Three.js with 4 tracks, 8 characters, items, drifting, and CPU opponents. Output is static HTML + JS files.\n\n## Completed stages\n- **expand_spec**: success\n  - Model: claude-opus-4-6, 27.9k tokens in / 16.3k out\n  - Files: /home/daytona/workspace/.workflow/spec.md\n",
+    "current_node": "review_spec",
     "internal.retry_count.start": 1,
     "internal.fidelity": "compact",
     "graph.fallback_retry_target": "plan_fanout"
@@ -60,10 +64,34 @@
         "/home/daytona/workspace/.workflow/spec.md"
       ],
       "duration_ms": 388035
+    },
+    "review_spec": {
+      "status": "success",
+      "context_updates": {
+        "response.review_spec": "Everything looks clean and consistent. Let me do a final summary of what was done:\n\n---\n\n## Summary of changes\n\n### spec-review.md (new file)\nDocumented all findings organized into 4 categories:\n- **3 internal contradictions** (Tusk stats, base speed formula mismatch, boost stacking)\n- **5 completeness gaps** (respawn behavior, item box respawn timing, mirror mode, start boost wording, position calculation)\n- **12 missing edge cases** (race ties, homing pigeon from 1st, simultaneous item effects, global kill plane, shortcut checkpoints, off-road drift, pause availability, celebration for low finishes, clone selection, fizz bomb interactions, projectile-to-projectile, post-finish behavior)\n- **4 minor clarifications** (turn rate formula, rubber banding context, hazard timing, timer format)\n\n### spec.md (updated)\nAll improvements applied directly:\n\n1. **Tusk's stats fixed**: Raised from 12 to 14 budget (3/3/3/5), removed the confusing self-correction block, Immovable trait is now explicitly a free flavor trait\n2. **Base top speed**: Changed from hardcoded \"90\" to reference the formula with range 81–105\n3. **Acceleration**: Changed from \"~1.8s\" to \"~1.3–2.4s depending on character\"\n4. **Turn rate**: Aligned prose with stat formula, added 1.5× multiplier at low speed\n5. **Boost stacking rule**: Single clear rule — higher multiplier wins, then longer duration\n6. **Start boost**: Rewritten to \"press at GO\" instead of the confusing \"hold and release\"\n7. **Respawn rules**: Full spec (facing, speed, invincibility, items, time penalty)\n8. **Item box respawn**: 8s cooldown with 0.5s fade-in\n9. **Position calculation**: Precise formula using checkpoint index + fractional distance\n10. **Race finish ties**: Tiebreaker defined (further past line, then racer index)\n11. **Celebration camera**: Only for 1st–3rd place finishes\n12. **Homing Pigeon from 1st**: Flies as unguided projectile\n13. **Item effect stacking**: New hit replaces existing debuff\n14. **Item projectile interactions**: Clarified all projectile-to-projectile and projectile-to-world rules\n15. **Global kill plane**: Y = -50 on all tracks\n16. **Shortcut/checkpoint rule**: All shortcuts must pass through every checkpoint\n17. **Off-road drift**: Explicitly allowed, penalty applies to drift top speed\n18. **Pause scope**: Available during COUNTDOWN, RACING, and RACE_FINISH\n19. **Mirror mode**: Implementation details (negate X components)\n20. **Allow Clones**: Explicit selection algorithm\n21. **Rubber banding context**: \"~10–12% of average track length\"\n22. **Timer format**: M:SS.s for HUD, M:SS.sss for results\n23. **Hazard timing**: Clarified as global time, not per-lap\n24. **Post-finish karts**: Become intangible, drive at 80% speed\n25. **Fizz Bomb**: Clarified passes through scenery",
+        "last_stage": "review_spec",
+        "last_response": "Everything looks clean and consistent. Let me do a final summary of what was done:\n\n---\n\n## Summary of changes\n\n### spec-review.md (new file)\nDocumented all findings organized into 4 categories:\n- **3"
+      },
+      "notes": "Stage completed: review_spec",
+      "usage": {
+        "model": "claude-opus-4-6",
+        "input_tokens": 44077,
+        "output_tokens": 13956,
+        "cache_read_tokens": 1018091,
+        "cache_write_tokens": 39939,
+        "reasoning_tokens": 1825,
+        "cost": 1.707855
+      },
+      "files_touched": [
+        "/home/daytona/workspace/.workflow/spec-review.md",
+        "/home/daytona/workspace/.workflow/spec.md"
+      ],
+      "duration_ms": 362721
     }
   },
-  "next_node_id": "review_spec",
+  "next_node_id": "plan_fanout",
   "node_visits": {
+    "review_spec": 1,
     "expand_spec": 1,
     "start": 1
   }
