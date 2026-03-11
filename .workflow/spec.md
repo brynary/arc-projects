@@ -79,6 +79,7 @@ fabro-racer/
 ### 2.4 Performance Targets
 
 - **60 FPS** on mid-range hardware (integrated GPU laptops from 2020+)
+- **Window resize:** listen for `resize` events; update renderer size, camera aspect ratio, and HUD layout responsively
 - Fixed timestep physics at 60Hz, interpolated rendering
 - Maximum **8 karts** on screen (1 human + 7 CPU)
 - LOD: voxel models are low-poly by nature (~200-500 faces per kart)
@@ -125,7 +126,7 @@ All values are in **track units per second** (1 track unit ≈ 1 meter).
 | Braking decel | 35 u/s² | Sharper than accel |
 | Coast decel | 5 u/s² | When no gas pressed |
 | Reverse max | 10 u/s | Slow reverse |
-| Off-road multiplier | 0.55× max speed | Reduced to 0.775× during active boost |
+| Off-road multiplier | 0.55× max speed | Only Turbo Mushroom reduces penalty (to 0.775×); other boosts add speed but off-road cap still applies |
 
 Character stat modifiers (per stat point 1-5):
 - **Speed**: ±1.5 u/s per point from baseline (stat 3 = baseline)
@@ -169,7 +170,7 @@ Drifting is the **core skill mechanic**. It lets players take corners faster whi
 - Releasing the drift button ends the drift and triggers the charged boost
 - Boost is additive to current speed (can exceed max speed)
 - Boost decays linearly over its duration
-- Multiple boosts **do not stack** — a new boost replaces the current one if stronger
+- Multiple boosts **do not stack** — a new boost replaces the current one if the new boost's initial power > the current boost's remaining power at the moment of comparison. Boost remaining power = `boostPower * (boostTimer / boostDurationOriginal)`.
 
 **Cancellation:**
 - Hitting a wall cancels drift with no boost
@@ -180,7 +181,7 @@ Drifting is the **core skill mechanic**. It lets players take corners faster whi
 
 Certain track sections have boost pads:
 - Grant a 1.0s boost at +8 u/s
-- Override current boost only if stronger
+- Override current boost only if new boost's initial power > current boost's remaining power
 - Visual: glowing chevrons on the road
 
 ### 3.6 Collision Model
@@ -193,13 +194,43 @@ Certain track sections have boost pads:
 
 **Kart-Kart:**
 - Simplified sphere-sphere collision
-- Bump impulse based on relative weight stats
+- Bump impulse formula: `baseBumpForce * (otherWeight / selfWeight)` where `baseBumpForce = 8 u/s`
+- Example: weight-5 kart bumping weight-1 kart → lighter kart receives 40 u/s lateral impulse; heavier kart receives 1.6 u/s
 - Heavier kart barely deflected; lighter kart pushed aside
 - No spin-outs from kart bumps — just trajectory change and minor speed loss (5-10%)
 
 **Kart-Hazard:**
 - Track-specific hazards cause brief slowdown or trajectory wobble (see Track specs)
 - Maximum loss of control from any hazard: 1.2s
+- Hazard effects do not stack: if a new effect triggers while one is active, the one with the longer remaining duration takes priority
+- Item hit effects always override active hazard effects
+
+### 3.7 Slipstream
+
+All karts (player and CPU) benefit from slipstream:
+- Following within **8m** directly behind another kart grants a passive **+2 u/s** speed bonus
+- The slipstream zone is a cone behind the leading kart (30° half-angle, 8m length)
+- Bonus applies instantly when entering the zone and removes instantly when leaving
+- Visual: subtle wind-line particles when in a slipstream
+
+### 3.8 Post-Hit Invincibility
+
+After being hit by any item:
+- The kart gains **2.0s of invincibility**
+- During invincibility, the kart cannot be hit by items or triggered by track hazards
+- Visual: kart blinks (alpha alternates 0.3/1.0 at 8Hz)
+- Does not protect against wall or kart-kart collisions
+
+### 3.9 Respawn
+
+When a kart goes out of bounds (off a ledge, too far from track):
+- Kart fades out over **0.3s**
+- Teleported to the last-crossed checkpoint, centered on road, facing forward
+- Speed set to **50% of max speed** (rolling start)
+- Kart fades in over **0.3s**
+- **1.5s of invincibility** granted after respawn
+- Total time cost: approximately **2.0s**
+- Applied consistently to all fall/out-of-bounds scenarios across all tracks
 
 ---
 
@@ -415,6 +446,8 @@ Stats are on a 1-5 scale. Total stat points per character: 14 (balanced budget).
 
 **AI personality:** Technical — follows the racing line precisely, drifts optimally, rarely uses items aggressively. Defensive item usage.
 
+**AI parameters:** `{ aggression: 0.1, item_hold: 0.8, shortcut_prob: 0.2, drift_compliance: 0.95, blocking: 0.2, recovery_priority: 0.5 }`
+
 ---
 
 ### 5.2 Grumble
@@ -425,10 +458,12 @@ Stats are on a 1-5 scale. Total stat points per character: 14 (balanced budget).
 |------|-------|
 | Speed | 4 |
 | Acceleration | 2 |
-| Handling | 2 |
+| Handling | 3 |
 | Weight | 5 |
 
 **AI personality:** Aggressive — rams other karts, takes wide intimidating lines, uses offensive items immediately. Does not brake for hazards. Prioritizes blocking.
+
+**AI parameters:** `{ aggression: 0.9, item_hold: 0.1, shortcut_prob: 0.4, drift_compliance: 0.6, blocking: 0.9, recovery_priority: 0.3 }`
 
 ---
 
@@ -440,10 +475,12 @@ Stats are on a 1-5 scale. Total stat points per character: 14 (balanced budget).
 |------|-------|
 | Speed | 5 |
 | Acceleration | 3 |
-| Handling | 3 |
-| Weight | 1 |
+| Handling | 4 |
+| Weight | 2 |
 
 **AI personality:** Speed demon — takes the fastest line, excellent at straights, avoids confrontation. Uses items opportunistically. Gets bumped easily due to low weight.
+
+**AI parameters:** `{ aggression: 0.2, item_hold: 0.4, shortcut_prob: 0.6, drift_compliance: 0.85, blocking: 0.1, recovery_priority: 0.7 }`
 
 ---
 
@@ -460,6 +497,8 @@ Stats are on a 1-5 scale. Total stat points per character: 14 (balanced budget).
 
 **AI personality:** Item-focused — targets item boxes religiously, uses items at optimal moments, holds defensive items when in front. Excellent recovery from setbacks.
 
+**AI parameters:** `{ aggression: 0.5, item_hold: 0.7, shortcut_prob: 0.3, drift_compliance: 0.75, blocking: 0.4, recovery_priority: 0.9 }`
+
 ---
 
 ### 5.5 Tundra
@@ -474,6 +513,8 @@ Stats are on a 1-5 scale. Total stat points per character: 14 (balanced budget).
 | Weight | 5 |
 
 **AI personality:** Defensive — blocks passing lanes, holds items behind as shields, takes inside lines on corners. Hard to push off the road.
+
+**AI parameters:** `{ aggression: 0.3, item_hold: 0.9, shortcut_prob: 0.1, drift_compliance: 0.8, blocking: 0.8, recovery_priority: 0.6 }`
 
 ---
 
@@ -490,6 +531,8 @@ Stats are on a 1-5 scale. Total stat points per character: 14 (balanced budget).
 
 **AI personality:** Balanced-aggressive — good all-around driving, takes calculated risks on shortcuts. Uses items with decent timing. A strong mid-pack competitor.
 
+**AI parameters:** `{ aggression: 0.6, item_hold: 0.5, shortcut_prob: 0.7, drift_compliance: 0.85, blocking: 0.5, recovery_priority: 0.6 }`
+
 ---
 
 ### 5.7 Mossworth
@@ -500,10 +543,12 @@ Stats are on a 1-5 scale. Total stat points per character: 14 (balanced budget).
 |------|-------|
 | Speed | 2 |
 | Acceleration | 3 |
-| Handling | 4 |
+| Handling | 5 |
 | Weight | 4 |
 
 **AI personality:** Steady — rarely makes mistakes, avoids hazards religiously, consistent lap times. Doesn't take shortcuts. Uses items conservatively. The "always finishes 3rd-5th" racer.
+
+**AI parameters:** `{ aggression: 0.1, item_hold: 0.6, shortcut_prob: 0.0, drift_compliance: 0.9, blocking: 0.3, recovery_priority: 0.8 }`
 
 ---
 
@@ -514,17 +559,23 @@ Stats are on a 1-5 scale. Total stat points per character: 14 (balanced budget).
 | Stat | Value |
 |------|-------|
 | Speed | 4 |
-| Acceleration | 3 |
-| Handling | 2 |
+| Acceleration | 4 |
+| Handling | 3 |
 | Weight | 3 |
 
 **AI personality:** Wildcard — erratic line choices, sometimes brilliant shortcuts, sometimes crashes. Uses items immediately upon getting them. Unpredictable and exciting to race against.
+
+**AI parameters:** `{ aggression: 0.7, item_hold: 0.0, shortcut_prob: 0.8, drift_compliance: 0.5, blocking: 0.2, recovery_priority: 0.4 }`
 
 ---
 
 ## 6. Items
 
 One-item capacity — you carry at most one item at a time. Picking up an item box while holding an item discards the current item silently. Items are obtained from **item boxes** placed on the track (glowing "?" cubes that rotate and bob).
+
+**During roulette:** While the item roulette animation is active (1.5s), the kart cannot collect additional item boxes — it passes through them without triggering pickup. The boxes remain for other racers.
+
+**Item-item interactions:** Items do not interact with each other. Projectiles (Spark Orb, Homing Pigeon) pass through ground items (Banana Peel, Oil Slick). Only kart colliders trigger item effects.
 
 ### 6.1 Position-Weighted Distribution
 
@@ -583,6 +634,8 @@ The item you receive depends on your race position. The item roulette visual spi
 **Effect on hit:** Target kart gets bonked — 0.6s of upward hop (kart goes slightly airborne, no steering), then lands and resumes at 75% speed. Comedic "bonk" sound.
 
 **Counterplay:** Can be blocked by a held Banana Peel. Can also hit other karts in its path (first hit consumes it). If the target is too far ahead (>150m), the pigeon gives up and falls to the ground.
+
+**From 1st place:** If used by the race leader, the pigeon flies forward along the track as a straight-line projectile (like Spark Orb but at 38 u/s) and hits the first kart it encounters.
 
 ---
 
@@ -670,10 +723,11 @@ IF holding an item:
 ### 7.5 Pack Racing Behavior
 
 To ensure exciting pack racing:
-- AI karts have **slipstream zones** behind them (following within 8m behind a kart gives +2 u/s passive boost)
+- **Slipstream** is a universal mechanic (see Section 3.7) — all karts benefit equally
 - AIs will draft intentionally when behind another kart
 - Road width is generous (14-18m) to allow 2-3 karts side by side
 - AI will not intentionally ram the player (only Grumble personality takes wide blocking lines)
+- **Catch-up assist** (Chill and Standard only): karts below the median race position get +1 u/s per position below median. This is invisible. Disabled on Mean difficulty.
 
 ---
 
@@ -696,26 +750,32 @@ To ensure exciting pack racing:
    d. Press "Start Race"
 
 2. Race loading:
-   a. Build track geometry (if not cached)
-   b. Place karts on starting grid (2×4 staggered grid)
-   c. Show track title card (2s)
+   a. Show loading screen: track name, "Building [Track Name]..." text, simple progress bar
+   b. Build track geometry (if not cached)
+   c. Place karts on starting grid (2×4 staggered grid)
+   d. Show track title card (2s)
 
 3. Countdown:
    a. Camera sweeps from aerial overview to behind player kart (2s)
    b. Traffic light countdown: Red → Red → Red → GREEN (3 beats, 1s each)
    c. GO! text flash
    d. All karts may accelerate on green
+   e. Item boxes are inactive during countdown; they activate on GO!
+   f. Pause (Escape) is disabled during countdown
 
 4. Racing:
    a. 3 laps of racing
    b. "Final Lap!" banner on entering lap 3
    c. Music intensifies on final lap (tempo +10%, add high-pass filter)
+   d. If player makes no forward checkpoint progress for 5s, show "Wrong Way!" warning. At 15s, show respawn prompt.
 
 5. Finish:
    a. Player crosses finish line → celebratory animation
-   b. All 8 final positions shown on results screen
-   c. Race time + best lap displayed
-   d. Options: Restart / New Race (back to track select) / Quit (title screen)
+   b. CPU karts that haven't finished are given 15s after the player finishes; after timeout, remaining positions assigned by current race progress
+   c. If all CPU karts finish before the player, the race continues with no time limit until the player finishes
+   d. All 8 final positions shown on results screen
+   e. Race time + best lap displayed
+   f. Options: Restart / New Race (back to track select) / Quit (title screen)
 ```
 
 ### 8.3 Starting Grid
@@ -736,7 +796,8 @@ Player always starts in **6th position** — close enough to contend immediately
 - Karts must pass through checkpoints in order
 - Passing the final checkpoint + crossing the start/finish line = lap complete
 - Missing a checkpoint (going backwards or skipping) = checkpoint not counted
-- Race position is determined by: `(laps completed × 1000) + (last checkpoint index × 10) + (distance to next checkpoint)`
+- Race position is determined by: `(laps completed × 10000) + (last checkpoint index × 100) + (fractional distance to next checkpoint × 99)` where fractional distance is normalized to [0, 1) (proportion of segment completed)
+- **Tie-breaking:** If two karts cross the finish line in the same physics tick, the kart with the higher `raceProgress` value wins. If still identical, the kart that was ahead at the previous checkpoint wins.
 
 ---
 
@@ -758,7 +819,7 @@ Player always starts in **6th position** — close enough to contend immediately
   - Track name
   - Small 2D minimap of the layout
   - Theme icon and short description ("Coastal Resort", "Mushroom Cavern", etc.)
-  - Difficulty indicator (stars: ★☆☆, ★★☆, ★★★, ★★★)
+  - Difficulty indicator (stars: ★☆☆☆, ★★☆☆, ★★★☆, ★★★★)
 - Selected track card is enlarged with a highlight border
 - Background shows a 3D preview of the selected track (slow camera orbit)
 - Navigation: Left/Right arrows to browse, Enter to confirm, Escape to go back
@@ -853,7 +914,7 @@ All HUD elements are HTML/CSS overlays on top of the Three.js canvas, NOT render
 
 ### 10.3 Pause Menu
 
-Triggered by **Escape** key during race. Game loop pauses (physics freeze).
+Triggered by **Escape** key during RACING state only (not during countdown or finish). Game loop pauses (physics freeze).
 
 - Semi-transparent dark overlay
 - Menu options (vertical list):
@@ -865,7 +926,7 @@ Triggered by **Escape** key during race. Game loop pauses (physics freeze).
 
 ### 10.4 Results Screen
 
-Shown after all karts finish (or 15s after human finishes, remaining positions filled by current order).
+Shown after all karts finish (or 15s after human finishes, remaining CPU positions filled by current race progress order).
 
 - **Finish Position** displayed large: "You finished 2nd!"
 - **Podium display:** top 3 characters shown with their voxel models
@@ -1042,7 +1103,7 @@ Minimal post-processing to maintain performance:
 - **Key down/up events** update the state map
 - Digital input only (no analog — full steer or no steer, compensated by turn rate scaling with speed)
 - **Simultaneous keys** supported (e.g., W + A + Space for accelerate + steer left + drift)
-- **Menu navigation:** Arrow keys + Enter + Escape
+- **Menu navigation:** Arrow keys + Enter + Escape. In grid layouts (character select), Up/Down move between rows, Left/Right move between columns. In lists (pause menu), Up/Down navigate.
 
 ### 14.3 Look Behind
 
@@ -1273,6 +1334,11 @@ const camera = new THREE.PerspectiveCamera(75, aspect, 0.1, 300);
   // Hit state
   hitTimer: number,        // Remaining hit-stun time
   hitType: string | null,  // Type of hit effect active
+  invincibleTimer: number, // Remaining invincibility time (0 = vulnerable)
+
+  // Respawn state
+  respawning: boolean,     // True during fade-out/fade-in respawn sequence
+  respawnTimer: number,    // Remaining respawn animation time
 
   // Character data (reference)
   character: CharacterDef,
