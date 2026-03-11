@@ -1,3 +1,5 @@
+When spawning subagents, set max_turns to 40.
+
 Use the /develop-web-game skill and the `imagegen` CLI tool.
 
 Read `.workflow/plan_final.md` and `.workflow/spec.md`.
