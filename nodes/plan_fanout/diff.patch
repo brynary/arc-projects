@@ -1,0 +1,2008 @@
+diff --git a/.workflow/plan_gpt.md b/.workflow/plan_gpt.md
+new file mode 100644
+index 0000000..71f26c5
+--- /dev/null
++++ b/.workflow/plan_gpt.md
+@@ -0,0 +1,895 @@
++# Fabro Racer — Implementation Plan
++
++## Guiding Principles
++
++1. **Static-only output.** Every deliverable lives under `output/`. No npm, no bundler, no TypeScript, no React. Vanilla JS ES modules, one HTML entry point, Three.js via CDN import map.
++2. **Incremental runnability.** After each phase the game must load and show visible progress. No "build everything, test at the end."
++3. **Spec fidelity.** Every number, formula, and edge case from `spec.md` (as amended by `spec-review.md`) is authoritative. Do not invent new mechanics; do not omit specified ones.
++4. **Performance budget.** Target 60 fps on a 2020 integrated-GPU laptop. Use instanced meshes, merged static geometry, object-pooled particles, and fog-based culling.
++
++---
++
++## File Structure
++
++```
++output/
++├── index.html                  # Single entry point. Import map for Three.js CDN.
++├── css/
++│   └── style.css               # Menu, HUD, and overlay styling
++├── js/
++│   ├── main.js                 # Bootstrap, game-state machine, requestAnimationFrame loop
++│   ├── renderer.js             # Three.js scene, camera, lighting, fog, resize handler
++│   ├── input.js                # Keyboard input manager (keydown/keyup → polled state map)
++│   ├── physics.js              # Arcade kart physics, wall/kart/hazard collision, off-road detection
++│   ├── drift.js                # Drift state machine, tier charging, boost application & decay
++│   ├── kart.js                 # Kart entity class: model builder, per-frame update, stats
++│   ├── characters.js           # 8 character definitions (stats, colors, voxel blueprints)
++│   ├── voxel.js                # Voxel model builder utilities (box merging, palette)
++│   ├── track.js                # Track geometry builder: spline → ribbon mesh, walls, off-road, scenery
++│   ├── tracks/
++│   │   ├── sunsetBay.js        # Track 1 definition object
++│   │   ├── mossyCanyon.js      # Track 2 definition object
++│   │   ├── neonGrid.js         # Track 3 definition object
++│   │   └── volcanoPeak.js      # Track 4 definition object
++│   ├── checkpoint.js           # Checkpoint system: lap validation, position calc, respawn
++│   ├── items.js                # Item definitions, pickup logic, projectile updates, effect application
++│   ├── itemBox.js              # Item box placement, respawn timer, collection
++│   ├── ai.js                   # CPU driver: spline following, drift logic, item usage, rubber banding
++│   ├── hud.js                  # HTML/CSS HUD overlay: position, lap, timer, item slot, boost bar
++│   ├── minimap.js              # 2D minimap on a small <canvas> element
++│   ├── menu.js                 # All menu screens: title, track select, char select, difficulty, pause, results
++│   ├── countdown.js            # Pre-race countdown sequence + start-boost window
++│   ├── camera.js               # Chase cam, drift shift, look-behind, countdown flyover, finish orbit
++│   ├── particles.js            # Object-pooled particle system (drift sparks, boost flame, dust, etc.)
++│   ├── audio.js                # Web Audio API: procedural SFX, per-track music loops, volume control
++│   └── utils.js                # Math helpers, easing, constants, lerp, clamp, angle ops
++├── textures/                   # Generated via `imagegen` CLI in Phase 8
++│   ├── road.png
++│   ├── grass.png
++│   ├── sand.png
++│   ├── lava.png
++│   ├── grid.png
++│   ├── snow.png
++│   ├── rock.png
++│   ├── water.png
++│   ├── cobble.png
++│   ├── ash.png
++│   ├── itembox.png
++│   └── skybox/
++│       ├── sunset.png
++│       ├── canyon.png
++│       ├── neon.png
++│       └── volcano.png
++```
++
++Total: **1 HTML file, 1 CSS file, ~22 JS modules, ~15 texture PNGs.** All static, no build step.
++
++---
++
++## Phase 1 — Scaffold, Scene & Input
++
++**Goal:** A running 60 fps loop with an empty Three.js scene and working keyboard input.
++
++### 1.1 `index.html`
++
++- `<!DOCTYPE html>`, charset, viewport meta, `<title>Fabro Racer</title>`.
++- `<script type="importmap">` pointing to Three.js r162 on unpkg:
++  ```json
++  {
++    "imports": {
++      "three": "https://unpkg.com/three@0.162.0/build/three.module.js",
++      "three/addons/": "https://unpkg.com/three@0.162.0/examples/jsm/"
++    }
++  }
++  ```
++- `<link rel="stylesheet" href="css/style.css">`.
++- `<canvas id="game-canvas">` (full viewport).
++- `<div id="hud-overlay">` (positioned over canvas, hidden initially).
++- `<div id="menu-overlay">` (positioned over canvas, starts visible with title screen).
++- `<script type="module" src="js/main.js">`.
++
++### 1.2 `css/style.css`
++
++- `html, body` — margin 0, overflow hidden, background black, font-family sans-serif.
++- `#game-canvas` — position fixed, inset 0, width/height 100%, z-index 0.
++- `#hud-overlay` — position fixed, inset 0, pointer-events none, z-index 10.
++- `#menu-overlay` — position fixed, inset 0, z-index 20, flex centering.
++- Placeholder classes for HUD elements and menu screens.
++
++### 1.3 `js/main.js`
++
++- Import `renderer.js`, `input.js`.
++- Game state enum: `TITLE, TRACK_SELECT, CHARACTER_SELECT, DIFFICULTY_SELECT, COUNTDOWN, RACING, PAUSED, RACE_FINISH, RESULTS`.
++- `init()` → create renderer, start loop.
++- `gameLoop(timestamp)`:
++  - Compute delta time (`dt`), cap at 1/30 s to prevent spiral.
++  - Fixed physics timestep accumulator (1/60 s steps, max 3 steps per frame).
++  - Call `update(fixedDt)` per physics step, `render()` once per frame.
++  - `requestAnimationFrame(gameLoop)`.
++
++### 1.4 `js/renderer.js`
++
++- `createRenderer(canvas)` → `THREE.WebGLRenderer` with antialias, attach to `#game-canvas`, `setPixelRatio(Math.min(devicePixelRatio, 2))`.
++- `THREE.Scene` with default fog (will be replaced per-track).
++- `THREE.PerspectiveCamera` (fov 65, aspect from window, near 0.5, far 800).
++- `THREE.AmbientLight(0xffffff, 0.5)` + `THREE.DirectionalLight(0xffffff, 0.8)`.
++- Enable shadow map (basic, single cascade, 1024 × 1024).
++- Window resize handler → update camera aspect + renderer size.
++- Export `scene`, `camera`, `renderer`, `lights`, `setFog(color, near, far)`, `setSunDirection(vec3)`.
++
++### 1.5 `js/input.js`
++
++- `const keys = {}` — map of currently pressed keys.
++- `window.addEventListener('keydown', e => keys[e.code] = true)`.
++- `window.addEventListener('keyup', e => keys[e.code] = false)`.
++- Helper functions:
++  - `isDown(action)` → checks primary + alt bindings (e.g. `accelerate` → `KeyW || ArrowUp`).
++  - `justPressed(action)` → true only on the frame the key transitions from up to down (track previous state, diff each frame).
++- Action map matching spec § 10: accelerate, brake, steerLeft, steerRight, drift, useItem, lookBehind, pause.
++- `resetInput()` — clear all state (for menus and state transitions).
++- Export `{ isDown, justPressed, update: pollFrame, resetInput }`.
++
++### 1.6 `js/utils.js`
++
++- `lerp(a, b, t)`, `clamp(v, min, max)`, `angleLerp(a, b, t)` (shortest path).
++- `smoothDamp(current, target, velocity, smoothTime, dt)` — for camera.
++- `remap(value, inMin, inMax, outMin, outMax)`.
++- `randomRange(min, max)`, `randomInt(min, max)`.
++- `TWO_PI`, `HALF_PI`, `DEG2RAD`, `RAD2DEG`.
++
++**Verification:** Open `output/index.html` in a browser → black canvas, no errors in console, `main.js` logs "Fabro Racer initialized" and frame count.
++
++---
++
++## Phase 2 — Track System
++
++**Goal:** A fully rendered Sunset Bay track visible in the 3D scene with road surface, walls, scenery, and off-road areas. Camera orbits the track.
++
++### 2.1 `js/track.js` — Track Builder
++
++The track builder takes a track definition object and produces Three.js geometry:
++
++1. **Spline creation**: Build a `THREE.CatmullRomCurve3` from the `centerSpline` control points. Set `closed = true` (all tracks are loops).
++2. **Ribbon mesh generation**:
++   - Sample the spline every 2 units of arc length → get position, tangent, up (world Y rotated by banking angle).
++   - At each sample, compute left/right edge points using width + perpendicular vector.
++   - Build a `THREE.BufferGeometry` strip connecting adjacent cross-sections (triangle strip).
++   - UV-map so textures tile along track length and across width.
++   - Material: `THREE.MeshLambertMaterial({ map: roadTexture })`. Road texture loaded from `textures/road.png` (or track-specific texture).
++3. **Walls**: For each track edge, extrude a thin box wall (height 3 units, thickness 0.5 units) along the edge polyline. Merge into a single `BufferGeometry` per side. Gap walls where the spec defines openings (e.g., shortcut entrances, lava river guard-rail gaps).
++4. **Off-road ground plane**: Large flat planes extending beyond track edges with per-track off-road texture (grass, sand, ash). Use `THREE.PlaneGeometry` segments aligned to track regions.
++5. **Scenery placement**: Iterate `scenery[]` array, call voxel builder functions from `voxel.js` to create each object type, position/rotate, add to scene. Use `THREE.InstancedMesh` for repeated objects (palm trees, mushrooms, etc.).
++6. **Collision data export**: Build arrays of wall segments (pairs of 2D points projected onto the XZ plane) and off-road region polygons for physics queries.
++7. **AI splines**: Build `CatmullRomCurve3` for `racingLine` and each `variationSpline`. Export sampled point arrays for AI lookups.
++8. **Checkpoints**: Store checkpoint planes (position + normal + width) for lap/position tracking.
++9. **Item box positions**: Store for `itemBox.js` to instantiate.
++10. **Environment setup**: Call `renderer.setFog()`, `renderer.setSunDirection()`, set ambient/sun colors from the track's `environment` object. Create sky: either a gradient sphere (vertex-colored `THREE.SphereGeometry` inside-out) or a large sky hemisphere colored per-track.
++
++Exports: `buildTrack(trackDef)` → returns `{ mesh, collisionWalls, offRoadRegions, checkpoints, itemBoxPositions, aiSplines, startPositions, driftZones }`.
++
++### 2.2 Track Definitions (`js/tracks/*.js`)
++
++Each file exports a `trackDefinition` object following the schema from spec § 14. Key data per track:
++
++#### `sunsetBay.js` (Track 1)
++- ~30 centerSpline control points forming a gentle oval.
++- Width: 28 units (constant).
++- 6 layout segments per spec § 3.
++- Hazards: 2 crab crossing positions (animated voxel crabs on timers), sand patches (off-road polygons on curve insides).
++- Shortcut: narrow dirt path polygon flagged as off-road near cliffside curve.
++- Item boxes: 3 rows (4+3+4 = 11 boxes).
++- ~12 checkpoints.
++- Scenery: palm trees (×~20), market stalls (×4), pier posts (×8), beach umbrellas (×6), seagulls (×4).
++- Environment: orange-purple sky gradient, warm fog.
++
++#### `mossyCanyon.js` (Track 2)
++- ~40 control points for the winding figure-S with elevation changes (Y values vary).
++- Width: 22 units (widens to 30 at mushroom grove).
++- 9 layout segments. Includes the downhill corkscrew (270° turn with elevation drop and banking).
++- Hazards: falling rocks (timed cycle), river splash puddles, mushroom bounce pads.
++- Shortcut: cave tunnel bypassing uphill corridor.
++- Item boxes: 3 rows (4+3+4 = 11 boxes).
++- ~16 checkpoints.
++- Scenery: pine trees, boulders, mushrooms, bridges, waterfall (animated blue voxels).
++- Environment: grey-green overcast, dappled fog.
++
++#### `neonGrid.js` (Track 3)
++- ~35 control points. Angular layout with sharp 90° turns.
++- Width: 24 units.
++- 8 layout segments. Boost ramp with gap (road surface absent over a span, fall-through detection).
++- Hazards: floating data blocks (moving cubes), grid gap, EMP strips.
++- Shortcut: stepping-stone platforms near neon pyramid.
++- Item boxes: 3 rows (4+3+4 = 11 boxes).
++- ~14 checkpoints.
++- Scenery: neon skyscrapers (tall emissive boxes), floating data cubes, central pyramid (emissive).
++- Environment: black sky, purple grid, no fog or very distant fog.
++
++#### `volcanoPeak.js` (Track 4)
++- ~50 control points. Ascending spiral + plunge down. Significant Y variation.
++- Width: 22 units (narrows to 16 on summit ridge).
++- 9 layout segments. Ridge section with drop-offs, lava river hazard.
++- Hazards: lava geysers (timed 4s cycle), falling lava rocks, lava river (instant respawn).
++- Shortcut: hidden ramp between hairpins.
++- Item boxes: 3 rows (4+3+4 = 11 boxes).
++- ~20 checkpoints.
++- Scenery: stone huts, lava lanterns, rock formations, smoke plumes.
++- Environment: dark red sky, ash particles, orange-tinted fog.
++
++### 2.3 `js/voxel.js` — Voxel Model Utilities
++
++- `buildVoxelModel(blueprint)` → creates a `THREE.Group` from a blueprint (array of `{ x, y, z, color }` voxel entries). Each voxel is a unit cube `BoxGeometry(1,1,1)` with `MeshLambertMaterial({ color })`.
++- **Optimization**: Merge all voxels of the same color into one `BufferGeometry` using `THREE.BufferGeometryUtils.mergeGeometries()`. This reduces draw calls from potentially hundreds to ~5-8 per model.
++- Predefined scenery builder functions: `buildPalmTree()`, `buildMushroom()`, `buildBoulder()`, `buildNeonSkyscraper(height)`, `buildStoneHut()`, etc. Each returns a `THREE.Group`.
++- `buildKartModel(characterDef)` → builds the kart + seated character from the character's voxel blueprint.
++
++**Verification:** Load Sunset Bay track → camera orbits above showing the full track ribbon, walls, scenery, sky. Performance: < 16ms/frame.
++
++---
++
++## Phase 3 — Kart & Physics
++
++**Goal:** A drivable kart on Sunset Bay with acceleration, braking, steering, wall collision, off-road detection, and a chase camera.
++
++### 3.1 `js/kart.js` — Kart Entity
++
++Class `Kart`:
++- **Constructor**: Takes `characterDef`, `isPlayer` flag, `startPosition`, `startRotation`.
++- **Properties**:
++  - `position: THREE.Vector3` — world position.
++  - `rotation: number` — Y-axis heading in radians.
++  - `speed: number` — current forward speed (units/s).
++  - `velocity: THREE.Vector3` — derived from speed + heading.
++  - `steerAngle: number` — current effective steering angle (ramped, not instant).
++  - `onGround: boolean` — whether the kart is on a surface.
++  - `surfaceType: string` — 'road', 'offroad', 'lava', 'void', etc.
++  - `currentCheckpoint: number` — last passed checkpoint index.
++  - `lap: number` — current lap (0-indexed during race, displayed as 1-indexed).
++  - `raceProgress: number` — for position calculation.
++  - `finished: boolean` — crossed finish on lap 3.
++  - `heldItem: object|null` — current item.
++  - `activeEffects: object` — currently active item debuffs, invincibility, etc.
++  - `driftState: object` — managed by `drift.js`.
++  - `boostState: object` — managed by `drift.js`.
++  - Character stats derived from `characterDef`: `topSpeed`, `accel`, `turnRate`, `weight`, `knockbackFactor`.
++- **Stats formulas** (from spec § 4):
++  - `topSpeed = 75 + (characterDef.speed * 6)`.
++  - `accel = 30 + (characterDef.acceleration * 8)`.
++  - `turnRate = 45 + (characterDef.handling * 6)` (deg/s at top speed).
++  - `knockbackFactor = 6 - characterDef.weight`.
++- **Methods**:
++  - `update(dt, input, trackData)` — core per-frame update (called from physics).
++  - `applyEffect(effectType, params)` — apply item hit effects.
++  - `respawn(checkpointPos, checkpointDir)` — teleport to checkpoint with 1.5s freeze.
++  - `getCollisionSphere()` → `{ center, radius: 3 }`.
++
++### 3.2 `js/physics.js` — Arcade Physics
++
++Per-frame update for each kart:
++
++1. **Acceleration/braking**:
++   - If accelerate pressed and speed < topSpeed: `speed += accel * dt`.
++   - If brake pressed: `speed -= (accel * 3) * dt` (braking decel = 3× accel).
++   - If neither pressed: `speed -= (accel * 0.5) * dt` (coasting decel).
++   - Reverse: if speed ≤ 0 and brake pressed, accelerate backward up to `topSpeed * 0.3`.
++   - Clamp speed to `[-topSpeed * 0.3, effectiveTopSpeed]`.
++
++2. **Off-road penalty**:
++   - If `surfaceType === 'offroad'`: `effectiveTopSpeed = topSpeed * 0.6` (40% reduction).
++   - If boosting while off-road: `effectiveTopSpeed = topSpeed * 0.8` (only 20% reduction).
++   - Speed clamped to effective top speed (gradual decel, not instant).
++
++3. **Steering**:
++   - Ramp steering input: if steer key held, `steerAngle` increases toward full turn rate over 0.1s. If released, ramp down over 0.08s.
++   - Speed-dependent turn rate: at top speed use stat turn rate; at < 30% top speed use 1.5× turn rate. Interpolate linearly between.
++   - Counter-steering bonus: if steering direction opposes current angular velocity, 20% faster turn rate.
++   - Apply: `rotation += steerAngle * dt`.
++
++4. **Position update**:
++   - `velocity.x = Math.sin(rotation) * speed; velocity.z = Math.cos(rotation) * speed`.
++   - `position.add(velocity.clone().multiplyScalar(dt))`.
++
++5. **Gravity / vertical**:
++   - If not on ground: `verticalVelocity -= 30 * dt; position.y += verticalVelocity * dt`.
++   - Raycast down from kart position to detect ground surface. Snap to surface if within threshold. Determine `surfaceType` from the hit material/metadata.
++   - Kill plane at Y = -50 → trigger respawn.
++
++6. **Wall collision**:
++   - Check kart bounding sphere against nearby wall segments (spatial sector lookup).
++   - Glancing hit (angle < 30°): deflect along wall, `speed *= 0.85`.
++   - Hard hit (angle ≥ 30°): bounce back, `speed *= 0.65`, 0.3s reduced control.
++
++7. **Kart-kart collision**:
++   - Sphere-sphere check (radius 3) between all kart pairs.
++   - Separate overlapping karts. Push proportional to weight difference.
++   - Speed loss: 5% for sideswipe, 20% for head-on (based on dot product of velocity vectors).
++
++8. **Surface detection**:
++   - Use track's off-road region polygons (2D point-in-polygon test on XZ plane).
++   - Alternative: check if kart position is within road ribbon bounds (distance from center spline < half-width at that spline parameter).
++
++### 3.3 `js/camera.js` — Camera System
++
++- **Chase camera** (default during RACING):
++  - Desired position: kart position + offset `(0, 8, -18)` rotated by kart heading.
++  - Actual position: lerp toward desired at factor `0.08 * 60 * dt` (frame-rate independent).
++  - Look-at target: kart position + `(0, 2, 0)`, lerped at factor `0.12 * 60 * dt`.
++- **Drift shift**: When drifting left, shift camera 3 units right (and vice versa). Lerp factor `0.05 * 60 * dt`.
++- **Look-behind**: When held, offset flips to `(0, 6, 12)` in front. Lerp factor `0.2 * 60 * dt`.
++- **Countdown flyover**: Animate camera along a spline above the track over 3s, then transition to chase cam.
++- **Finish orbit**: On race completion, orbit camera around kart at radius 15, height 8, one revolution over 3s.
++
++### 3.4 `js/characters.js`
++
++Define all 8 characters as an array of objects:
++
++```javascript
++export const characters = [
++  { id: 'bolt',   name: 'Bolt',   speed: 5, acceleration: 2, handling: 3, weight: 4, colors: { body: 0xFFDD00, accent: 0x222222 }, personality: 'frontrunner' },
++  { id: 'pebble', name: 'Pebble', speed: 2, acceleration: 4, handling: 5, weight: 3, colors: { body: 0x888888, accent: 0x44AA44 }, personality: 'technical' },
++  { id: 'flare',  name: 'Flare',  speed: 4, acceleration: 4, handling: 2, weight: 4, colors: { body: 0xFF4400, accent: 0xFF8800 }, personality: 'aggressive' },
++  { id: 'mochi',  name: 'Mochi',  speed: 3, acceleration: 5, handling: 4, weight: 2, colors: { body: 0xFFAACC, accent: 0xFFFFFF }, personality: 'itemFocused' },
++  { id: 'tusk',   name: 'Tusk',   speed: 3, acceleration: 3, handling: 3, weight: 5, colors: { body: 0x7799AA, accent: 0xBBBBBB }, personality: 'bully', trait: 'immovable' },
++  { id: 'zippy',  name: 'Zippy',  speed: 3, acceleration: 5, handling: 5, weight: 1, colors: { body: 0x22CC44, accent: 0xFFFF00 }, personality: 'evasive' },
++  { id: 'cinder', name: 'Cinder', speed: 4, acceleration: 3, handling: 4, weight: 3, colors: { body: 0x6622AA, accent: 0xFF44FF }, personality: 'opportunist' },
++  { id: 'rex',    name: 'Rex',    speed: 5, acceleration: 3, handling: 2, weight: 4, colors: { body: 0xFF6600, accent: 0xFFAA00 }, personality: 'charger' },
++];
++```
++
++Each character also has a `voxelBlueprint` (array of voxel positions and colors for the seated figure + kart). These are procedurally defined — small hand-crafted voxel art (~40-60 voxels per character model, ~30-40 for the kart body).
++
++**Verification:** Drive a kart around Sunset Bay with WASD. Walls deflect. Off-road slows. Camera follows smoothly. Console shows speed/position.
++
++---
++
++## Phase 4 — Drift & Boost
++
++**Goal:** Full drift-boost mechanic with 3 tiers, visual spark effects, and boost decay.
++
++### 4.1 `js/drift.js` — Drift State Machine
++
++States: `NONE → DRIFTING → BOOSTING`.
++
++**Drift initiation** (per frame check):
++- Conditions: drift key held AND steer left/right AND speed > topSpeed × 0.4.
++- On initiate: record drift direction (left or right). Set `driftTimer = 0`. Snap kart visual angle 15°–30° into the turn.
++- Set initial drift arc based on weight stat: heavier = wider arc.
++
++**During drift**:
++- `driftTimer += dt`.
++- Player steering modulates drift angle: steer inward → tighter, steer outward → wider.
++- Speed loss from turning: 5% (vs. 15% for sharp normal turns at equivalent angle).
++- **Tier calculation**:
++  - Timer 0–0.5s: no tier (release = no boost).
++  - 0.5s–1.2s: Tier 1 (blue sparks).
++  - 1.2s–2.2s: Tier 2 (orange sparks).
++  - 2.2s+: Tier 3 (pink/purple sparks).
++- Emit spark particles at rear wheel positions (color matches tier).
++- Play drift crackle audio. On tier transition: play chime + change spark color.
++
++**Drift release**:
++- Release drift key OR release steering → end drift.
++- If `driftTimer >= 0.5`: fire boost of current tier.
++- If `driftTimer < 0.5`: no boost. Kart straightens out.
++
++**Boost application**:
++- Boost params by tier:
++  - T1: duration 0.7s, multiplier 1.25×.
++  - T2: duration 1.1s, multiplier 1.35×.
++  - T3: duration 1.5s, multiplier 1.45×.
++- `effectiveTopSpeed *= boostMultiplier`. Speed may exceed normal top speed during boost.
++- Boost decays linearly: multiplier goes from full to 1.0× over the duration.
++- **Boost conflict rule**: new boost vs. active boost → higher multiplier wins. If equal, longer remaining duration wins. Loser discarded.
++- Emit boost flame particles from exhaust.
++- During boost, off-road penalty is halved (40% → 20%).
++
++### 4.2 Particles for drift/boost (`js/particles.js` — partial)
++
++- Object pool of ~200 cube particles. Each particle: position, velocity, life, maxLife, color, size.
++- Per frame: update position += velocity × dt, life -= dt, remove expired.
++- `emitDriftSparks(position, direction, color)` — burst of 3–5 tiny cubes per frame during drift.
++- `emitBoostFlame(position, direction)` — stream of orange/blue cubes from exhaust.
++- `emitDust(position)` — brown cubes when off-road.
++- Particle mesh: single `THREE.InstancedMesh` with `BoxGeometry(0.2, 0.2, 0.2)`. Update instance matrices each frame.
++
++**Verification:** Hold Shift + A/D while driving → kart drifts, sparks appear, tier transitions visible (color change). Release → boost fires, kart surges forward. All 3 tiers achievable.
++
++---
++
++## Phase 5 — Checkpoint, Lap & Position System
++
++**Goal:** Lap counting, position tracking for all 8 karts, respawn system.
++
++### 5.1 `js/checkpoint.js`
++
++- **Checkpoint detection**: Each checkpoint is a plane (position + normal + width). Each frame, for each kart, check if the kart has crossed the plane since the last frame (dot product of displacement with normal changes sign, and kart is within width/2 of the checkpoint center).
++- **Lap validation**: Track `lastCheckpointIndex` per kart. Must pass checkpoints in order (0, 1, 2, ... N-1, then 0 again for next lap). Crossing checkpoint 0 after checkpoint N-1 increments lap count.
++- **Lap counter**: 3 laps. On crossing checkpoint 0 with lap == 3 → kart finished.
++- **Position calculation**: `raceProgress = (lap * totalCheckpoints) + lastCheckpointIndex + fractionToNext`. Sort all 8 karts by raceProgress descending → positions 1st through 8th.
++  - Fraction: project kart position onto spline segment between last and next checkpoint, normalize to 0–1.
++- **Finish detection**: When player finishes → transition to RACE_FINISH state. Track finish times for all karts.
++- **Finish ties**: If same frame, compare fractional track distance past finish line. If still tied, lower racer index wins.
++- **Respawn**: Called when kart falls below Y=-50 or enters lava/void. Teleport to last checkpoint pos + 2 units up, face track forward, speed = 0, 1.5s freeze, 2s invincibility (translucent blinking), retain held item.
++
++**Verification:** Drive around Sunset Bay → lap counter increments on crossing start/finish after passing all checkpoints. Position updates as AI karts (placeholder stationary) are passed. Fall off edge → respawn at last checkpoint.
++
++---
++
++## Phase 6 — AI Opponents
++
++**Goal:** 7 CPU karts racing competently around the track with difficulty-based behavior.
++
++### 6.1 `js/ai.js`
++
++Class `AIController`:
++- **Spline following**:
++  - Each AI kart is assigned a spline (racing line, or a variation spline).
++  - Find nearest point on spline → look ahead by `speed * 0.4` seconds → get target point.
++  - Steer toward target point. Apply per-difficulty random wander (±8°/±4°/±1.5°).
++- **Speed control**:
++  - Target speed = topSpeed × difficulty multiplier (0.85/0.95/1.02).
++  - Brake before sharp turns (look ahead at spline curvature, slow if curvature exceeds threshold).
++- **Rubber banding** (spec § 6):
++  - Compute track distance between AI and player.
++  - If AI > 150 units ahead: reduce speed by up to 8%/5%/2% (Chill/Standard/Mean).
++  - If AI > 150 units behind: increase speed by up to 5%/3%/1%.
++  - Smooth ramp, not instant.
++- **Drift logic**:
++  - At designated drift zones, AI initiates drift at zone entry.
++  - Hold duration by difficulty: Chill = Tier 1, Standard = Tier 2, Mean = Tier 3.
++  - Release at zone exit → fire boost.
++  - Frequency: 20%/60%/95% of drift zones based on difficulty.
++- **Overtaking**:
++  - If blocked by kart ahead on same spline (distance < 10 units, closing speed < 5 units/s): switch to adjacent variation spline for 3s to attempt pass.
++  - After pass attempt, return to preferred spline.
++- **Hazard avoidance**:
++  - Look ahead for hazard positions. Steer around if within avoidance range.
++  - Avoidance success rate: 60%/85%/98% by difficulty.
++- **Item usage** (see Phase 7 for item implementation):
++  - Fizz Bomb: fire if target within 150 units ahead and aligned.
++  - Oil Slick: drop if kart within 50 units behind.
++  - Shield: activate on Pigeon warning or in crowd.
++  - Pepper: use on straights or when behind.
++  - Pigeon: use when not in 1st.
++  - Star: use near shortcuts.
++  - Chill AI: semi-random usage within 2s of pickup.
++- **Personality modifiers** (from character definitions):
++  - Frontrunner (Bolt): prefers racing line, saves defensive items.
++  - Technical (Pebble): tight lines, drift chains.
++  - Aggressive (Flare): pushes into karts, risky lines, immediate offensive items.
++  - Item-focused (Mochi): targets item boxes, holds items for impact.
++  - Bully (Tusk): wide blocking, body-check lighter karts.
++  - Evasive (Zippy): weaves, avoids contact.
++  - Opportunist (Cinder): mid-pack, waits for mistakes.
++  - Charger (Rex): long straight rushes, late braking.
++
++**Verification:** Start a race with 7 AI karts on Sunset Bay at Standard difficulty → AI karts follow the track, drift at corners, maintain reasonable lap times (~32s), positions change dynamically. No karts stuck on walls.
++
++---
++
++## Phase 7 — Items
++
++**Goal:** 6 items fully functional with item boxes on tracks, position-weighted distribution, effects, and counterplay.
++
++### 7.1 `js/itemBox.js` — Item Boxes
++
++- Place item boxes at positions defined per track.
++- Each box: rotating `THREE.Mesh` (cube with `itembox.png` texture, spinning slowly, floating bob animation).
++- Collection: sphere check (radius ~2) against each kart. If kart has no held item → collect. If kart already holds item → box stays.
++- On collect: box becomes invisible, start 8s respawn timer. After 8s, fade in over 0.5s.
++- Roll item from weighted distribution table (spec § 5) based on collector's position.
++
++### 7.2 `js/items.js` — Item Definitions & Logic
++
++Each item has: `id`, `name`, `category`, `icon` (emoji or simple canvas-drawn icon), `onUse(kart, trackData)`.
++
++**Item 1: Fizz Bomb** (Offensive)
++- On use: spawn a projectile at kart front, traveling forward at `1.5 × kart.speed`.
++- Projectile update: move forward, check collision with wall segments (bounce once off walls, then straight), check collision with kart spheres.
++- On hit kart: apply wobble effect — 1.0s, steering precision reduced 60%, speed -20%. Play hit SFX.
++- On hit Shield Bubble: destroy bomb, pop shield.
++- Range: 250 units then despawn.
++- Passes through scenery and other projectiles.
++
++**Item 2: Oil Slick** (Offensive)
++- On use: place a puddle mesh on the track behind the kart.
++- Puddle: static mesh, lasts 12s or until triggered.
++- On kart contact: 0.8s slide (lateral push ~3 units in travel direction), softened steering. Not blocked by shield on contact — wait, spec says shield negates Oil Slick contact. So: if shielded, pop shield instead.
++- AI avoidance: Standard+ difficulty AI steers around visible slicks.
++
++**Item 3: Shield Bubble** (Defensive)
++- On use: create a translucent blue sphere around the kart. Lasts 4s or until it blocks one hit.
++- Blocks: Fizz Bomb, Oil Slick, Homing Pigeon, one wall collision penalty.
++- Visual: shimmering sphere, pops with burst animation on block or expire.
++
++**Item 4: Turbo Pepper** (Utility)
++- On use: apply boost equivalent to Tier 3 drift boost (1.5s, 1.45× multiplier).
++- Uses same boost conflict resolution rule as drift boosts.
++
++**Item 5: Homing Pigeon** (Offensive)
++- On use: spawn a bird projectile that targets the kart one position ahead.
++- Pigeon follows the track spline toward the target. Speed: `1.8 × user's speed`.
++- Has a turning radius — can overshoot boosting targets.
++- On hit: target bounces up 1.5 units, speed -25% for 1.2s. Full steering retained.
++- If used from 1st place: unguided forward projectile.
++- Blocked by Shield Bubble.
++- Audio: approaching chirps give ~1.5s warning to target.
++
++**Item 6: Shortcut Star** (Utility)
++- On use: 3s of no off-road penalty + 10% speed boost.
++- Golden trail effect while active.
++- Great for known shortcuts or corner-cutting.
++
++### 7.3 Item HUD Slot
++
++- Bottom-right 64×64 box in the HUD overlay.
++- Shows item icon when held. Empty dash when not.
++- Spin-in animation on pickup, fly-out on use.
++- "[E]" key hint below.
++
++### 7.4 Item Effect Stacking Rule
++
++- Debuffs do NOT stack. New item hit replaces current debuff. New effect starts fresh.
++
++### 7.5 Position-Weighted Distribution Table
++
++Implement as a function: `rollItem(position)` → returns an item object.
++
++```
++Position 1-2: 10% offensive (Fizz/Oil/Pigeon), 50% defensive (Shield), 40% utility (Pepper/Star)
++Position 3-4: 30% offensive, 30% defensive, 40% utility
++Position 5-6: 50% offensive, 20% defensive, 30% utility
++Position 7-8: 65% offensive, 10% defensive, 25% utility
++```
++
++Within each category, items are equally weighted (e.g., offensive → 1/3 Fizz, 1/3 Oil, 1/3 Pigeon).
++
++**Verification:** Drive through item boxes → random item appears in HUD slot. Press E → item activates. All 6 items produce correct effects. AI uses items.
++
++---
++
++## Phase 8 — Menus & HUD
++
++**Goal:** Complete game flow from title screen through results, all HUD elements functional.
++
++### 8.1 `js/menu.js` — Menu System
++
++All menus are HTML/CSS overlays on `#menu-overlay`. State-driven: show/hide sections based on game state.
++
++**Title Screen** (`TITLE` state):
++- Large "FABRO RACER" title (CSS styled text, optionally with 3D transform for voxel feel).
++- "PRESS ENTER TO START" pulsing text.
++- Background: camera fly-through of a random track (rendered on the Three.js canvas behind the overlay).
++
++**Track Selection** (`TRACK_SELECT` state):
++- 4 horizontal track cards. Each shows: name, difficulty stars, best time from localStorage.
++- Left/right arrow keys to navigate. Enter to confirm.
++- Selected card has a glowing border / scale-up.
++- Background: blurred/dimmed view of the highlighted track.
++
++**Character Selection** (`CHARACTER_SELECT` state):
++- 8 character cards in a 2×4 grid.
++- Each card: name, 4 stat bars (pips), character color swatch.
++- Arrow keys to navigate grid. Enter to confirm.
++- Selected card has glowing border.
++- 3D preview: the selected character's voxel model rotating on a turntable, rendered in a small viewport or inset.
++
++**Difficulty Selection** (`DIFFICULTY_SELECT` state):
++- Three large buttons: Chill 😌 / Standard 🏁 / Mean 😈.
++- Mirror Mode toggle (checkbox).
++- Allow Clones toggle (checkbox).
++- "Start Race" button.
++- Arrow keys or Tab to navigate, Enter to confirm.
++
++**Pause Menu** (`PAUSED` state, triggered by Escape):
++- Semi-transparent dark overlay.
++- Three options: Resume, Restart Race, Quit to Menu.
++- Arrow keys up/down, Enter to select.
++- Game loop pauses (physics/timers stop).
++
++**Results Screen** (`RESULTS` state):
++- Standings table: position, character color dot, character name, finish time.
++- Player's row highlighted.
++- If 1st place: confetti particle effect (can use the particle system).
++- Three buttons: Race Again / Change Track / Main Menu.
++
++### 8.2 `js/hud.js` — HUD Overlay
++
++HTML elements inside `#hud-overlay`, styled with CSS:
++
++- **Position indicator** (top-left): "1st" / "2nd" / ... "8th" in large bold text. Color: gold/silver/bronze/white. Brief scale pulse on change.
++- **Lap counter** (top-right): "Lap 1/3". On lap 3: "🏁 FINAL LAP 🏁" banner slides down, stays 2s, slides away.
++- **Timer** (top-right, below lap): "M:SS.s" format. Lap split shown briefly below on lap completion.
++- **Minimap** (bottom-left): see 8.3.
++- **Item slot** (bottom-right): 64×64 box with item icon or "—".
++- **Boost/drift bar** (near item slot): small bar showing drift tier charge (blue→orange→pink glow). During boost: bar depletes.
++- **Speed indicator**: optional small text or bar showing current speed (not explicitly required by spec but useful).
++
++### 8.3 `js/minimap.js`
++
++- Small `<canvas>` element (120×120px) in the bottom-left of `#hud-overlay`.
++- Each frame:
++  - Clear canvas.
++  - Draw simplified track outline (polyline of sampled center spline points, projected to 2D, scaled to fit).
++  - Draw dots for each racer. Player dot = white, larger. CPU dots = character color.
++  - Rotate view so player's heading is "up" (player-up orientation).
++
++### 8.4 `js/countdown.js`
++
++- On entering COUNTDOWN state:
++  - Camera does a 3s aerial flyover of the track (sweep along a precomputed high-altitude spline).
++  - Then cuts to behind-player view.
++  - Display "3" → "2" → "1" → "GO!" (each 1s, centered on screen, scale-up + fade animation).
++  - Sound: beep on 3/2/1, higher beep on GO.
++- **Start boost window**: Monitor accelerate key during countdown.
++  - Pressed before GO → set `earlyAccel = true`.
++  - Pressed during 0.3s window at GO and `!earlyAccel` → grant Tier 2 boost.
++  - `earlyAccel == true` at GO → tire-spin: 0.5s freeze, no boost.
++  - Not pressed → normal start.
++
++**Verification:** Full game flow works: Title → Track Select → Character Select → Difficulty → Countdown → Race → Finish → Results → back to menus. All HUD elements update live. Pause works.
++
++---
++
++## Phase 9 — Audio
++
++**Goal:** All sound effects and per-track music loops via Web Audio API.
++
++### 9.1 `js/audio.js`
++
++- Create `AudioContext` on first user interaction (click/keypress) to satisfy browser autoplay policy.
++- **Master gain nodes**: `sfxGain`, `musicGain` — controlled by options sliders (stored in localStorage).
++- **SFX factory functions**: Each returns a function that plays the sound. Use oscillators, noise buffers, and filters as specified in spec § 11.
++
++| Sound | Implementation |
++|---|---|
++| Engine | Sawtooth oscillator 80–200Hz, gain modulated by throttle. Continuous, pitch = `80 + (speed/topSpeed) * 120`. |
++| Drift start | White noise burst 0.15s, bandpass 1kHz–3kHz. |
++| Drift sparks | Filtered noise with random gain modulation, continuous during drift. |
++| Drift tier up | Sine sweep 400→800/1200/1600Hz over 0.1s. |
++| Boost fire | Noise burst 0.3s, descending bandpass filter. |
++| Item pickup | Three sine tones (C5-E5-G5), 0.05s each, ascending. |
++| Item use (varies) | Per-item sounds as specified. |
++| Item hit | Low sine 80Hz 0.2s + noise burst. |
++| Wall hit | Low noise burst 0.1s, low-pass filter. |
++| Kart bump | Sine 300Hz, 0.08s. |
++| Countdown beeps | Sine 440Hz 0.15s; GO = 880Hz 0.3s. |
++| Lap complete | C4-E4-G4 ascending, 0.1s each. |
++| Final lap | 5-note ascending scale, 0.08s each. |
++| Race finish | Longer fanfare, 1s. |
++| Menu navigate | Noise pulse 0.02s. |
++| Menu confirm | Sine 200Hz, 0.05s. |
++
++- **Noise buffer**: Pre-generate a 1s white noise `AudioBuffer` and reuse it for all noise-based sounds.
++- **Engine sound**: Single persistent oscillator + gain node. Update frequency and gain each frame. Don't recreate per frame.
++
++### 9.2 Per-Track Music
++
++- Simple procedural music loop per track using oscillators and a step sequencer.
++- 8-bar loop at ~120 BPM.
++- Sunset Bay: upbeat major key, steel-drum-like tones (triangle wave with short decay).
++- Mossy Canyon: mysterious minor key, slower, ambient pads (low-pass filtered sawtooth).
++- Neon Grid: electronic driving beat, arpeggiated synths (square wave arpeggios).
++- Volcano Peak: intense, fast, minor key, heavy bass (sawtooth + sub-bass sine).
++- Final lap: tempo increases by ~15%.
++- Simple sidechain: duck music gain by 30% when SFX play (restore over 0.1s).
++
++**Verification:** Drive around → engine sound pitch matches speed. Drift → screech + crackle + tier chimes. Boost → whoosh. Items → pickup/use/hit sounds. Music plays per-track. Volume sliders in options work.
++
++---
++
++## Phase 10 — Track Hazards & Special Features
++
++**Goal:** All track-specific hazards, shortcuts, and special geometry features.
++
++### 10.1 Sunset Bay Hazards
++- **Crab crossings**: Animated voxel crabs that waddle across the road at 2 positions. Global time cycle. Contact: 0.4s wobble + 10% speed loss.
++- **Sand patches**: Off-road polygons on curve insides (already handled by surface detection).
++- **Pier tunnel**: Narrow walls (10 units wide), already in track geometry.
++
++### 10.2 Mossy Canyon Hazards
++- **Falling rocks**: At stone corridor, boulders fall every ~5s (global time). Telegraphed by pebble particles 1s before. Contact: 0.6s slowdown.
++- **River splash zones**: Puddles at bridge/waterfall. 0.3s slip (lateral push, no steering loss).
++- **Mushroom bounce pads**: 3 large mushroom caps on road edges in grove. Contact: bounce up + sideways, ~0.5s cost.
++
++### 10.3 Neon Grid Hazards
++- **Floating data blocks**: Cubes hovering at kart height, sliding left/right slowly. Contact: 0.5s speed loss + lateral push.
++- **Grid gap**: At boost ramp, if speed < 60% top speed → fall through, respawn with 1.5s penalty.
++- **EMP strips**: Red lines across road (not full width). Crossing: cancel active boost + 2s boost lockout. Avoidable.
++
++### 10.4 Volcano Peak Hazards
++- **Lava geysers**: 3 spots at summit, staggered 4s cycle. Active 1.5s each. Telegraphed by bubbling 1s before. Contact: 1.0s spin + speed loss.
++- **Falling lava rocks**: On plunge, every ~3s. Shadows telegraph landing spots. Contact: 0.4s wobble.
++- **Lava river**: Left edge of segment 2. Drive into → instant respawn.
++
++### 10.5 Shortcuts
++- Sunset Bay: dirt shortcut path through palms on cliffside curve (off-road, only worthwhile with boost).
++- Mossy Canyon: cave tunnel after hairpin, bypasses uphill corridor (tight, 10 units wide, saves ~2s).
++- Neon Grid: stepping-stone platforms at pyramid sweeper (precise, fall = respawn, saves ~1.5s).
++- Volcano Peak: hidden ramp between hairpins (requires speed + aim, saves ~2.5s).
++
++### 10.6 Special Track Features
++- Neon Grid boost ramp: upward-angled road section that launches karts. Speed check for grid gap.
++- Volcano Peak plunge: steep downhill with 1.3× gravity speed boost.
++- Mossy Canyon corkscrew: 270° banked turn with elevation drop.
++- All tracks: gravity-affected ramps/hills affect vertical velocity.
++
++**Verification:** Each hazard is visible, telegraphed, and has correct gameplay effect. Shortcuts work and are checkpoint-valid. AI uses shortcuts at appropriate difficulty levels.
++
++---
++
++## Phase 11 — Textures & Visual Polish
++
++**Goal:** Generate all texture assets, final visual polish pass.
++
++### 11.1 Texture Generation
++
++Use `imagegen` CLI to create all texture PNGs (256×256 max):
++
++| File | Description |
++|---|---|
++| `road.png` | Tiling grey asphalt with subtle crack details |
++| `grass.png` | Tiling green grass |
++| `sand.png` | Tiling sandy yellow |
++| `cobble.png` | Tiling cobblestone (grey, mossy) |
++| `lava.png` | Tiling orange-red lava surface |
++| `grid.png` | Tiling cyan grid lines on dark background |
++| `ash.png` | Tiling dark grey volcanic ash |
++| `rock.png` | Canyon rock wall texture |
++| `water.png` | Blue water surface |
++| `itembox.png` | Colorful question-mark box face |
++| `skybox/sunset.png` | Warm orange-purple gradient |
++| `skybox/canyon.png` | Grey-green overcast |
++| `skybox/neon.png` | Black with purple grid lines |
++| `skybox/volcano.png` | Dark red with ash clouds |
++
++All textures: `wrapS = wrapT = THREE.RepeatWrapping`. Small size for performance.
++
++### 11.2 Visual Polish
++
++- **Track lighting**: Per-track directional light color and ambient color.
++- **Fog**: Per-track fog color and distances (300–600 units).
++- **Particle effects**: All particles from spec § 12:
++  - Drift sparks (tier-colored cubes from rear wheels).
++  - Boost flame (orange/blue cubes from exhaust).
++  - Dust clouds (brown cubes when off-road).
++  - Item hit burst (white cubes).
++  - Confetti (multi-colored, results screen).
++  - Lava bubbles (Volcano Peak ambient).
++  - Ash (Volcano Peak, tiny grey cubes drifting down).
++  - Water splash (blue cubes, near water).
++  - Waterfall animation (Mossy Canyon, blue voxels moving downward).
++- **Shadows**: Single directional shadow map on karts only. 1024×1024 resolution.
++- **Post-finish karts**: Intangible, drive racing line at 80% speed.
++- **Mirror mode**: Negate X of all track data when mirror toggle is on.
++- **Start boost visual**: Tire spin animation on early press; boost trail on successful start boost.
++
++**Verification:** Game looks polished. All textures load. Each track has distinct visual identity. Particles are visible and performant. 60 fps maintained.
++
++---
++
++## Phase 12 — localStorage & Final Integration
++
++**Goal:** Best times persistence, options persistence, final bug sweep.
++
++### 12.1 localStorage
++
++- Key: `fabroRacer`.
++- Structure:
++  ```json
++  {
++    "bestTimes": {
++      "sunsetBay": { "total": null, "bestLap": null },
++      "mossyCanyon": { "total": null, "bestLap": null },
++      "neonGrid": { "total": null, "bestLap": null },
++      "volcanoPeak": { "total": null, "bestLap": null }
++    },
++    "options": { "sfxVolume": 80, "musicVolume": 60 }
++  }
++  ```
++- Save best times on race finish (if player's time < stored time or no stored time).
++- Show best times on track select cards.
++- Load/save options on change.
++
++### 12.2 Final Integration Checklist
++
++- [ ] All 4 tracks load and are raceable.
++- [ ] All 8 characters have distinct voxel models and correct stats.
++- [ ] All 6 items work correctly with proper counterplay.
++- [ ] AI races competently at all 3 difficulties with rubber banding.
++- [ ] Drift-boost system: all 3 tiers, correct durations/multipliers.
++- [ ] Full menu flow: Title → Track → Character → Difficulty → Countdown → Race → Results.
++- [ ] HUD: position, lap, timer, minimap, item slot, boost bar.
++- [ ] Audio: engine, drift, boost, items, countdown, music per track.
++- [ ] All hazards per track with correct timing and effects.
++- [ ] Shortcuts work and don't bypass checkpoints.
++- [ ] Mirror mode flips tracks correctly.
++- [ ] Allow Clones toggle works.
++- [ ] Start boost mechanic: early = penalty, timed = Tier 2 boost.
++- [ ] Respawn: kill plane, lava, void. Correct behavior (1.5s freeze, 2s invincibility).
++- [ ] Post-finish kart behavior: intangible, auto-drive.
++- [ ] Celebration camera: orbit for 1st–3rd, skip for 4th–8th.
++- [ ] localStorage: best times and options persist.
++- [ ] Performance: 60 fps with 8 karts, full track, particles, AI.
++- [ ] No console errors. No broken imports. Works on any static file server.
++
++---
++
++## Estimated Module Sizes (Lines of Code)
++
++| Module | Est. LOC | Complexity |
++|---|---|---|
++| `main.js` | 150 | Low — state machine, loop |
++| `renderer.js` | 120 | Low — setup code |
++| `input.js` | 80 | Low |
++| `physics.js` | 350 | High — collision, surfaces |
++| `drift.js` | 250 | Medium — state machine, tiers |
++| `kart.js` | 300 | Medium — entity management |
++| `characters.js` | 400 | Medium — 8 voxel blueprints |
++| `voxel.js` | 200 | Medium — builder utilities |
++| `track.js` | 500 | High — spline meshing, collision data |
++| `tracks/*.js` (×4) | 300 each (1200 total) | Medium — data definitions |
++| `checkpoint.js` | 200 | Medium |
++| `items.js` | 400 | High — 6 items, projectiles, effects |
++| `itemBox.js` | 120 | Low |
++| `ai.js` | 500 | High — behavior, splines, items |
++| `hud.js` | 250 | Medium — HTML/CSS updates |
++| `minimap.js` | 120 | Low — 2D canvas |
++| `menu.js` | 400 | Medium — multiple screens |
++| `countdown.js` | 150 | Low |
++| `camera.js` | 200 | Medium — multiple modes |
++| `particles.js` | 250 | Medium — instanced pool |
++| `audio.js` | 500 | High — many sound types + music |
++| `utils.js` | 100 | Low |
++| **Total** | **~6,040** | |
++
++---
++
++## Key Technical Risks & Mitigations
++
++| Risk | Mitigation |
++|---|---|
++| **Import map CDN fails** | Pin Three.js to r162. Test with unpkg and jsdelivr as backup. Include a comment in `index.html` with the alternate CDN URL. |
++| **Spline-based track mesh has UV seams or gaps** | Sample at high frequency (every 2 units). Use consistent winding order. Test with wireframe overlay. |
++| **AI gets stuck on walls** | Add "stuck detection" — if speed < 5 for > 1s, reverse for 0.5s and re-acquire spline. |
++| **Performance with 8 karts + particles** | Use InstancedMesh for particles and repeated scenery. Merge static geometry. Profile early in Phase 3. |
++| **Drift feels bad** | Tune iteratively. The spec gives precise numbers but "feel" requires testing. Start with spec values, adjust ±20% if needed. |
++| **Audio context blocked by browser** | Resume AudioContext on first user click/keypress. Title screen's "Press Enter" serves this purpose. |
++| **Track data is massive** | Each track definition is ~300 LOC of coordinate arrays. This is fine for static files. No lazy loading needed for 4 tracks. |
++
++---
++
++## Dependency Graph (Phase Order)
++
++```
++Phase 1: Scaffold ──┐
++                     ├──► Phase 2: Track System ──┐
++Phase 1: Utils ──────┘                             │
++                                                   ├──► Phase 3: Kart & Physics ──┐
++                                                   │                               │
++                                                   │    Phase 4: Drift & Boost ◄───┘
++                                                   │           │
++                                                   │           ▼
++                                                   ├──► Phase 5: Checkpoint/Lap ──┐
++                                                   │                               │
++                                                   └──► Phase 6: AI ◄──────────────┤
++                                                                │                  │
++                                                                ▼                  │
++                                                        Phase 7: Items ◄───────────┘
++                                                                │
++                                                                ▼
++                                                        Phase 8: Menus & HUD
++                                                                │
++                                                                ▼
++                                                        Phase 9: Audio
++                                                                │
++                                                                ▼
++                                                        Phase 10: Hazards & Polish
++                                                                │
++                                                                ▼
++                                                        Phase 11: Textures & Visual
++                                                                │
++                                                                ▼
++                                                        Phase 12: localStorage & Final
++```
++
++Phases 1–5 are strictly sequential (each depends on the prior). Phases 6 and 7 can be partially parallelized but both need Phase 5. Phases 8–12 are sequential polish passes.
+diff --git a/.workflow/plan_opus.md b/.workflow/plan_opus.md
+new file mode 100644
+index 0000000..20e8f12
+--- /dev/null
++++ b/.workflow/plan_opus.md
+@@ -0,0 +1,1101 @@
++# Fabro Racer — Implementation Plan
++
++## Guiding Principles
++
++1. **Static files only.** No Node.js, no React, no TypeScript, no build step. Vanilla ES modules + HTML + CSS. Three.js via CDN import map.
++2. **Incremental milestones.** Each phase produces a runnable game. Phase 1 is a drivable kart on a flat plane. Each subsequent phase adds a layer.
++3. **One `output/` directory.** Everything lives under `output/`. Serving that directory with any static file server yields the playable game.
++4. **Spec fidelity.** All numbers, formulas, and behaviors come from `spec.md` (as amended by `spec-review.md`). No inventing new mechanics.
++
++---
++
++## File Structure
++
++```
++output/
++├── index.html                  # Single HTML entry point
++├── css/
++│   └── style.css               # Menu, HUD, and overlay styling
++├── js/
++│   ├── main.js                 # Bootstrap, game loop, state machine
++│   ├── renderer.js             # Three.js scene, camera, lighting, fog
++│   ├── input.js                # Keyboard input manager
++│   ├── physics.js              # Arcade physics engine, collision detection/response
++│   ├── kart.js                 # Kart entity: movement, state, drift, boost
++│   ├── drift.js                # Drift initiation, charge tiers, boost application
++│   ├── camera.js               # Chase cam, drift shift, look-behind, countdown/finish cameras
++│   ├── track.js                # Track builder: spline → mesh, walls, off-road, checkpoints
++│   ├── tracks/
++│   │   ├── sunsetBay.js        # Track 1 data
++│   │   ├── mossyCanyon.js      # Track 2 data
++│   │   ├── neonGrid.js         # Track 3 data
++│   │   └── volcanoPeak.js      # Track 4 data
++│   ├── characters.js           # 8 character definitions: stats, colors, voxel model builders
++│   ├── voxel.js                # Voxel model builder utilities (box groups → merged geometry)
++│   ├── items.js                # Item definitions, pickup logic, projectile behavior, effects
++│   ├── itemBox.js              # Item box placement, collection, respawn timer
++│   ├── ai.js                   # CPU driver: spline following, drifting, items, difficulty
++│   ├── race.js                 # Race state: laps, checkpoints, positions, finish logic
++│   ├── hud.js                  # HUD overlay controller (HTML/CSS elements)
++│   ├── minimap.js              # 2D minimap on a small <canvas>
++│   ├── menu.js                 # All menu screens (title, track select, char select, etc.)
++│   ├── countdown.js            # Pre-race countdown sequence (3-2-1-GO)
++│   ├── particles.js            # Particle system: pool, emit, update, recycle
++│   ├── audio.js                # Web Audio API: procedural SFX and music
++│   └── utils.js                # Math helpers, constants, easing, lerp
++└── textures/                   # Generated via imagegen at build time
++    ├── road.png
++    ├── grass.png
++    ├── sand.png
++    ├── lava.png
++    ├── grid.png
++    ├── snow.png
++    ├── rock.png
++    ├── water.png
++    ├── itembox.png
++    └── skybox/
++        ├── sunset.png
++        ├── canyon.png
++        ├── neon.png
++        └── volcano.png
++```
++
++---
++
++## Phase 1: Scaffold & Scene (Foundation)
++
++**Goal:** A running Three.js app at 60fps with keyboard input and a moving cube on a flat plane.
++
++### 1.1 — `index.html`
++
++- DOCTYPE, charset, viewport meta.
++- `<script type="importmap">` mapping `"three"` → `https://unpkg.com/three@0.162.0/build/three.module.js` and `"three/addons/"` → `https://unpkg.com/three@0.162.0/examples/jsm/`.
++- `<canvas id="game-canvas">` filling viewport.
++- `<div id="hud-overlay">` — initially empty, for HUD elements.
++- `<div id="menu-overlay">` — initially empty, for menu screens.
++- `<link rel="stylesheet" href="css/style.css">`.
++- `<script type="module" src="js/main.js">`.
++
++### 1.2 — `css/style.css`
++
++- Reset: `* { margin:0; padding:0; box-sizing:border-box; }`.
++- `body { overflow:hidden; background:#000; }`.
++- `#game-canvas { display:block; width:100vw; height:100vh; }`.
++- `#hud-overlay` and `#menu-overlay`: absolute positioned, full viewport, pointer-events pass-through (except active menus).
++- Font imports or embedded font-face for a clean pixel/blocky font (or just use system sans-serif for v1).
++
++### 1.3 — `js/utils.js`
++
++- `clamp(val, min, max)`, `lerp(a, b, t)`, `degToRad(d)`, `radToDeg(r)`.
++- `smoothDamp` helper for camera follow.
++- Constants: `FIXED_DT = 1/60`, `GRAVITY = 30`, `KILL_PLANE_Y = -50`.
++
++### 1.4 — `js/input.js`
++
++- Singleton `InputManager` that listens to `keydown`/`keyup` on `window`.
++- Stores currently pressed keys in a `Set`.
++- Exposes `isDown(key)`, `justPressed(key)`, `justReleased(key)`.
++- `justPressed`/`justReleased` use per-frame edge detection: keep a `pressedThisFrame` and `releasedThisFrame` set, cleared each frame by a `resetFrame()` call.
++- Map semantic actions to keys:
++  - `accelerate`: `KeyW` | `ArrowUp`
++  - `brake`: `KeyS` | `ArrowDown`
++  - `steerLeft`: `KeyA` | `ArrowLeft`
++  - `steerRight`: `KeyD` | `ArrowRight`
++  - `drift`: `ShiftLeft` | `ShiftRight` | `Space`
++  - `useItem`: `KeyE` | `KeyX`
++  - `lookBehind`: `KeyR` | `KeyC`
++  - `pause`: `Escape` | `KeyP`
++  - `confirm`: `Enter`
++  - `menuLeft`/`menuRight`/`menuUp`/`menuDown`: arrow keys
++
++### 1.5 — `js/renderer.js`
++
++- Create `THREE.WebGLRenderer` attached to `#game-canvas`, antialias on, pixel ratio capped at 2.
++- Create `THREE.Scene` with a default background color.
++- Create `THREE.PerspectiveCamera` (FOV 60, near 0.1, far 1000).
++- Add `THREE.AmbientLight` (intensity 0.4) and `THREE.DirectionalLight` (intensity 0.8).
++- Enable shadow map (basic, for karts only — shadow map size 1024).
++- Handle `window.resize` → update camera aspect and renderer size.
++- Export `{ renderer, scene, camera, ambientLight, directionalLight }`.
++
++### 1.6 — `js/main.js`
++
++- Import all modules.
++- **Game state machine** with states: `TITLE`, `TRACK_SELECT`, `CHARACTER_SELECT`, `DIFFICULTY_SELECT`, `COUNTDOWN`, `RACING`, `PAUSED`, `RACE_FINISH`, `RESULTS`.
++- Current state stored as a simple string variable; transition function `setState(newState)` triggers enter/exit hooks.
++- **Game loop** using `requestAnimationFrame`:
++  1. Compute `rawDt = (now - lastTime) / 1000`, clamp to `[0.001, 0.1]` (prevent spiral of death).
++  2. Accumulate into `accumulator`.
++  3. While `accumulator >= FIXED_DT`: run `fixedUpdate(FIXED_DT)` (physics, AI, game logic), decrement accumulator.
++  4. Compute `alpha = accumulator / FIXED_DT` for render interpolation.
++  5. Run `render(alpha)`.
++  6. Call `input.resetFrame()`.
++- In Phase 1, `fixedUpdate` only updates the player kart. `render` only renders the scene.
++- **Initial state:** Start in `RACING` state (skip menus in Phase 1) with a flat plane and one kart.
++
++### 1.7 — Flat Plane Test Track
++
++- Temporary: create a `THREE.PlaneGeometry(200, 200)` rotated to be the ground, with a green `MeshLambertMaterial`.
++- Add 4 wall boxes around the perimeter.
++- This is replaced in Phase 2.
++
++### 1.8 — Test Kart
++
++- Temporary: a `THREE.Group` with a body box (5×2×7, blue) and 4 wheel boxes (1×1×1, dark grey).
++- Positioned at (0, 1, 0).
++- Forward is -Z direction.
++
++**Milestone check:** Open `index.html` via a static file server → see a green plane, a blue box-kart, and be able to drive it around with WASD. Camera follows from behind.
++
++---
++
++## Phase 2: Track System
++
++**Goal:** Replace the flat plane with a spline-based track. Implement the track builder and define Sunset Bay.
++
++### 2.1 — `js/track.js` — Track Builder
++
++**Input:** A track definition object (from `tracks/*.js`) with the schema from spec §14:
++- `centerSpline`: array of `{x, y, z}` control points.
++- `widths`: per-control-point road widths.
++- `surfaces`: per-segment surface type (`'road'`, `'bridge'`, `'tunnel'`).
++- `banking`: per-segment bank angles.
++- `offRoad`: off-road region definitions.
++- `hazards`, `itemBoxes`, `checkpoints`, `startLine`, `startPositions`, `racingLine`, `variationSplines`, `driftZones`, `scenery`, `environment`.
++
++**Track mesh generation:**
++1. Create a `THREE.CatmullRomCurve3` from `centerSpline` points (closed loop: `curve.closed = true`).
++2. Sample at regular intervals (every 2 units of arc length). At each sample:
++   - Get position, tangent, and interpolated width/banking.
++   - Compute the perpendicular cross-section (left edge, right edge) respecting bank angle.
++3. Build road surface as a ribbon mesh: connect consecutive cross-sections into quads → triangles. UV map for tiling road texture (U across width, V along length, tiling every 10 units).
++4. Build walls: thin tall boxes (0.5 wide × 3 tall) along left and right edges at every sample point. Use `THREE.InstancedMesh` for performance.
++5. Build off-road ground: large flat planes extending outward from track edges, textured per track theme. Clip to track region bounds.
++6. Store wall segment pairs (left-edge points, right-edge points) for collision detection.
++
++**Track environment setup:**
++- Set `scene.fog` from `environment.fogColor/fogNear/fogFar`.
++- Set `scene.background` to fog color (or a sky gradient via a full-screen background plane or vertex color on a large sphere).
++- Set ambient and directional light colors/directions from `environment`.
++
++**Collision data structure:**
++- Store wall segments as an array of `{ p1: Vector2, p2: Vector2, normal: Vector2 }` (2D, XZ plane — Y is handled separately).
++- Divide track into sectors (e.g., 20 sectors per track). Each sector stores indices of its wall segments. Given a kart position, determine its sector index from its nearest point on the center spline, then only check wall segments in that sector ± 1.
++
++**Checkpoint system:**
++- Each checkpoint: `{ position: Vector3, forward: Vector3, width: Number, index: Number }`.
++- Represented as an invisible plane (just data, no mesh).
++- Detection: each frame, for each kart, check if the kart has crossed any checkpoint plane (dot product sign change with the checkpoint normal between previous and current position).
++
++### 2.2 — `js/tracks/sunsetBay.js` — Track 1
++
++Define the full Sunset Bay track per spec §3:
++- ~20-25 center spline control points tracing: start straight (200u) → wide right-hander → pier tunnel straight → sweeping left-hander → chicane → final straight with downhill.
++- Width: 28u default, narrowing to 10u at pier tunnel.
++- Banking: gentle (5°) on curves.
++- Off-road regions: sand on inside of both main curves.
++- 12-15 checkpoints evenly spaced.
++- 8 start positions in 2×4 grid on start straight.
++- Racing line + 2 variation splines.
++- 3-4 drift zones matching the spec's identified corners.
++- Scenery placements: palm trees, market stalls, pier posts, beach umbrellas.
++- Item box positions: 2 rows of 4 on straights, 1 row of 3 on cliffside curve.
++- Hazards: crab crossings (2 locations), sand patches (auto from off-road regions).
++- Environment: warm sunset fog, orange-purple sky.
++
++### 2.3 — Remaining Track Definitions
++
++Each track file follows the same schema. Key differences:
++
++**`mossyCanyon.js`** — Track 2:
++- Figure-S layout with elevation changes (Y values vary significantly in spline).
++- Width 22u, widening to 30u at mushroom grove.
++- 15-18 checkpoints.
++- Hazards: falling rocks (timed cycle), river splash zones, mushroom bounce pads.
++- Shortcut: cave tunnel bypassing uphill corridor.
++- Scenery: pine trees, boulders, mushrooms, wooden bridges, waterfall.
++
++**`neonGrid.js`** — Track 3:
++- Angular layout with 90° turns.
++- Width 24u. Off-road = void (kill plane respawn).
++- Hazards: floating data blocks (moving), grid gap/boost ramp, EMP strips.
++- Shortcut: stepping stone platforms on inside of pyramid sweeper.
++- Scenery: neon skyscrapers, floating cubes, pyramid, grid floor glow.
++
++**`volcanoPeak.js`** — Track 4:
++- Ascending spiral + plunge descent. Significant Y variation.
++- Width 22u, narrowing to 16u on summit ridge.
++- Hazards: lava geysers (timed), falling lava rocks, lava river (instant respawn).
++- Shortcut: hidden ramp between switchback hairpins.
++- Scenery: stone huts, lava lanterns, rock formations, smoke plumes.
++
++### 2.4 — Track Scenery Renderer (in `track.js`)
++
++- Each scenery type has a builder function in `voxel.js` (Phase 3) that returns a `THREE.Group` of colored boxes.
++- Use `THREE.InstancedMesh` where possible (e.g., all palm tree trunks share one instanced mesh, all palm tree tops share another).
++- Place scenery objects at their defined positions with rotations.
++- Apply per-track fog to keep draw distance manageable.
++
++### 2.5 — Racing Line Splines
++
++- Create `THREE.CatmullRomCurve3` for the racing line and each variation spline.
++- These are used by AI (Phase 6) and for position calculation.
++- Export them alongside the track mesh for runtime use.
++
++**Milestone check:** Load the game → see a textured road with walls, scenery props, and a sunset sky. The player kart drives on it. Falling off the edge kills and respawns.
++
++---
++
++## Phase 3: Kart & Physics
++
++**Goal:** Full arcade driving model with proper kart physics, collisions, and the camera system.
++
++### 3.1 — `js/kart.js` — Kart Entity
++
++Each kart (player and CPU) is represented as a kart object:
++
++```javascript
++{
++  // Identity
++  characterId: 'bolt',
++  isPlayer: true,
++  racerIndex: 0,
++
++  // Transform
++  position: Vector3,
++  rotation: Number,       // Y-axis rotation in radians (heading)
++  velocity: Number,       // Scalar speed along heading
++  lateralVelocity: Number, // For slides/drift
++  verticalVelocity: Number, // For gravity/ramps
++
++  // Stats (derived from character)
++  topSpeed, acceleration, turnRate, weight,
++
++  // State
++  onGround: true,
++  isOffRoad: false,
++  isDrifting: false,
++  driftDirection: 0,      // -1 left, 1 right
++  driftTimer: 0,
++  driftTier: 0,
++  boostActive: false,
++  boostTimer: 0,
++  boostMultiplier: 1,
++  stunTimer: 0,           // Item debuff
++  invincibleTimer: 0,     // Post-respawn
++  heldItem: null,
++  shieldActive: false,
++  shieldTimer: 0,
++  finished: false,
++
++  // Race progress
++  currentLap: 0,
++  lastCheckpoint: 0,
++  checkpointFraction: 0,
++  raceProgress: 0,        // Computed position score
++  racePosition: 1,        // 1-8
++  lapTimes: [],
++  finishTime: null,
++
++  // Three.js
++  mesh: THREE.Group,       // Visual model
++}
++```
++
++**Movement update (per fixed timestep):**
++
++1. **Compute effective top speed:**
++   - Base: `75 + (speed_stat × 6)`.
++   - If off-road and no star active: × 0.6 (or × 0.8 if boosting).
++   - If boosting: × `boostMultiplier`.
++
++2. **Acceleration/braking:**
++   - Accelerate input: `velocity += accel × dt`, clamped to effective top speed.
++   - Brake input: `velocity -= (accel × 3) × dt`, clamped to `-(topSpeed × 0.3)` for reverse.
++   - No input: coast decel at `accel × 0.5 × dt` toward 0.
++
++3. **Steering:**
++   - Steering ramp: maintain an internal `steerAmount` that ramps toward ±1.0 (full lock) at rate `1/0.1 = 10/s` when key held, decays at `1/0.08 = 12.5/s` when released.
++   - Effective turn rate at current speed: interpolate between `turnRate × 1.5` (at speed ≤ 30% top) and `turnRate` (at speed ≥ top speed). Linear interpolation between the two thresholds.
++   - If counter-steering (steer opposite to current drift/slide): × 1.2.
++   - Apply: `rotation += steerAmount × effectiveTurnRate × dt` (in radians).
++
++4. **Gravity:**
++   - If not on ground: `verticalVelocity -= GRAVITY × dt`, `position.y += verticalVelocity × dt`.
++   - Ground detection: raycast downward or check against track surface height at current XZ position.
++
++5. **Position update:**
++   - `position.x += Math.sin(rotation) × velocity × dt`.
++   - `position.z += Math.cos(rotation) × velocity × dt`.
++   - Add lateral velocity component for drift/slide.
++
++### 3.2 — `js/physics.js` — Collision Detection & Response
++
++**Wall collisions:**
++- Each frame, for each kart, find the nearest wall segments (using sector lookup from track data).
++- For each nearby wall segment, check if the kart's bounding circle (radius ~2.5 units in XZ) intersects the wall line segment.
++- On intersection:
++  - Compute collision angle = angle between kart heading and wall normal.
++  - If angle < 30° (glancing): deflect kart along wall (project velocity onto wall tangent), apply 15% speed loss.
++  - If angle ≥ 30° (hard): bounce kart back along wall normal by small amount, apply 35% speed loss, set 0.3s reduced-control timer.
++  - Push kart out of wall to prevent clipping.
++
++**Kart-to-kart collisions:**
++- Sphere-sphere check (radius ~2.5 each) between all pairs (or optimized: only check karts in nearby sectors).
++- On collision:
++  - Compute push direction (from one kart center to the other).
++  - Distribute push based on weight stats: lighter kart gets `(6 - weight) / totalKnockback` fraction.
++  - Tusk's Immovable trait: halve his knockback.
++  - Apply speed loss: 5% for sideswipe (angle < 30°), 20% for near-head-on.
++  - Separate karts to prevent overlap.
++
++**Off-road detection:**
++- At each kart position, determine if it's on-road or off-road.
++- Method: project kart position onto nearest point on center spline. If lateral distance > road half-width at that spline point → off-road.
++- Alternative method for complex off-road regions: point-in-polygon test against defined off-road region polygons.
++- Set `kart.isOffRoad` flag, which affects speed calculations.
++
++**Kill plane:**
++- If `position.y < -50`: trigger respawn.
++
++### 3.3 — `js/camera.js` — Camera System
++
++**Chase camera (default during RACING):**
++- Desired position: kart position + rotated offset `(0, 8, -18)` behind the kart.
++- Desired look-at: kart position + `(0, 2, 0)`.
++- Smooth follow: `camera.position.lerp(desiredPos, 0.08)` per frame.
++- Look-at lerp: `lookAtTarget.lerp(desiredLookAt, 0.12)`, then `camera.lookAt(lookAtTarget)`.
++
++**Drift camera shift:**
++- When drifting left: add lateral offset +3 units (camera shifts right).
++- When drifting right: add lateral offset -3 units.
++- Lerp the lateral offset at factor 0.05.
++- Return to 0 when not drifting.
++
++**Look-behind:**
++- When look-behind key held: offset becomes `(0, 6, 12)` (in front of kart), look-at is kart position.
++- Lerp at factor 0.2 for quick transition.
++
++**Countdown camera:**
++- 3-second sweeping aerial path over track (sample the racing line spline at height +50, look down at track).
++- Then cut to behind-player position for the 3-2-1-GO.
++
++**Finish camera:**
++- Orbit: `camera.position = kartPos + (sin(t) × 15, 8, cos(t) × 15)` where t goes 0 → 2π over 3s.
++- Look at kart position.
++
++### 3.4 — `js/voxel.js` — Voxel Model Builder
++
++Utility functions for building voxel models:
++- `createVoxelModel(voxelData)`: takes an array of `{ x, y, z, w, h, d, color }` box definitions, creates a `THREE.Group` of `MeshLambertMaterial` boxes.
++- `mergeVoxelModel(voxelData)`: same input, but merges all same-color boxes into `BufferGeometry` for better performance (used for static scenery).
++- Kart models stay as Groups (they animate — wheels rotate).
++
++### 3.5 — `js/characters.js` — Character Definitions
++
++Define all 8 characters with:
++- Stats: `{ speed, acceleration, handling, weight }`.
++- Derived values: `topSpeed`, `accel`, `turnRate`, `knockback`.
++- Colors: primary, secondary, accent (for kart body, character body, details).
++- `buildModel()` function that returns a `THREE.Group` of the character seated in their kart.
++- Each character's kart model is ~15-25 box primitives (body, wheels, spoiler/detail, character body, head, arms, hat/details).
++- AI personality tag for item/driving behavior selection.
++
++**Character voxel model specifics:**
++- **Bolt**: Angular yellow body, black lightning antenna, sleek low kart.
++- **Pebble**: Chunky grey body, green glowing eyes (emissive material), mossy stone kart.
++- **Flare**: Red-orange body with flame hair (2-3 orange cubes on top), hot rod with exhaust pipes.
++- **Mochi**: Round pink body with white face, stubby ears, bubble kart.
++- **Tusk**: Wide blue-grey body, tiny tusks (white cubes), massive tank kart.
++- **Zippy**: Small green body with goggles (yellow cubes), tiny kart with oversized wheels.
++- **Cinder**: Purple body with pointy hat (tall purple triangle of cubes), broomstick kart.
++- **Rex**: Orange body, big head with teeth, tiny arms, monster truck with huge tires.
++
++**Milestone check:** All 8 characters selectable (hard-coded for now), full driving physics: acceleration, braking, steering with ramp-up, off-road penalty, wall collisions with glancing/hard distinction, kart-to-kart bumps. Camera follows smoothly, shifts during drift attempts.
++
++---
++
++## Phase 4: Drift & Boost
++
++**Goal:** The core skill mechanic. Drifting should feel immediately satisfying.
++
++### 4.1 — `js/drift.js` — Drift System
++
++**Drift initiation:**
++- Conditions: drift key held + steering input + speed ≥ 40% of top speed + on ground.
++- On initiation:
++  - Set `kart.isDrifting = true`, `kart.driftDirection = steerDirection` (-1 or 1).
++  - `kart.driftTimer = 0`, `kart.driftTier = 0`.
++  - Snap kart angle: add 15° kick in drift direction.
++  - Play drift start SFX.
++  - Begin drift spark particles.
++
++**During drift:**
++- `driftTimer += dt` each fixed update.
++- Tier progression:
++  - 0.0s–0.5s: Tier 0 (no boost earned yet).
++  - 0.5s–1.2s: Tier 1 → spark color = blue. Play tier-up chime on crossing 0.5s.
++  - 1.2s–2.2s: Tier 2 → spark color = orange. Play tier-up chime on crossing 1.2s.
++  - 2.2s+: Tier 3 → spark color = pink/purple. Play tier-up chime on crossing 2.2s.
++- Steering modulation: player can widen/tighten the drift arc.
++  - Steer toward drift direction (inward): tighter arc, more rotation per frame.
++  - Steer away (outward): wider arc, less rotation.
++  - Drift maintains speed better: only 5% top speed loss (vs 15% for sharp normal turning).
++- Kart visual: body rotates ~15-30° into the turn (additional visual yaw beyond the heading).
++
++**Drift release / boost:**
++- Releasing drift key or releasing steering:
++  - If `driftTimer < 0.5s`: no boost. Just end drift.
++  - If Tier 1 (0.5–1.2s): boost 0.7s at 1.25×.
++  - If Tier 2 (1.2–2.2s): boost 1.1s at 1.35×.
++  - If Tier 3 (2.2s+): boost 1.5s at 1.45×.
++- Snap kart angle back to heading.
++- Apply boost (see below).
++- Play boost fire SFX.
++- Begin boost flame particles.
++
++**Boost application:**
++- Set `kart.boostActive = true`, `kart.boostTimer = boostDuration`, `kart.boostMultiplier = multiplier`.
++- Each frame: `boostTimer -= dt`. Speed × `boostMultiplier` decays linearly: `currentMultiplier = 1 + (boostMultiplier - 1) × (boostTimer / boostDuration)`.
++- When `boostTimer ≤ 0`: end boost.
++
++**Boost conflict (spec rule):**
++- If a new boost triggers while one is active: compare multipliers. Higher wins. If equal, longer remaining duration wins. Losing boost is discarded.
++
++### 4.2 — Visual Feedback
++
++**Drift sparks (particle system):**
++- Emit from rear wheel positions (2 emission points).
++- ~5 particles/frame, each a small cube (0.3×0.3×0.3).
++- Color matches drift tier: blue → orange → pink/purple.
++- Velocity: scatter backward from kart + slight random spread.
++- Lifespan: 0.3s.
++- Fade out over lifespan.
++
++**Boost flame:**
++- Emit from exhaust/rear center.
++- ~8 particles/frame, larger cubes (0.5).
++- Orange/blue colored.
++- Longer lifespan (0.5s).
++- Stream backward from kart.
++
++**Kart body tilt during drift:**
++- Rotate kart mesh group by drift angle (15-30° around Y axis) toward drift direction.
++- Slight body roll (5° Z rotation) for visual flair.
++
++### 4.3 — Start Boost
++
++- During COUNTDOWN state, monitor accelerate input.
++- Flag `earlyAccelerate` if player presses accelerate before GO.
++- At GO moment:
++  - If `earlyAccelerate`: tire-spin penalty. `kart.stunTimer = 0.5s`. Play tire screech sound.
++  - If accelerate pressed within 0.3s window starting at GO: grant Tier 2 boost (1.1s at 1.35×). Play boost sound.
++  - If not pressing: normal start, no penalty, no boost.
++
++**Milestone check:** Drifting feels great. Hold shift + turn → kart kicks out, sparks fly, color changes at tier thresholds, releasing gives a satisfying boost. Chaining drifts on consecutive corners is rewarding.
++
++---
++
++## Phase 5: Items
++
++**Goal:** 6 items with position-weighted distribution, projectile behaviors, and visual/audio feedback.
++
++### 5.1 — `js/itemBox.js` — Item Boxes
++
++- Each track defines item box positions.
++- Item boxes are spinning cubes (2×2×2) with a `?` texture, hovering 2 units above the road surface, bobbing up/down by 0.5 units.
++- Use `THREE.InstancedMesh` for all item boxes on a track (one instanced mesh, ~11 instances per track).
++- Collection: sphere-sphere check (kart radius 2.5, box radius 1.5). On contact:
++  - If kart already holds an item: ignore (box stays for others).
++  - If kart has no item: collect. Play item pickup SFX. Start respawn timer (8s). Box becomes invisible.
++  - Assign item using position-weighted distribution (see below).
++- Respawn: after 8s, fade in over 0.5s (scale from 0 → 1).
++
++### 5.2 — `js/items.js` — Item Definitions & Logic
++
++**Position-weighted distribution:**
++```
++Position 1-2:  Offensive 10%, Defensive 50%, Utility 40%
++Position 3-4:  Offensive 30%, Defensive 30%, Utility 40%
++Position 5-6:  Offensive 50%, Defensive 20%, Utility 30%
++Position 7-8:  Offensive 65%, Defensive 10%, Utility 25%
++```
++Categories:
++- Offensive: Fizz Bomb, Oil Slick, Homing Pigeon.
++- Defensive: Shield Bubble.
++- Utility: Turbo Pepper, Shortcut Star.
++
++Within a category, items are equally weighted (or slightly biased — e.g., Homing Pigeon slightly rarer in offensive pool).
++
++**Item implementations:**
++
++**Fizz Bomb:**
++- On use: spawn a projectile entity moving forward from kart at `kart.velocity × 1.5` (minimum 100 u/s).
++- Travel in a straight line. Bounce off one wall (reflect velocity, decrement bounce counter). After one bounce, continue straight. Max range: 250 units, then despawn.
++- On hitting a kart: apply wobble debuff (1.0s, 60% steering reduction, 20% speed reduction). If kart has shield: destroy bomb and pop shield instead.
++- Passes through scenery and other projectiles.
++- Visual: glowing green sphere (small box cluster), fizz particle trail.
++- Sound: "pew" on fire, impact thud on hit.
++
++**Oil Slick:**
++- On use: drop a puddle at kart's position minus 3 units behind.
++- Puddle is a flat 3×0.1×3 box on the road surface with rainbow-ish material.
++- Persists 12s or until triggered.
++- On kart driving over it: apply slide debuff (0.8s, lateral push ~3 units in travel direction, softened steering). If shielded: pop shield, consume slick.
++- AI on Standard+ avoids them.
++- Sound: "splat" on deploy, slide sound on trigger.
++
++**Shield Bubble:**
++- On use: activate shield for 4s. `kart.shieldActive = true`, `kart.shieldTimer = 4`.
++- Visual: translucent blue sphere around kart (slightly larger than kart bounding box). Shimmer effect (rotating UV or animated opacity).
++- Blocks one hit (Fizz Bomb, Oil Slick contact, Homing Pigeon) → pops with burst animation + sound.
++- Also negates one wall collision's speed penalty.
++- After blocking or after 4s: deactivate.
++- Sound: shimmer on activate, pop on block/expire.
++
++**Turbo Pepper:**
++- On use: instant Tier 3 equivalent boost (1.5s at 1.45×). Standard boost conflict rule applies.
++- Visual: brief flame burst from kart + red tint flash.
++- Sound: sizzle.
++
++**Homing Pigeon:**
++- On use: spawn a pigeon entity that targets the kart one position ahead.
++- If user is 1st: pigeon flies forward unguided.
++- Pigeon travels at 1.8× kart speed, follows track spline toward target.
++- Has a turning radius (can't instantly redirect — boosting target can outrun it temporarily).
++- On contact: target bounces up 1.5 units, slows 25% for 1.2s. Blocked by shield.
++- Visual: small white-grey voxel bird, flapping animation (rotate wings).
++- Sound: chirps approaching target (~1.5s warning), "bonk" on hit.
++
++**Shortcut Star:**
++- On use: 3s effect. `kart.starActive = true`, `kart.starTimer = 3`.
++- During effect: off-road slowdown is completely ignored, +10% speed boost.
++- Visual: golden sparkle trail behind kart, kart has golden glow (emissive material tint).
++- Sound: sparkle/chime sustained.
++
++### 5.3 — Item HUD Slot
++
++- Bottom-right HUD element: 64×64px box with border.
++- Empty state: grey border, "—" text.
++- Holding item: display item icon (CSS-drawn or emoji/unicode: 💣🛢️🛡️🌶️🐦⭐).
++- Animation: spin-in on collect, fly-out on use.
++- Key hint below: `[E]`.
++
++### 5.4 — Item Projectile Manager
++
++- Maintain a list of active projectiles (Fizz Bombs, Oil Slicks, Homing Pigeons).
++- Each frame: update positions, check collisions with karts, check wall bounces, check lifespan/range.
++- Clean up expired projectiles.
++- Visual: each projectile is a small Three.js mesh added to the scene, removed on despawn.
++
++**Milestone check:** Item boxes on track, collectible. All 6 items work: fire Fizz Bombs that bounce off walls and wobble targets, drop Oil Slicks, activate Shield Bubbles, use Turbo Peppers for instant boost, launch Homing Pigeons that chase the kart ahead, use Shortcut Stars to cut corners.
++
++---
++
++## Phase 6: AI
++
++**Goal:** 7 CPU opponents that race, drift, use items, and provide competitive pack racing.
++
++### 6.1 — `js/ai.js` — AI Controller
++
++Each CPU kart has an AI controller instance:
++
++```javascript
++{
++  difficulty: 'standard',     // 'chill' | 'standard' | 'mean'
++  personality: 'frontrunner', // from character definition
++  currentSpline: racingLine,  // which spline they're following
++  splineT: 0,                 // parameter along spline [0,1]
++  targetPoint: Vector3,       // look-ahead target
++  wanderOffset: 0,            // random lateral offset for imperfection
++  overtakeTimer: 0,           // time spent on alternate spline for passing
++  driftState: 'none',         // 'none' | 'approaching' | 'drifting'
++  itemUseDelay: 0,            // cooldown before next item evaluation
++}
++```
++
++**Core spline-following loop (per AI fixed update, every 2 frames = 30Hz):**
++
++1. **Find nearest point on current spline:** Binary search or cached incremental search along the spline to find the closest parameter `t` to the kart's current position.
++2. **Compute look-ahead target:** `targetT = t + (speed × 0.4 / splineLength)`. Get the 3D point on the spline at `targetT`.
++3. **Add wander:** Offset the target point laterally by `wanderOffset` (randomized per difficulty: ±8° for Chill, ±4° Standard, ±1.5° Mean). Wander changes slowly (perlin-noise-like smoothing over time).
++4. **Compute desired steering:** angle from kart heading to target point → set steering input.
++5. **Compute desired acceleration:** always accelerate unless approaching a sharp turn too fast.
++   - Measure upcoming curvature (difference in spline tangent over next ~30 units).
++   - If curvature is high and speed is above comfortable cornering speed: brake.
++   - Difficulty affects comfortable speed: Chill brakes earlier, Mean brakes later.
++
++**Difficulty speed multiplier:**
++- Apply to the AI's effective top speed: Chill 0.85×, Standard 0.95×, Mean 1.02×.
++
++**Rubber banding:**
++- Compute track distance between AI kart and player kart.
++- If AI is >150 units ahead: reduce AI speed by up to 8% (Chill) / 5% (Standard) / 2% (Mean). Ramp linearly from 0% at 150 units to max at 300 units.
++- If AI is >150 units behind: increase AI speed by up to 5% / 3% / 1%. Same ramp.
++
++### 6.2 — AI Overtaking
++
++- If an AI kart detects another kart within 10 units ahead on the same spline (blocking):
++  - Switch to an adjacent variation spline.
++  - Set `overtakeTimer = 3s`.
++  - After timer or successful pass: return to preferred spline.
++- Detection: simple distance + direction check.
++
++### 6.3 — AI Drifting
++
++- Each track defines drift zones as spline parameter ranges `{ start, end }`.
++- As AI approaches a drift zone (parameter within look-ahead distance):
++  - Evaluate whether to drift based on difficulty:
++    - Chill: 20% chance.
++    - Standard: 60% chance.
++    - Mean: 95% chance.
++  - If drifting: initiate drift at zone start, hold for zone duration, release at zone end.
++  - Drift tier achieved depends on difficulty: Chill → Tier 1, Standard → Tier 2, Mean → Tier 3.
++  - This means AI holds drift for the appropriate duration (0.5-0.8s for T1, 1.2-1.5s for T2, 2.2+s for T3).
++
++### 6.4 — AI Item Usage
++
++- AI evaluates held items periodically (every 0.5s for Standard/Mean, every 2s for Chill).
++- Logic per item type:
++  - **Fizz Bomb:** Fire if a kart is within 150 units ahead and within ±15° of forward. Mean AI leads the shot slightly.
++  - **Oil Slick:** Drop if a kart is within 50 units behind. Standard+ AI drops at corners for maximum effect.
++  - **Shield Bubble:** Activate when homing pigeon warning detected, or when in a crowd of karts. Mean AI holds for defensive use.
++  - **Turbo Pepper:** Use on straight sections, or when significantly behind.
++  - **Homing Pigeon:** Use when not in 1st. Mean AI waits until near the front for short travel time.
++  - **Shortcut Star:** Use near a shortcut, or to cut any upcoming corner. Difficulty affects whether AI knows shortcut locations.
++- Chill AI: uses items within 2s of getting them, mostly random timing.
++
++### 6.5 — AI Hazard Avoidance
++
++- Each frame, check for hazards within look-ahead distance.
++- If hazard detected: steer to avoid (offset target point away from hazard).
++- Avoidance rate by difficulty: Chill 60%, Standard 85%, Mean 98%.
++
++### 6.6 — AI Collision Avoidance with Walls
++
++- Use the same look-ahead system: if target point would place the kart near a wall, adjust.
++- Chill AI hits walls frequently (low avoidance). Mean AI almost never clips.
++
++### 6.7 — AI Personality Modifiers
++
++Per spec §4, each character's AI personality tweaks behavior:
++- **Bolt (Frontrunner):** Prefer optimal racing line, rarely use offensive items, hold shields.
++- **Pebble (Technical):** Prefer tight lines, drift at every opportunity, use items at corners.
++- **Flare (Aggressive):** Push into other karts, risky lines, use offensive items immediately, late braking.
++- **Mochi (Item-focused):** Seek item boxes aggressively (steer toward nearby item boxes), hold items for maximum impact.
++- **Tusk (Bully):** Drive wide to block, aim to body-check lighter karts, don't drift much.
++- **Zippy (Evasive):** Weave through traffic, avoid collisions, dodge items/hazards.
++- **Cinder (Opportunist):** Play mid-pack, wait for mistakes, use items at most disruptive moments.
++- **Rex (Charger):** Commit to lines, long straights, late braker, sometimes overshoots.
++
++Implementation: each personality is a set of parameter tweaks (line preference, drift frequency modifier, item hold time modifier, aggression level).
++
++**Milestone check:** 8 karts racing simultaneously. CPU opponents follow the track, drift at corners, use items, and provide competitive pack racing. Difficulty levels feel distinct.
++
++---
++
++## Phase 7: Race Logic & HUD
++
++**Goal:** Full race structure — laps, positions, timing, finish — and all HUD elements.
++
++### 7.1 — `js/race.js` — Race Manager
++
++**Initialization:**
++- Spawn 8 karts at start positions (2×4 grid).
++- Player kart at a chosen grid slot, CPU karts fill remaining slots.
++- Initialize lap = 0, checkpoint = 0 for all karts.
++- Start countdown sequence.
++
++**Checkpoint tracking (per frame, per kart):**
++- Check if kart has crossed the next expected checkpoint.
++- On crossing: increment `lastCheckpoint`. If it wraps past the last checkpoint index → increment `currentLap`.
++- On lap increment: record lap time, check for final lap banner.
++- On lap 3 completion (crossing finish line with all checkpoints hit): `kart.finished = true`, record finish time.
++
++**Position calculation:**
++- For each kart: `raceProgress = (currentLap × totalCheckpoints) + lastCheckpoint + fractionToNext`.
++- `fractionToNext`: distance along racing line spline from last checkpoint to current position, normalized by total distance to next checkpoint.
++- Sort karts by `raceProgress` descending → assign positions 1-8.
++
++**Finish logic:**
++- When player finishes: transition to RACE_FINISH state.
++- If player is 1st-3rd: celebration camera for 3s, then RESULTS.
++- If player is 4th-8th: 1s delay, then RESULTS.
++- CPU karts continue racing in background until results screen.
++- Post-finish karts: become intangible, drive along racing line at 80% speed.
++
++**Race finish ties:**
++- Same-frame finishers: compare fractionToNext (further past line wins). Still tied: lower racer index wins.
++
++### 7.2 — `js/hud.js` — HUD Controller
++
++All HUD elements are HTML/CSS, manipulated via DOM:
++
++**Position indicator (top-left):**
++- `<div id="hud-position">` with large bold text "1st" / "2nd" etc.
++- Color: gold (1st), silver (2nd), bronze (3rd), white (4th-8th).
++- CSS animation: brief scale pulse (`transform: scale(1.3)` → `scale(1)`) on position change.
++
++**Lap counter (top-right):**
++- `<div id="hud-lap">` showing "Lap 1/3".
++- On entering lap 3: show `<div id="final-lap-banner">` with "🏁 FINAL LAP 🏁", CSS animation slide-down, stay 2s, slide-up.
++
++**Timer (top-right, below lap):**
++- `<div id="hud-timer">` showing race time in `M:SS.s` format.
++- Below: `<div id="hud-split">` for lap split time, fades after 3s.
++
++**Minimap — see 7.3.**
++
++**Item slot (bottom-right):**
++- `<div id="hud-item">` with 64×64px box.
++- Icon display: use emoji or CSS-drawn symbols. Spin-in animation on collect, fly-out on use.
++- Key hint: `<span>[E]</span>` below.
++
++**Boost/drift indicator (near item slot):**
++- `<div id="hud-boost-bar">` — thin bar that fills during drift.
++- Color transitions: transparent → blue → orange → pink/purple as tier increases.
++- During boost: bar depletes over boost duration.
++
++**Speed indicator (optional, subtle):**
++- Not in spec as a separate element, but the boost bar serves this purpose.
++
++### 7.3 — `js/minimap.js` — Minimap
++
++- Separate `<canvas id="minimap-canvas">` in the HUD overlay, 120×120px, bottom-left.
++- Each frame (at 30Hz to save CPU):
++  1. Clear canvas with semi-transparent dark background.
++  2. Draw simplified track outline: project the center spline points to 2D (XZ → canvas coords), draw as a polyline with track-width stroke.
++  3. Rotate the view so the player's facing is always "up" (player-up mode).
++  4. Draw dots for each kart: player = larger white dot with glow, CPU = smaller dots colored by character.
++- Scale: fit the entire track within 120×120 with padding.
++
++### 7.4 — `js/countdown.js` — Countdown Sequence
++
++- During COUNTDOWN state:
++  - Phase 1 (0-3s): camera sweeps over track (aerial flyover along racing line).
++  - Phase 2 (3-6s): camera behind player kart. Display "3" (at 3s) → "2" (at 4s) → "1" (at 5s) → "GO!" (at 6s).
++  - Each number: large centered text, CSS scale-up animation, fade out.
++  - Sound: countdown beep at each number, higher pitch "GO" sound.
++  - At "GO" (6s mark): transition to RACING state. Start boost window opens for 0.3s.
++
++### 7.5 — Results Screen
++
++- Full-screen overlay (`#menu-overlay`).
++- Table showing positions 1st-8th with:
++  - Position number (color-coded).
++  - Character name (or small icon).
++  - Finish time (M:SS.sss, three decimal places).
++  - Player row highlighted with a distinct background color.
++- If player is 1st: confetti particle effect (simple CSS animation — colored divs falling).
++- Three buttons: "Race Again" / "Change Track" / "Main Menu".
++
++**Milestone check:** Full race loop — countdown → 3 laps with position tracking → finish → results screen. HUD shows position, lap, timer, minimap, item slot. Everything works together.
++
++---
++
++## Phase 8: Menus
++
++**Goal:** Complete pre-race flow and pause menu.
++
++### 8.1 — `js/menu.js` — Menu System
++
++All menus are HTML/CSS overlays, shown/hidden based on game state.
++
++**Title screen (`TITLE` state):**
++- Large "FABRO RACER" title text (CSS styled — bold, shadowed, large font, maybe letter-spacing for impact).
++- Background: Three.js scene renders a slow camera flyover of a random track (reuse countdown camera logic with slower speed, looping).
++- "PRESS ENTER TO START" pulsing text (CSS `animation: pulse`).
++- On Enter: transition to `TRACK_SELECT`.
++
++**Track select (`TRACK_SELECT` state):**
++- 4 track cards in a horizontal row (flexbox).
++- Each card: track name, difficulty stars (★ × difficulty), best time from localStorage (or "—").
++- Currently selected card has highlighted border + slight scale-up.
++- Arrow keys left/right to navigate. Enter to confirm.
++- Background: blurred view of highlighted track (or just the track's fog color as a gradient).
++- On confirm: store selected track, transition to `CHARACTER_SELECT`.
++
++**Character select (`CHARACTER_SELECT` state):**
++- 8 character cards in a 2×4 grid.
++- Each card: character name, 4 stat bars (Speed/Accel/Handling/Weight as filled pips out of 5).
++- Optionally: rotate a mini 3D preview of the character in a small inset canvas (or just show the stats — rendering 8 mini scenes might be expensive).
++- Arrow keys to navigate grid. Enter to confirm.
++- On confirm: store selected character, transition to `DIFFICULTY_SELECT`.
++
++**Difficulty select (`DIFFICULTY_SELECT` state):**
++- Three large buttons vertically: "Chill 😌" / "Standard 🏁" / "Mean 😈".
++- Arrow keys up/down to navigate, Enter to confirm.
++- Below: toggle checkboxes for "Mirror Mode" and "Allow Clones" (default both OFF).
++- "Start Race" button at the bottom (or Enter on a difficulty triggers start).
++- On start: initialize race with selected track, character, difficulty, mirror, clones settings. Transition to `COUNTDOWN`.
++
++**Pause menu (`PAUSED` state):**
++- Triggered by Escape during COUNTDOWN / RACING / RACE_FINISH.
++- Semi-transparent dark overlay.
++- Three options: "Resume" / "Restart Race" / "Quit to Menu".
++- Arrow keys up/down, Enter to select.
++- Resume: unpause, return to previous state.
++- Restart: reinitialize race with same settings, go to COUNTDOWN.
++- Quit: return to TITLE.
++
++### 8.2 — Mirror Mode Implementation
++
++When mirror mode is active, during track loading:
++- Negate the X component of all track data arrays: `centerSpline`, `racingLine`, `variationSplines`, `scenery` positions, `hazards` positions, `itemBoxes` positions, `startPositions`, `checkpoints` (positions and normals X component).
++- Track geometry is rebuilt from the negated spline → automatic mirror.
++- Drift zones and segment metadata are unchanged (they're spline-parameter-based, not position-based).
++
++### 8.3 — Allow Clones
++
++- When OFF: CPU characters = all 7 non-player characters, shuffled randomly into slots.
++- When ON: each CPU slot independently picks a random character (duplicates possible, including matching the player).
++
++### 8.4 — localStorage
++
++- Save/load under key `fabroRacer`.
++- Save best total time and best lap time per track.
++- Save SFX/music volume settings.
++- Load on app start, save after each race if a record is beaten.
++
++**Milestone check:** Complete flow: Title → Track Select → Character Select → Difficulty Select → Countdown → Race → Results → back to menus. Pause works. Mirror mode flips tracks. Best times persist.
++
++---
++
++## Phase 9: Audio
++
++**Goal:** Procedural audio that brings the game to life without any external audio files.
++
++### 9.1 — `js/audio.js` — Audio Manager
++
++**AudioContext setup:**
++- Create `AudioContext` on first user interaction (click/keypress) to comply with browser autoplay policies.
++- Master gain node for overall volume.
++- Separate gain nodes for SFX and music, controlled by options sliders.
++
++**SFX implementation (all procedural):**
++
++Each sound is a function that creates oscillators/noise nodes, connects them through filters and gain envelopes, and schedules them to play:
++
++| Sound | Implementation |
++|-------|---------------|
++| **Engine** | Persistent sawtooth oscillator, freq 80-200Hz mapped to kart speed. Gain = 0.15 × throttle amount. Runs continuously during RACING state. |
++| **Drift start** | White noise → bandpass filter (center 2kHz, Q 2) → gain envelope (attack 0.01s, decay 0.15s). |
++| **Drift sparks** | White noise → bandpass (1.5kHz) → random gain modulation (LFO at ~20Hz). Sustained while drifting. |
++| **Drift tier up** | Sine oscillator sweep: T1 = 400→800Hz, T2 = 400→1200Hz, T3 = 400→1600Hz. Duration 0.1s. |
++| **Boost fire** | White noise → bandpass sweep from 3kHz → 500Hz over 0.3s → gain decay 0.3s. |
++| **Item pickup** | Three sine tones: C5 (523Hz), E5 (659Hz), G5 (784Hz), each 0.05s, staggered by 0.05s. |
++| **Wall hit** | White noise → lowpass 400Hz → gain 0.1s attack/decay. |
++| **Kart bump** | Sine 300Hz, gain envelope 0.08s. |
++| **Countdown beep** | Sine 440Hz, 0.15s. "GO" = sine 880Hz, 0.3s. |
++| **Lap complete** | Three sines: C4, E4, G4, each 0.1s staggered. |
++| **Final lap** | Five-note ascending scale, each 0.08s. |
++| **Race finish** | Extended fanfare: 5-6 notes, 1s total. |
++| **Menu navigate** | Short noise pulse, 0.02s. |
++| **Menu confirm** | Sine 200Hz, 0.05s. |
++
++**Item-specific sounds:**
++| Item | Sound |
++|------|-------|
++| Fizz Bomb fire | Sine sweep 800→200Hz, 0.15s |
++| Fizz Bomb hit | Low sine 80Hz pulse 0.2s + noise burst |
++| Oil Slick drop | Noise burst with lowpass, 0.1s |
++| Oil Slick trigger | Sustained noise 0.3s with filter sweep |
++| Shield activate | High filtered noise, sustained shimmer |
++| Shield pop | Quick noise burst + high sine |
++| Turbo Pepper | Noise crackle 0.3s |
++| Homing Pigeon launch | Two alternating sine tones (coo sound) |
++| Homing Pigeon approaching | Chirp: sine 1kHz, 0.05s, repeating every 0.3s |
++| Homing Pigeon hit | Thud + splat |
++| Shortcut Star | Arpeggiated high notes, sustained sparkle |
++
++### 9.2 — Procedural Music
++
++Each track has a simple loop built from oscillators and a step sequencer:
++- Tempo: ~120 BPM (4 beats × 8 bars = 16s loop at 120 BPM).
++- Implementation: a `setInterval` or `setTimeout` chain scheduled with `audioContext.currentTime` for precise timing.
++- Instruments: 2-3 oscillator voices (bass, lead, pad) with gain envelopes.
++- Per-track mood:
++  - **Sunset Bay:** Major key, upbeat. Square wave lead + triangle bass. Tropical rhythm.
++  - **Mossy Canyon:** Minor key, ambient. Sine pad chords + sparse triangle melody.
++  - **Neon Grid:** Driving beat. Sawtooth arpeggios + square bass + noise hi-hat.
++  - **Volcano Peak:** Intense. Fast tempo. Heavy sawtooth bass + minor key stabs.
++- **Final lap:** Increase step sequencer tempo by 15%.
++- **Volume ducking:** When SFX play, reduce music gain by 30% for 0.2s (simple compression).
++
++### 9.3 — Audio Volume Controls
++
++- SFX volume: multiply SFX gain node value by `sfxVolume / 100`.
++- Music volume: multiply music gain node value by `musicVolume / 100`.
++- Persisted in localStorage.
++
++**Milestone check:** Engine hum rises with speed, drift sounds crackle and chime on tier changes, boost whooshes, items have distinct sounds, music loops per track, final lap speeds up. Menu clicks.
++
++---
++
++## Phase 10: Track Hazards
++
++**Goal:** Implement all per-track hazards described in the spec.
++
++### 10.1 — Hazard System (in `items.js` or a new `hazards.js`)
++
++Each hazard has:
++- Position(s) on the track.
++- Activation pattern (always active, timed cycle, random).
++- Collision check (sphere, box, or area).
++- Effect on kart (speed loss, wobble, bounce, respawn).
++
++### 10.2 — Per-Track Hazards
++
++**Sunset Bay:**
++- **Crab crossings:** 2 locations. Small voxel crabs (~2×1×2 cubes) that waddle across the road on a repeating path (back and forth, 8s cycle). Contact = 0.4s wobble + 10% speed loss. Easy to see and avoid.
++- **Sand patches:** Handled by off-road regions (already in place from Phase 2). No separate hazard entity needed.
++- **Pier tunnel narrow walls:** Already handled by track width narrowing to 10u (Phase 2).
++
++**Mossy Canyon:**
++- **Falling rocks:** Stone corridor (segment 4). Boulders fall from above on a 5s global cycle. Small boulder voxels spawn at ceiling height, fall with gravity, persist on ground for 1s, then despawn. Telegraphed by pebble particles 1s before fall. Contact = 0.6s slowdown.
++- **River splash zones:** Puddle areas at bridge and waterfall. Area trigger: kart passing through gets 0.3s lateral push (slight random direction). No steering loss.
++- **Mushroom bounce pads:** 3 mushroom cap objects on road edges in the grove. On contact: kart bounces upward (vertical velocity += 15) and laterally (push away from mushroom center). Costs ~0.5s.
++
++**Neon Grid:**
++- **Floating data blocks:** 3-4 glowing cubes in segment 3 that slide left/right slowly (sinusoidal, period 4s, amplitude 8 units). Contact = 0.5s speed loss + lateral push.
++- **Grid gap / boost ramp:** At segment 6, the road has a gap. Karts going fast enough (≥ 60% top speed) launch over it. Below that speed: fall through → respawn with 1.5s penalty. Implementation: detect if kart Y drops below road level at gap region; if speed was insufficient, trigger respawn.
++- **EMP strips:** Thin red glowing lines across ~60% of road width at 2 locations. Crossing one disables boost for 2s (cancel active boost, prevent new boosts). Visual: red glow, easy to steer around the open 40%.
++
++**Volcano Peak:**
++- **Lava geysers:** 3 spots at the summit, staggered 4s cycle. Each active for 1.5s. Telegraphed by bubbling animation 1s before. Contact = 1.0s spin + major speed loss. Visual: orange column of cube particles when active.
++- **Falling lava rocks:** On the plunge (segment 7), small flaming rocks drop every ~3s. Shadow on ground telegraphs landing spot. Contact = 0.4s wobble. Visual: small orange/red cube falling from height.
++- **Lava river:** Left edge of segment 2. Defined as a hazard zone (polygon or distance from track edge). Entering = immediate respawn with 1.5s penalty. Guardrail with gaps (wall segments with breaks).
++
++### 10.3 — Gravity Hill (Volcano Peak Plunge)
++
++- Segment 7 (steep downhill): apply 1.3× speed multiplier to karts on this segment. Detect by spline parameter range.
++
++**Milestone check:** All hazards function. Crabs waddle, rocks fall (with telegraph), mushrooms bounce, data blocks slide, geysers erupt, lava kills. Each hazard is visually telegraphed and avoidable.
++
++---
++
++## Phase 11: Polish & Textures
++
++**Goal:** Visual polish, particle effects, textures, and final integration.
++
++### 11.1 — Textures via `imagegen`
++
++Generate tiling textures (256×256 PNG each) using the `imagegen` CLI:
++- `road.png`: Light grey asphalt with subtle line markings.
++- `grass.png`: Green grass pattern.
++- `sand.png`: Sandy yellow.
++- `lava.png`: Orange/red glowing lava surface.
++- `grid.png`: Cyan grid lines on dark background.
++- `snow.png`: White snow (if used — spec doesn't mention snow in any track).
++- `rock.png`: Grey-brown rocky surface.
++- `water.png`: Blue water surface.
++- `itembox.png`: Colorful `?` block texture.
++- Skybox textures: per-track sky images (gradient-based).
++
++If `imagegen` is unavailable: generate textures programmatically using canvas 2D (create a canvas, draw patterns, use `canvas.toDataURL()` to create texture sources). This fallback ensures the game works without external tools.
++
++### 11.2 — `js/particles.js` — Particle System
++
++**Object pool:**
++- Pre-allocate 200 particle meshes (small cubes: `BoxGeometry(0.3, 0.3, 0.3)`) with `MeshBasicMaterial`.
++- Pool: array of `{ mesh, velocity, life, maxLife, active }`.
++- `emit(position, velocity, color, lifespan, count)`: activate `count` particles from the pool.
++- `update(dt)`: for each active particle: `position += velocity × dt`, `life -= dt`, fade opacity. If `life ≤ 0`: deactivate, return to pool.
++
++**Particle effects:**
++- **Drift sparks:** 5 particles/frame from rear wheels, tier-colored, scatter backward, 0.3s life.
++- **Boost flame:** 8 particles/frame from exhaust, orange/blue, 0.5s life.
++- **Dust cloud (off-road):** 3 particles/frame from wheels, brown/tan, 0.4s life, rise slightly.
++- **Item hit burst:** 20 particles in a sphere burst, white, 0.5s life.
++- **Confetti (results):** 50 particles falling from top of screen, multi-colored, 3s life.
++- **Lava bubbles (Volcano Peak):** Ambient orange particles rising near lava surfaces.
++- **Ash (Volcano Peak):** Ambient grey particles drifting downward across the entire screen.
++- **Water splash:** Blue particles bursting upward near water.
++
++### 11.3 — Scenery Voxel Models
++
++Build all scenery models in `voxel.js`:
++- **Palm tree:** 5-8 cube trunk + 8-12 green cubes on top.
++- **Market stall:** 4 poles + flat colored awning top.
++- **Pier post:** Single tall brown box.
++- **Pine tree:** Triangular arrangement of green cubes.
++- **Boulder:** Cluster of grey cubes at random offsets.
++- **Mushroom:** Red cap (3×1×3 flat) on white stem (1×2×1).
++- **Neon skyscraper:** Tall box with emissive-colored edges.
++- **Central pyramid:** Large pyramid shape of glowing cubes.
++- **Stone hut:** Grey cube with red emissive window.
++- **Lava lantern:** Small grey box with orange emissive top.
++
++Use `THREE.InstancedMesh` for repeated objects (all palm trees share one instanced mesh).
++
++### 11.4 — Sky / Environment
++
++Per track:
++- **Sunset Bay:** Large sphere (or hemisphere) with a vertex-colored gradient (orange bottom to purple top). Low sun as a bright yellow emissive cube on the horizon.
++- **Mossy Canyon:** Grey-green overcast. Flat grey sky sphere. Light rays via directional light with slight green tint.
++- **Neon Grid:** Black sky. Distant purple/blue grid lines (a ground plane extending to fog distance with emissive grid material). No sun.
++- **Volcano Peak:** Dark red sky sphere. Orange glow from below (point light in crater area).
++
++### 11.5 — Performance Pass
++
++- **Geometry merging:** Merge all static scenery per track into batched meshes (one per material color).
++- **Instanced meshes:** Confirm walls, item boxes, and repeated scenery use instancing.
++- **Frustum culling:** Three.js does this automatically, but ensure large meshes aren't artificially large.
++- **Particle pooling:** Confirm pool is respected and no allocations happen during gameplay.
++- **Shadow map:** Only player kart casts shadows (or disable entirely if needed for performance).
++- **LOD:** Scenery beyond 200 units from camera: hide or replace with simpler mesh.
++- **AI update rate:** Confirm AI runs at 30Hz, not 60Hz.
++
++### 11.6 — Final Integration Pass
++
++- Wire all phases together: verify the complete flow from title screen through multiple races.
++- Test all 4 tracks × 8 characters × 3 difficulties.
++- Verify mirror mode.
++- Verify localStorage persistence.
++- Test edge cases: respawning, items hitting shielded targets, simultaneous finish, pause during countdown.
++
++**Milestone check:** Game is visually complete. Tracks have themed scenery and sky. Particles add juice. Textures ground the surfaces. Performance is 60fps on mid-range hardware. The full game loop is polished.
++
++---
++
++## Implementation Order Summary
++
++| Phase | What | Dependencies | Key Files |
++|-------|------|-------------|-----------|
++| 1 | Scaffold & scene | None | `index.html`, `main.js`, `renderer.js`, `input.js`, `utils.js` |
++| 2 | Track system | Phase 1 | `track.js`, `tracks/*.js` |
++| 3 | Kart & physics | Phase 1 | `kart.js`, `physics.js`, `camera.js`, `voxel.js`, `characters.js` |
++| 4 | Drift & boost | Phase 3 | `drift.js`, updates to `kart.js` |
++| 5 | Items | Phases 2-4 | `items.js`, `itemBox.js` |
++| 6 | AI | Phases 2-4 | `ai.js` |
++| 7 | Race logic & HUD | Phases 2-6 | `race.js`, `hud.js`, `minimap.js`, `countdown.js` |
++| 8 | Menus | Phase 7 | `menu.js` |
++| 9 | Audio | Phase 7 | `audio.js` |
++| 10 | Track hazards | Phases 2, 3 | Updates to track files, `hazards.js` or `items.js` |
++| 11 | Polish & textures | All prior | `particles.js`, texture files, updates to all |
++
++Phases 2 and 3 can be partially parallelized (track building and kart physics are somewhat independent, uniting at collision detection). Phases 5 and 6 can be parallelized (items don't depend on AI and vice versa, though both need the kart and track systems). Phase 9 (audio) and Phase 10 (hazards) can be parallelized.
++
++---
++
++## Critical Implementation Notes
++
++1. **All coordinates in the XZ plane.** Y is up. Karts drive on the XZ plane with Y for elevation.
++
++2. **Track spline is closed.** `CatmullRomCurve3.closed = true` creates a seamless loop. Sample with `getPointAt(t)` where t ∈ [0, 1].
++
++3. **Drift is the core mechanic.** Invest extra time in drift feel: the snap into drift, the visual kick, the spark feedback, the tier chimes, the boost release. This is what makes the game fun.
++
++4. **Forgiving collisions.** Walls deflect, they don't stop. Kart bumps are mild nudges. The player should always feel in control.
++
++5. **Rubber banding keeps it close.** AI speed adjustments are subtle but ensure pack racing. The player should rarely be more than a few seconds from the pack.
++
++6. **No build step means no bundling.** Each `.js` file is a separate HTTP request. Keep file count reasonable (~25 files). Browser caching handles subsequent loads. Import maps handle Three.js module resolution.
++
++7. **Browser autoplay policy.** AudioContext must be created/resumed on user gesture. The first Enter press on the title screen is the natural place.
++
++8. **Performance budget.** 60fps target. Profile with Chrome DevTools. Main risks: too many draw calls (solved by instancing/merging), too many particles (solved by pooling), complex physics (solved by spatial partitioning).
++
++9. **Texture fallback.** If `imagegen` textures aren't available, generate them with Canvas 2D: simple patterns (lines, dots, gradients) that tile at 256×256. This ensures the game works without external dependencies.
++
++10. **State machine discipline.** Every update function checks the current game state and exits early if not relevant. This prevents bugs like physics running during menus or input being consumed during pause.
