@@ -1,0 +1,598 @@
+diff --git a/.workflow/improve_log.md b/.workflow/improve_log.md
+index 35bd57d..e97b0e2 100644
+--- a/.workflow/improve_log.md
++++ b/.workflow/improve_log.md
+@@ -114,6 +114,12 @@
+ - **Speed-dependent camera FOV**: Camera FOV now modulates with kart speed for a "speed rush" effect. At standstill: 63° (slightly narrower, intimate feel). At top speed: ~71.5°. During boost overspeed (up to 1.4× top speed): up to ~75°. The FOV lerps smoothly (factor 0.1^dt) to avoid jarring snaps. Combined with the existing speed-dependent chase distance, this creates a convincing sense of acceleration. The projection matrix is updated each visual frame.
+ - Verified: pass — Zero console errors on all 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak). All 8 karts racing on every track. Brake pitch confirmed active (0.116 rad peak). No NaN values on any kart property. Properties (pitchAngle, offroadBobPhase) correctly initialized and reset on respawn.
+ 
++## Iteration 20 — Focus: Camera System
++- **Countdown flyover camera**: Implemented the spec-required pre-race camera sweep. During the first 3s of countdown, the camera flies along the track spline at 35–45 units altitude with gentle side-sway, showing an aerial overview of the upcoming course. Uses `easeInOutSine` for smooth acceleration/deceleration. At flyover end, transitions to the behind-player chase view via `resetCamera`. The player's spline position is computed once at flyover start (via `findNearestSplinePoint`) to avoid relying on `_cachedNearest` which isn't populated during frozen countdown frames.
++- **Spline-aware look-ahead for tight corners**: The camera's look-at target now blends between the kart's heading-based forward point and a point ~4% ahead on the track spline. At higher speeds, the blend increases (up to 40%), so the camera "looks into" upcoming corners before the kart fully rotates. This prevents the kart from going out of frame on tight 90° turns (Neon Grid) and hairpins (Mossy Canyon). Uses a pre-allocated `_splineAhead` Vector3 with `getPointAt(t, target)` to avoid per-frame allocation.
++- **Camera shake on impacts**: Added `triggerCameraShake(intensity)` that applies randomized position perturbation decaying exponentially at 12/s. Wall hits trigger 0.3 intensity (~0.18 unit displacement), kart bumps 0.15, and item hits 0.5 (~0.3 unit displacement). Vertical shake is attenuated to 60% of horizontal. Shake state resets on `resetCamera`. Triggers fire both with and without audio loaded.
++- Verified: pass — Zero console errors across all 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak). 8/8 karts on every track. Race status correctly transitions from countdown → racing. Spline look-ahead confirmed active (`hasNearest: true`) on all tracks.
++
+ ## Iteration 19 — Focus: Performance & Stability
+ - **Eliminate per-frame Promise overhead from audio calls**: Replaced all `getAudio().then(a => a.method())` calls in `fixedUpdate` and `visualUpdate` with synchronous `_audioSync?.method()` calls using a cached module reference set after the first `await import()`. Previously, every physics frame created 10+ Promise microtasks + closures (engine sound, drift, boost, collision, item pickup, lap complete — each via `.then()`), totaling ~600+ microtask allocations/second at 60fps. Now zero per-frame allocations from audio dispatch. Menu/startup calls remain async since they're one-shot.
+ - **Remove dead `checkStarCollisions` no-op**: The function was gutted in iteration 18 (star is no longer a contact weapon) but the call site in `updateProjectiles` still invoked it every physics frame, incurring function-call overhead and the loop over `allKarts` to check the early-out condition. Removed both the call and the empty function definition.
+diff --git a/output/js/camera.js b/output/js/camera.js
+index 728baf5..5b6a953 100644
+--- a/output/js/camera.js
++++ b/output/js/camera.js
+@@ -1,26 +1,47 @@
+ // js/camera.js — Chase camera with smooth follow, drift shift, look-behind,
+-//                 wall anti-clip, speed-dependent distance, road-height floor
++//                 wall anti-clip, speed-dependent distance, road-height floor,
++//                 spline-aware look-ahead, camera shake, countdown flyover
+ 
+ import * as THREE from 'three';
+ import { lerp, lerpAngle, clamp } from './utils.js';
++import { findNearestSplinePoint } from './track.js';
+ 
+ const _desiredPos = new THREE.Vector3();
+ const _desiredLook = new THREE.Vector3();
+ const _currentLook = new THREE.Vector3();
+ const _offset = new THREE.Vector3();
+ const _clipTest = new THREE.Vector3();
++const _splineAhead = new THREE.Vector3(); // reusable for spline look-ahead
+ 
+ // Camera state
+ let driftShift = 0;
+ let lookBehind = false;
+ let _trackData = null;  // reference to track data for wall anti-clip + height floor
+ 
++// Camera shake state
++let _shakeIntensity = 0;   // current shake strength (decays)
++let _shakeDecay = 12;      // decay rate per second
++const _shakeOffset = new THREE.Vector3();
++
++// Flyover state
++let _flyoverProgress = 0;  // 0→1 over flyover duration
++let _flyoverDuration = 3;  // seconds
++let _flyoverStartT = 0;    // spline t at the player's start position (computed once)
++
+ export const cameraState = {
+   mode: 'chase',  // 'chase', 'orbit', 'flyover'
+   orbitAngle: 0,
+   orbitTarget: null,
+ };
+ 
++/**
++ * Trigger camera shake (e.g., on wall hit or item hit).
++ * Intensity 0.0–1.0: wall hits ~0.3, item hits ~0.6
++ */
++export function triggerCameraShake(intensity) {
++  _shakeIntensity = Math.max(_shakeIntensity, clamp(intensity, 0, 1));
++}
++
+ /**
+  * Provide track data reference so the camera can avoid clipping through walls
+  * and stay above the road surface. Call once per race start.
+@@ -29,6 +50,24 @@ export function setCameraTrackData(td) {
+   _trackData = td;
+ }
+ 
++/**
++ * Start the countdown flyover camera sweep.
++ * Computes the player's start position on the spline once upfront.
++ */
++export function startFlyover(kart) {
++  cameraState.mode = 'flyover';
++  _flyoverProgress = 0;
++  // Compute spline t at the player's start position
++  if (_trackData && _trackData.centerCurve && kart) {
++    const nearest = findNearestSplinePoint(
++      _trackData.centerCurve, kart.position.x, kart.position.z, 100, kart.position.y
++    );
++    _flyoverStartT = nearest ? nearest.t : 0;
++  } else {
++    _flyoverStartT = 0;
++  }
++}
++
+ export function updateCamera(camera, kart, input, dt) {
+   if (!kart) return;
+   lookBehind = input.isDown('lookBehind');
+@@ -52,11 +91,32 @@ export function updateCamera(camera, kart, input, dt) {
+     camera.updateProjectionMatrix();
+   }
+ 
+-  if (cameraState.mode === 'chase') {
++  // Camera shake: apply random offset that decays over time
++  if (_shakeIntensity > 0.001) {
++    const mag = _shakeIntensity * 0.6; // max displacement ~0.6 units
++    _shakeOffset.set(
++      (Math.random() - 0.5) * 2 * mag,
++      (Math.random() - 0.5) * 2 * mag * 0.6, // less vertical
++      (Math.random() - 0.5) * 2 * mag
++    );
++    _shakeIntensity *= Math.pow(0.001, dt / (1 / _shakeDecay)); // exponential decay
++  } else {
++    _shakeOffset.set(0, 0, 0);
++    _shakeIntensity = 0;
++  }
++
++  if (cameraState.mode === 'flyover') {
++    updateFlyoverCamera(camera, kart, dt);
++  } else if (cameraState.mode === 'chase') {
+     updateChaseCamera(camera, kart, dt);
+   } else if (cameraState.mode === 'orbit') {
+     updateOrbitCamera(camera, kart, dt);
+   }
++
++  // Apply shake offset after all camera modes
++  if (_shakeIntensity > 0) {
++    camera.position.add(_shakeOffset);
++  }
+ }
+ 
+ function updateChaseCamera(camera, kart, dt) {
+@@ -122,17 +182,30 @@ function updateChaseCamera(camera, kart, dt) {
+     }
+   }
+ 
+-  // Look at target
++  // Look at target — spline-aware look-ahead for better corner anticipation
+   if (lookBehind) {
+     _desiredLook.copy(kart.position);
+     _desiredLook.y += 2;
+   } else {
+-    // Look ahead of kart
+-    _desiredLook.set(
+-      kart.position.x + sinH * 10,
+-      kart.position.y + 2,
+-      kart.position.z + cosH * 10
+-    );
++    // Base look-ahead: 10 units forward along kart heading
++    const baseAheadX = kart.position.x + sinH * 10;
++    const baseAheadZ = kart.position.z + cosH * 10;
++
++    // Spline-aware: sample a point ahead on the track spline to anticipate corners.
++    // At higher speeds, blend more toward the spline direction so the camera
++    // "looks into" upcoming corners instead of following the kart's heading alone.
++    if (_trackData && _trackData.centerCurve && kart._cachedNearest) {
++      const splineBlend = clamp(speedRatio * 0.45, 0, 0.4); // 0–40% blend toward spline
++      const lookAheadT = (kart._cachedNearest.t + 0.04) % 1; // ~4% ahead on spline
++      _trackData.centerCurve.getPointAt(lookAheadT, _splineAhead);
++      _desiredLook.set(
++        lerp(baseAheadX, _splineAhead.x, splineBlend),
++        kart.position.y + 2,
++        lerp(baseAheadZ, _splineAhead.z, splineBlend)
++      );
++    } else {
++      _desiredLook.set(baseAheadX, kart.position.y + 2, baseAheadZ);
++    }
+   }
+ 
+   // Smooth follow
+@@ -213,6 +286,69 @@ function raySegmentIntersect(ox, oz, dx, dz, ax, az, bx, bz) {
+   return null;
+ }
+ 
++/**
++ * Countdown flyover: sweep the camera along the track at height, then
++ * transition to behind-player chase position.
++ * Per spec: "camera does a 3s sweeping aerial flyover of the track"
++ */
++function updateFlyoverCamera(camera, kart, dt) {
++  if (!_trackData || !_trackData.centerCurve) {
++    // Fallback: just do chase
++    cameraState.mode = 'chase';
++    updateChaseCamera(camera, kart, dt);
++    return;
++  }
++
++  _flyoverProgress += dt / _flyoverDuration;
++
++  if (_flyoverProgress >= 1.0) {
++    // Flyover done — transition to chase behind player
++    cameraState.mode = 'chase';
++    resetCamera(camera, kart);
++    return;
++  }
++
++  const curve = _trackData.centerCurve;
++  // Start from ~10% before the player's start position, sweep ~35% of the track
++  const startT = _flyoverStartT;
++  const sweepRange = 0.35; // fraction of track to cover
++  const eased = easeInOutSine(_flyoverProgress);
++
++  // Camera follows the spline at height
++  const camT = (startT - 0.1 + eased * sweepRange + 1) % 1;
++  const lookT = (camT + 0.05) % 1; // look slightly ahead
++
++  const camPt = curve.getPointAt(camT);
++  const lookPt = curve.getPointAt(lookT);
++
++  // Fly at altitude 30-40 units above the road, slightly offset to the side
++  const flyHeight = 35 + Math.sin(eased * Math.PI) * 10; // peaks at midpoint
++  const sideOffset = Math.cos(eased * Math.PI * 2) * 15; // gentle side sway
++
++  // Get tangent for lateral offset direction
++  const tangent = curve.getTangentAt(camT).normalize();
++  const sideX = -tangent.z; // perpendicular in XZ plane
++  const sideZ = tangent.x;
++
++  _desiredPos.set(
++    camPt.x + sideX * sideOffset,
++    camPt.y + flyHeight,
++    camPt.z + sideZ * sideOffset
++  );
++  _desiredLook.set(lookPt.x, lookPt.y + 2, lookPt.z);
++
++  // Smooth but faster lerp for flyover (don't need as much smoothing)
++  const flyLerp = 1 - Math.pow(0.02, dt);
++  camera.position.lerp(_desiredPos, flyLerp);
++  _currentLook.lerp(_desiredLook, flyLerp);
++  camera.lookAt(_currentLook);
++}
++
++/** Sine ease-in-out for smooth flyover movement */
++function easeInOutSine(t) {
++  return -(Math.cos(Math.PI * t) - 1) / 2;
++}
++
+ function updateOrbitCamera(camera, kart, dt) {
+   cameraState.orbitAngle += dt * (Math.PI * 2 / 3); // one revolution per 3s
+   const target = cameraState.orbitTarget || kart.position;
+@@ -248,5 +384,7 @@ export function resetCamera(camera, kart) {
+   );
+   camera.lookAt(_currentLook);
+   driftShift = 0;
++  _shakeIntensity = 0;
++  _shakeOffset.set(0, 0, 0);
+   cameraState.mode = 'chase';
+ }
+\ No newline at end of file
+diff --git a/output/js/main.js b/output/js/main.js
+index fadcd25..840c7da 100644
+--- a/output/js/main.js
++++ b/output/js/main.js
+@@ -7,7 +7,7 @@ import { FIXED_DT } from './utils.js';
+ import { createKart, updateKart, placeKart } from './kart.js';
+ import { updatePhysics } from './physics.js';
+ import { updateDrift, getDriftSparkColor, getDriftProgress, applyBoost } from './drift.js';
+-import { updateCamera, resetCamera, cameraState, setCameraTrackData } from './camera.js';
++import { updateCamera, resetCamera, cameraState, setCameraTrackData, triggerCameraShake, startFlyover } from './camera.js';
+ import { buildTrack, findNearestSplinePoint } from './track.js';
+ import { characters } from './characters.js';
+ import { initParticles, updateParticles, emitDriftSparks, emitBoostFlame, emitDust, emitStarTrail } from './particles.js';
+@@ -267,16 +267,19 @@ function fixedUpdate(dt) {
+     if (playerKart._wallHitFrame) {
+       _audioSync.playWallHit();
+       playerKart._wallHitFrame = false;
++      triggerCameraShake(0.3);
+     }
+     // Kart-to-kart bump
+     if (playerKart._kartBumpFrame) {
+       _audioSync.playKartBump();
+       playerKart._kartBumpFrame = false;
++      triggerCameraShake(0.15);
+     }
+     // Item hit (player was struck by an item)
+     if (playerKart._itemHitFrame) {
+       _audioSync.playItemHit();
+       playerKart._itemHitFrame = false;
++      triggerCameraShake(0.5);
+     }
+     // Shield pop (shield blocked a hit or expired)
+     if (playerKart._shieldPopFrame) {
+@@ -284,6 +287,14 @@ function fixedUpdate(dt) {
+       playerKart._shieldPopFrame = false;
+     }
+   }
++
++  // Camera shake for impacts even when audio isn't loaded
++  // (The flags may already be consumed above, so only trigger if still set)
++  if (playerKart) {
++    if (playerKart._wallHitFrame) { triggerCameraShake(0.3); playerKart._wallHitFrame = false; }
++    if (playerKart._kartBumpFrame) { triggerCameraShake(0.15); playerKart._kartBumpFrame = false; }
++    if (playerKart._itemHitFrame) { triggerCameraShake(0.5); playerKart._itemHitFrame = false; }
++  }
+ }
+ 
+ /* ═══════════════════════  VISUAL UPDATE  ═══════════════════════ */
+@@ -734,6 +745,7 @@ async function startRace() {
+     playerKart._startBoostGranted = false;
+   }
+   resetCamera(camera, playerKart);
++  startFlyover(playerKart); // Begin countdown flyover sweep per spec
+ 
+   // Expose for debug / testing
+   window.__allKarts = allKarts;
+diff --git a/test_after_steering.png b/test_after_steering.png
+new file mode 100644
+index 0000000..9db97fd
+Binary files /dev/null and b/test_after_steering.png differ
+diff --git a/test_camera_improvements.js b/test_camera_improvements.js
+new file mode 100644
+index 0000000..d9d5fae
+--- /dev/null
++++ b/test_camera_improvements.js
+@@ -0,0 +1,144 @@
++// Test camera improvements: flyover, spline look-ahead, camera shake
++const { chromium } = require('playwright');
++
++(async () => {
++  const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-gpu'] });
++  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++
++  const errors = [];
++  page.on('console', msg => {
++    if (msg.type() === 'error') errors.push(msg.text());
++  });
++  page.on('pageerror', e => errors.push(e.message));
++
++  await page.goto('http://localhost:4567/', { waitUntil: 'networkidle', timeout: 15000 });
++  await page.waitForTimeout(1000);
++
++  // Press Enter to start
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(500);
++
++  // Select Sunset Bay (first track, already selected)
++  await page.click('#ts-next');
++  await page.waitForTimeout(300);
++
++  // Select character (already selected)
++  await page.click('#cs-next');
++  await page.waitForTimeout(300);
++
++  // Start race
++  await page.click('#ds-start');
++  await page.waitForTimeout(500);
++
++  // Check: camera should be in flyover mode during the first ~3 seconds
++  const flyoverCheck = await page.evaluate(() => {
++    // The camera module's cameraState should be 'flyover' at the start
++    // Check if the camera is high up (flyover altitude)
++    const cam = window.__THREE_SCENE__?.camera;
++    return {
++      cameraY: window.__THREE_CAMERA__?.position?.y || 'no ref',
++      // Check via the game's internal state
++      mode: 'checking via screenshot position'
++    };
++  });
++  console.log('Flyover check:', JSON.stringify(flyoverCheck));
++
++  // Take screenshot during flyover phase (should show track from above)
++  await page.screenshot({ path: 'test_flyover.png' });
++  console.log('Screenshot taken during flyover phase');
++
++  // Wait for flyover to end + countdown to pass
++  await page.waitForTimeout(4000);
++
++  // Take screenshot during chase cam (should show behind-kart view)
++  await page.screenshot({ path: 'test_chase_cam.png' });
++  console.log('Screenshot taken during chase cam');
++
++  // Wait for race to start and drive a bit
++  await page.waitForTimeout(2000);
++  
++  // Start driving forward
++  await page.keyboard.down('ArrowUp');
++  await page.waitForTimeout(3000);
++
++  // Check that _cachedNearest is present for spline look-ahead
++  const splineCheck = await page.evaluate(() => {
++    const karts = window.__allKarts;
++    if (!karts || !karts.length) return { error: 'no karts' };
++    const player = karts.find(k => k.isPlayer);
++    return {
++      hasNearest: !!player?._cachedNearest,
++      splineT: player?._cachedNearest?.t,
++      speed: player?.speed,
++    };
++  });
++  console.log('Spline look-ahead data:', JSON.stringify(splineCheck));
++
++  // Take screenshot while driving
++  await page.screenshot({ path: 'test_driving.png' });
++
++  // Test camera shake by checking if triggerCameraShake is accessible
++  // We'll verify by driving into a wall
++  await page.keyboard.down('ArrowRight');
++  await page.waitForTimeout(2000);
++  await page.keyboard.up('ArrowRight');
++  await page.waitForTimeout(1000);
++
++  await page.screenshot({ path: 'test_after_steering.png' });
++  
++  // Release forward
++  await page.keyboard.up('ArrowUp');
++
++  // Check for errors
++  console.log('\nConsole errors:', errors.length ? errors.join('\n') : 'NONE');
++
++  // Now test a different track to verify consistency
++  // Press Escape to pause, then quit
++  await page.keyboard.press('Escape');
++  await page.waitForTimeout(500);
++  
++  // Click Quit to Menu
++  const quitBtn = await page.$('[data-act="quit"]');
++  if (quitBtn) {
++    await quitBtn.click();
++    await page.waitForTimeout(1000);
++
++    // Start again with Neon Grid
++    await page.keyboard.press('Enter');
++    await page.waitForTimeout(500);
++
++    // Select Neon Grid (3rd track, index 2)
++    const cards = await page.$$('.card');
++    if (cards[2]) await cards[2].click();
++    await page.waitForTimeout(200);
++    await page.click('#ts-next');
++    await page.waitForTimeout(300);
++    await page.click('#cs-next');
++    await page.waitForTimeout(300);
++    await page.click('#ds-start');
++    await page.waitForTimeout(500);
++
++    // Screenshot during Neon Grid flyover
++    await page.screenshot({ path: 'test_neon_flyover.png' });
++    console.log('Neon Grid flyover screenshot taken');
++
++    await page.waitForTimeout(6000);
++
++    // Check race state
++    const raceCheck = await page.evaluate(() => {
++      return {
++        status: window.__raceState?.status,
++        kartsCount: window.__allKarts?.length,
++        errors: 'none'
++      };
++    });
++    console.log('Race state after countdown:', JSON.stringify(raceCheck));
++    await page.screenshot({ path: 'test_neon_racing.png' });
++  }
++
++  const finalErrors = errors.filter(e => !e.includes('favicon'));
++  console.log('\n=== FINAL RESULT ===');
++  console.log('Errors:', finalErrors.length ? finalErrors.join('\n') : 'NONE - ALL CLEAR');
++
++  await browser.close();
++})();
+diff --git a/test_camera_v2.js b/test_camera_v2.js
+new file mode 100644
+index 0000000..321c27d
+--- /dev/null
++++ b/test_camera_v2.js
+@@ -0,0 +1,84 @@
++// Quick test: verify flyover + countdown timing and all 4 tracks
++const { chromium } = require('playwright');
++
++(async () => {
++  const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-gpu'] });
++  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++
++  const errors = [];
++  page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
++  page.on('pageerror', e => errors.push(e.message));
++
++  await page.goto('http://localhost:4567/', { waitUntil: 'networkidle', timeout: 15000 });
++  await page.waitForTimeout(1000);
++
++  const tracks = ['Sunset Bay', 'Mossy Canyon', 'Neon Grid', 'Volcano Peak'];
++  
++  for (let ti = 0; ti < 4; ti++) {
++    console.log(`\n--- Testing Track ${ti}: ${tracks[ti]} ---`);
++    
++    // Press Enter
++    await page.keyboard.press('Enter');
++    await page.waitForTimeout(500);
++
++    // Select track
++    const cards = await page.$$('#track-cards .card');
++    if (cards[ti]) await cards[ti].click();
++    await page.waitForTimeout(200);
++    await page.click('#ts-next');
++    await page.waitForTimeout(300);
++    await page.click('#cs-next');
++    await page.waitForTimeout(300);
++    await page.click('#ds-start');
++    await page.waitForTimeout(200);
++
++    // Check camera mode immediately
++    // Take flyover screenshot at 1s
++    await page.waitForTimeout(1000);
++    await page.screenshot({ path: `test_track${ti}_flyover.png` });
++
++    // Wait for full countdown (6s total from race start, already waited 1.2s)
++    await page.waitForTimeout(6000);
++
++    // Check state
++    const state = await page.evaluate(() => {
++      return {
++        status: window.__raceState?.status,
++        karts: window.__allKarts?.length,
++        playerSpeed: window.__allKarts?.find(k => k.isPlayer)?.speed,
++      };
++    });
++    console.log(`State: ${JSON.stringify(state)}`);
++
++    // Drive for 3s
++    await page.keyboard.down('ArrowUp');
++    await page.waitForTimeout(3000);
++    await page.keyboard.up('ArrowUp');
++
++    await page.screenshot({ path: `test_track${ti}_racing.png` });
++
++    // Verify spline look-ahead
++    const cam = await page.evaluate(() => {
++      const p = window.__allKarts?.find(k => k.isPlayer);
++      return {
++        hasNearest: !!p?._cachedNearest,
++        speed: p?.speed?.toFixed(1),
++      };
++    });
++    console.log(`Camera data: ${JSON.stringify(cam)}`);
++
++    // Quit to menu
++    await page.keyboard.press('Escape');
++    await page.waitForTimeout(300);
++    const quitBtn = await page.$('[data-act="quit"]');
++    if (quitBtn) await quitBtn.click();
++    await page.waitForTimeout(500);
++  }
++
++  const finalErrors = errors.filter(e => !e.includes('favicon'));
++  console.log(`\n=== FINAL: ${finalErrors.length} errors ===`);
++  if (finalErrors.length) console.log(finalErrors.join('\n'));
++  else console.log('ALL CLEAR — zero errors across all 4 tracks');
++
++  await browser.close();
++})();
+diff --git a/test_chase_cam.png b/test_chase_cam.png
+new file mode 100644
+index 0000000..0d47d3e
+Binary files /dev/null and b/test_chase_cam.png differ
+diff --git a/test_driving.png b/test_driving.png
+new file mode 100644
+index 0000000..bc33e6d
+Binary files /dev/null and b/test_driving.png differ
+diff --git a/test_flyover.png b/test_flyover.png
+new file mode 100644
+index 0000000..014a031
+Binary files /dev/null and b/test_flyover.png differ
+diff --git a/test_neon_flyover.png b/test_neon_flyover.png
+new file mode 100644
+index 0000000..f3798d7
+Binary files /dev/null and b/test_neon_flyover.png differ
+diff --git a/test_neon_racing.png b/test_neon_racing.png
+new file mode 100644
+index 0000000..66aef44
+Binary files /dev/null and b/test_neon_racing.png differ
+diff --git a/test_track0_flyover.png b/test_track0_flyover.png
+new file mode 100644
+index 0000000..1af03ed
+Binary files /dev/null and b/test_track0_flyover.png differ
+diff --git a/test_track0_racing.png b/test_track0_racing.png
+new file mode 100644
+index 0000000..e9ce913
+Binary files /dev/null and b/test_track0_racing.png differ
+diff --git a/test_track1_flyover.png b/test_track1_flyover.png
+new file mode 100644
+index 0000000..7cb7afa
+Binary files /dev/null and b/test_track1_flyover.png differ
+diff --git a/test_track1_racing.png b/test_track1_racing.png
+new file mode 100644
+index 0000000..8ebe635
+Binary files /dev/null and b/test_track1_racing.png differ
+diff --git a/test_track2_flyover.png b/test_track2_flyover.png
+new file mode 100644
+index 0000000..cc12c96
+Binary files /dev/null and b/test_track2_flyover.png differ
+diff --git a/test_track2_racing.png b/test_track2_racing.png
+new file mode 100644
+index 0000000..b5292ed
+Binary files /dev/null and b/test_track2_racing.png differ
+diff --git a/test_track3_flyover.png b/test_track3_flyover.png
+new file mode 100644
+index 0000000..d9c9d2c
+Binary files /dev/null and b/test_track3_flyover.png differ
+diff --git a/test_track3_racing.png b/test_track3_racing.png
+new file mode 100644
+index 0000000..cc0f310
+Binary files /dev/null and b/test_track3_racing.png differ
