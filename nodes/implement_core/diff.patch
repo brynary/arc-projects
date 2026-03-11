@@ -1,0 +1,3779 @@
+diff --git a/.workflow/implementation-core.md b/.workflow/implementation-core.md
+new file mode 100644
+index 0000000..c7b22c1
+--- /dev/null
++++ b/.workflow/implementation-core.md
+@@ -0,0 +1,74 @@
++# Implementation Log: Core Engine (Phases 1-4)
++
++## Status: ✅ COMPLETE
++
++## Phase 1: Project Scaffold
++- **`output/index.html`** — Import map for Three.js r160 CDN, canvas element, UI overlay divs, module script tag
++- **`output/css/style.css`** — Fullscreen canvas reset, CSS variables (--gold, --silver, --bronze, --accent-cyan, --bg-dark), z-index layering, .hidden utility
++- **`output/js/main.js`** — Entry point with game loop (requestAnimationFrame, dt clamped to 1/30), state machine (menu/countdown/racing/paused/results), test hooks
++- **`output/js/input.js`** — InputManager singleton with keydown/keyup tracking, justPressed/justReleased edge detection, logical helpers (isAccel, isBrake, isLeft, isRight, isDrift, isItem, isPause, isFullscreen, isConfirm)
++- **`output/js/utils/mathUtils.js`** — clamp, lerp, remap, smoothstep, wrapAngle, angleDiff, angleLerp, pointInPolygon2D, distanceXZ
++- **`output/js/utils/voxelUtils.js`** — buildMergedBoxes (manual geometry merge with vertex colors, 36 verts/box), createInstancedVoxels, hexToRgb
++
++## Phase 2: Track System
++- **`output/js/tracks/trackBase.js`** — 13 exported functions: buildTrackSpline, sampleSpline, buildRoadMesh (with curbing + lane markings), buildWalls (with noWallRanges), buildCheckpointPlanes, testCheckpointCrossing, isOnRoad, getNearestSplineT (coarse+ternary refinement), getTrackYAtXZ, buildPrecomputedLookup, buildGroundPlane, buildSkyGradient, buildFullTrack
++- **`output/js/tracks/sunsetCircuit.js`** — 36 control points, oval coastal loop (~900u), 6 sections: Start Straight → Sunset Hairpin → Palm Beach Run → S-Curve Climb → Cliff Tunnel → Ocean Vista. 6 checkpoints, sand trap zones, 18 palm trees, ocean plane, sun sphere, checkered banner, beach huts, cliff rocks. Warm sunset lighting.
++- **`output/js/tracks/crystalCaverns.js`** — 51 control points, figure-8 (~1200u), 8 sections: Mineshaft → Lava Canyon → Rickety Bridge (8u wide, no walls) → Crossover Ramp (Y=8) → Crystal Grotto → Spiral Descent → Mushroom Fork → Return Tunnel. 8 checkpoints, lava/offroad zones, crystal clusters with point lights, wooden bridge planks, mushrooms, mine cart rails, cave walls. Dark cave lighting with fog.
++- **Textures generated**: road.png, grass.png, dirt.png (voxel pixel art style via imagegen)
++
++## Phase 3: Kart & Physics
++- **`output/js/characters/characterData.js`** — 4 characters (Brix/Zippy/Chunk/Pixel) with stats, derived helpers: getMaxSpeed (42-50), getAccelRate, getTurnRateHigh/Low, getDriftThreshold
++- **`output/js/characters/kartBuilder.js`** — Per-character voxel kart meshes via buildMergedBoxes. Brix (60+ boxes, red robot, tank treads), Zippy (50+ boxes, yellow big-head, oversized wheels), Chunk (70+ boxes, dwarf miner, mine cart), Pixel (55+ boxes, purple cat, hover plates). Emissive accents for LED eyes, helmet lights, hover plates.
++- **`output/js/physics.js`** — createKartState factory, updateKartPhysics with: stun handling, invincibility timer, boost decay, acceleration (with off-road 60% penalty), steering (speed-scaled turn rate), wall collision (glancing 20% speed loss vs direct 50% + stun), off-road detection via isOnRoad, stuck detection (5s timeout → respawn), respawnKart function
++- **`output/js/camera.js`** — createCameraController with smooth chase follow (behind + above), drift lateral offset (±2u), boost FOV effect (75→85°), frame-rate-independent lerp, reset() for teleport snap
++
++## Phase 4: Drift & Boost
++- **`output/js/drift.js`** — Drift state machine: Idle→Drifting (shift+steer+speed>threshold), tier progression (0.6s→T1, 1.2s→T2, 2.0s→T3), boost rewards (T1: 0.7s/1.3×, T2: 1.1s/1.4×, T3: 1.5s/1.5×), counter-steer tightens arc, same-steer widens, wall hit cancels drift. Normal steering disabled during drift (drift provides all turning). Kart visual tilt during drift.
++
++## Integration
++- main.js orchestrates: menu system (title → track select → character select), race start, game loop, checkpoint tracking, HUD updates, pause menu, test hooks
++- Menu supports keyboard navigation (arrows + Enter/Esc) and click
++- HUD shows position, lap counter, timer, speed %, drift bar with tier colors, item slot, control hints
++- Test hooks: `render_game_to_text()` returns full game state JSON, `advanceTime(ms)` steps game deterministically
++
++## Verified Behaviors
++| Test | Result |
++|---|---|
++| Canvas renders | ✅ WebGL active, 1280×720 |
++| Zero console errors | ✅ |
++| Menu navigation | ✅ Title → Track → Character → Race |
++| Track loading (Sunset Circuit) | ✅ |
++| Track loading (Crystal Caverns) | ✅ |
++| Kart acceleration to max speed | ✅ (48.0/48.0 for Brix) |
++| Kart steering | ✅ (heading changes on A/D) |
++| Kart braking | ✅ (speed → 0 on S key) |
++| Off-road detection | ✅ |
++| Drift activation | ✅ (drifting=true when conditions met) |
++| Drift wall cancellation | ✅ |
++| Boost tier 1 (0.7s timer) | ✅ |
++| Boost tier 2 stacking | ✅ |
++| Boost tier 3 stacking | ✅ |
++| Camera smooth follow | ✅ |
++| render_game_to_text() | ✅ |
++| advanceTime() | ✅ |
++| Pause/Resume | ✅ |
++| Track switching | ✅ |
++
++## File Summary
++| File | Lines | Purpose |
++|---|---|---|
++| index.html | 28 | Entry point with import map |
++| css/style.css | ~60 | Base styles, CSS vars |
++| js/main.js | ~555 | Game loop, state machine, menus, HUD, integration |
++| js/input.js | ~147 | Keyboard input manager |
++| js/physics.js | ~340 | Arcade kart physics |
++| js/drift.js | ~98 | Drift/boost state machine |
++| js/camera.js | ~135 | Chase camera controller |
++| js/utils/mathUtils.js | ~80 | Math utilities |
++| js/utils/voxelUtils.js | ~150 | Voxel geometry builder |
++| js/characters/characterData.js | ~60 | Character stats |
++| js/characters/kartBuilder.js | ~377 | Voxel kart meshes |
++| js/tracks/trackBase.js | ~583 | Track building utilities |
++| js/tracks/sunsetCircuit.js | ~348 | Track 1 definition |
++| js/tracks/crystalCaverns.js | ~529 | Track 2 definition |
++| **Total** | **~3,490** | |
+diff --git a/output/css/style.css b/output/css/style.css
+new file mode 100644
+index 0000000..cb3499d
+--- /dev/null
++++ b/output/css/style.css
+@@ -0,0 +1,70 @@
++/* ── Reset ─────────────────────────────────────────────────────────── */
++* {
++  margin: 0;
++  padding: 0;
++  box-sizing: border-box;
++}
++
++/* ── CSS Variables ─────────────────────────────────────────────────── */
++:root {
++  --gold: #FFD700;
++  --silver: #C0C0C0;
++  --bronze: #CD7F32;
++  --accent-cyan: #00DDFF;
++  --bg-dark: rgba(0, 0, 0, 0.7);
++
++  --z-canvas: 0;
++  --z-hud: 10;
++  --z-menu: 20;
++  --z-pause: 30;
++  --z-countdown: 40;
++}
++
++/* ── Base ──────────────────────────────────────────────────────────── */
++html, body {
++  overflow: hidden;
++  background: #000;
++  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
++  color: #fff;
++}
++
++/* ── Game Canvas ───────────────────────────────────────────────────── */
++#gameCanvas {
++  display: block;
++  width: 100vw;
++  height: 100vh;
++  position: relative;
++  z-index: var(--z-canvas);
++}
++
++/* ── UI Overlay ────────────────────────────────────────────────────── */
++#ui-overlay {
++  position: fixed;
++  inset: 0;
++  pointer-events: none;
++  z-index: var(--z-hud);
++}
++
++#ui-overlay * {
++  text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.8), 0 0 6px rgba(0, 0, 0, 0.5);
++}
++
++/* Children opt into interactivity */
++#ui-overlay button,
++#ui-overlay a,
++#ui-overlay input,
++#ui-overlay select,
++#ui-overlay [data-interactive] {
++  pointer-events: auto;
++}
++
++/* ── Z-index layers ───────────────────────────────────────────────── */
++.layer-hud      { z-index: var(--z-hud); }
++.layer-menu     { z-index: var(--z-menu); }
++.layer-pause    { z-index: var(--z-pause); }
++.layer-countdown { z-index: var(--z-countdown); }
++
++/* ── Utility ───────────────────────────────────────────────────────── */
++.hidden {
++  display: none !important;
++}
+diff --git a/output/index.html b/output/index.html
+new file mode 100644
+index 0000000..1b95d42
+--- /dev/null
++++ b/output/index.html
+@@ -0,0 +1,27 @@
++<!DOCTYPE html>
++<html lang="en">
++<head>
++  <meta charset="utf-8">
++  <meta name="viewport" content="width=device-width, initial-scale=1.0">
++  <title>Fabro Racer Mini</title>
++  <link rel="stylesheet" href="css/style.css">
++  <script type="importmap">
++  {
++    "imports": {
++      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
++    }
++  }
++  </script>
++</head>
++<body>
++  <canvas id="gameCanvas"></canvas>
++  <div id="ui-overlay">
++    <div id="menu-container"></div>
++    <div id="hud-container" class="hidden"></div>
++    <div id="pause-container" class="hidden"></div>
++    <div id="countdown-overlay" class="hidden"></div>
++    <div id="results-container" class="hidden"></div>
++  </div>
++  <script type="module" src="js/main.js"></script>
++</body>
++</html>
+diff --git a/output/js/camera.js b/output/js/camera.js
+new file mode 100644
+index 0000000..03fb97f
+--- /dev/null
++++ b/output/js/camera.js
+@@ -0,0 +1,135 @@
++/**
++ * camera — smooth chase camera with drift offset and boost FOV effects.
++ */
++import * as THREE from 'three';
++import { clamp, lerp } from './utils/mathUtils.js';
++
++/**
++ * Create a camera controller that smoothly follows a kart.
++ *
++ * @param {THREE.PerspectiveCamera} camera
++ * @returns {object} controller with setTarget(), update(dt), and reset()
++ */
++export function createCameraController(camera) {
++  const controller = {
++    target: null,
++    camera,
++
++    /* ── Tuning ────────────────────────────────────────────────────── */
++    offset: new THREE.Vector3(0, 4, -8),  // behind and above
++    lookAheadDist: 5,
++    smoothing: 0.08,                       // per-frame at 60 fps
++    driftOffset: 0,                        // current lateral shift
++    driftOffsetTarget: 0,
++    driftLateralMax: 2.0,
++    fovBase: 75,
++    fovBoost: 85,
++    fovCurrent: 75,
++
++    /* ── Interpolated state ────────────────────────────────────────── */
++    currentPos: new THREE.Vector3(),
++    currentLookAt: new THREE.Vector3(),
++
++    /* ── API ───────────────────────────────────────────────────────── */
++
++    /**
++     * Set the kart state object to follow.
++     * @param {object} kartState
++     */
++    setTarget(kartState) {
++      this.target = kartState;
++    },
++
++    /**
++     * Update camera position and orientation.  Call once per frame.
++     * @param {number} dt — frame delta in seconds
++     */
++    update(dt) {
++      const t = this.target;
++      if (!t) return;
++
++      // Frame-rate-independent smoothing factor
++      const factor = 1 - Math.pow(1 - this.smoothing, dt * 60);
++
++      /* ── Drift lateral offset ──────────────────────────────────── */
++      this.driftOffsetTarget = t.isDrifting
++        ? t.driftDirection * this.driftLateralMax
++        : 0;
++      this.driftOffset = lerp(this.driftOffset, this.driftOffsetTarget, factor);
++
++      /* ── Boost FOV ─────────────────────────────────────────────── */
++      const targetFov = t.boostTimer > 0 ? this.fovBoost : this.fovBase;
++      this.fovCurrent = lerp(this.fovCurrent, targetFov, factor);
++      this.camera.fov = this.fovCurrent;
++      this.camera.updateProjectionMatrix();
++
++      /* ── Ideal position (behind kart, offset laterally for drift) */
++      const h = t.heading;
++      const sinH = Math.sin(h);
++      const cosH = Math.cos(h);
++
++      // "Behind" = negative forward direction
++      // Forward: (sinH, cosH)
++      // Left:    (-cosH, sinH)
++      const behindDist = 8;
++      const heightAbove = 4;
++
++      const idealX = t.x - sinH * behindDist + (-cosH) * this.driftOffset;
++      const idealY = t.y + heightAbove;
++      const idealZ = t.z - cosH * behindDist + sinH * this.driftOffset;
++
++      /* ── Ideal look-at (ahead of kart) ─────────────────────────── */
++      const lookAtX = t.x + sinH * this.lookAheadDist;
++      const lookAtY = t.y + 1;
++      const lookAtZ = t.z + cosH * this.lookAheadDist;
++
++      /* ── Smooth interpolation ──────────────────────────────────── */
++      this.currentPos.x = lerp(this.currentPos.x, idealX, factor);
++      this.currentPos.y = lerp(this.currentPos.y, idealY, factor);
++      this.currentPos.z = lerp(this.currentPos.z, idealZ, factor);
++
++      this.currentLookAt.x = lerp(this.currentLookAt.x, lookAtX, factor);
++      this.currentLookAt.y = lerp(this.currentLookAt.y, lookAtY, factor);
++      this.currentLookAt.z = lerp(this.currentLookAt.z, lookAtZ, factor);
++
++      /* ── Apply to camera ───────────────────────────────────────── */
++      this.camera.position.copy(this.currentPos);
++      this.camera.lookAt(this.currentLookAt);
++    },
++
++    /**
++     * Snap camera to ideal position immediately (no interpolation).
++     * Useful after teleport / respawn / scene transitions.
++     */
++    reset() {
++      const t = this.target;
++      if (!t) return;
++
++      this.driftOffset = 0;
++      this.driftOffsetTarget = 0;
++      this.fovCurrent = this.fovBase;
++      this.camera.fov = this.fovBase;
++      this.camera.updateProjectionMatrix();
++
++      const h = t.heading;
++      const sinH = Math.sin(h);
++      const cosH = Math.cos(h);
++
++      this.currentPos.set(
++        t.x - sinH * 8,
++        t.y + 4,
++        t.z - cosH * 8,
++      );
++      this.currentLookAt.set(
++        t.x + sinH * this.lookAheadDist,
++        t.y + 1,
++        t.z + cosH * this.lookAheadDist,
++      );
++
++      this.camera.position.copy(this.currentPos);
++      this.camera.lookAt(this.currentLookAt);
++    },
++  };
++
++  return controller;
++}
+diff --git a/output/js/characters/characterData.js b/output/js/characters/characterData.js
+new file mode 100644
+index 0000000..9a6b987
+--- /dev/null
++++ b/output/js/characters/characterData.js
+@@ -0,0 +1,112 @@
++/**
++ * characterData — roster definitions and derived stat helpers.
++ *
++ * Stats are integers 1-5. Helper functions map them to physics values.
++ */
++
++export const CHARACTERS = {
++  brix: {
++    id: 'brix',
++    name: 'Brix',
++    speed: 4,
++    accel: 2,
++    handling: 2,
++    weight: 5,
++    color1: 0xFF2020,
++    color2: 0xC0C0C0,
++    aiPersonality: 'aggressive',
++  },
++  zippy: {
++    id: 'zippy',
++    name: 'Zippy',
++    speed: 2,
++    accel: 5,
++    handling: 4,
++    weight: 1,
++    color1: 0xFFDD00,
++    color2: 0x30DD30,
++    aiPersonality: 'itemFocused',
++  },
++  chunk: {
++    id: 'chunk',
++    name: 'Chunk',
++    speed: 3,
++    accel: 3,
++    handling: 3,
++    weight: 4,
++    color1: 0x8B5E3C,
++    color2: 0xDD8020,
++    aiPersonality: 'defensive',
++  },
++  pixel: {
++    id: 'pixel',
++    name: 'Pixel',
++    speed: 3,
++    accel: 4,
++    handling: 5,
++    weight: 2,
++    color1: 0x8020DD,
++    color2: 0x20DDDD,
++    aiPersonality: 'aggressiveTechnical',
++  },
++};
++
++/** Array of all character objects, for easy iteration. */
++export const CHARACTER_LIST = Object.values(CHARACTERS);
++
++/* ── Derived stat helpers ──────────────────────────────────────────── */
++
++/**
++ * Max forward speed (units/s).  Range: 42 (speed=1) → 50 (speed=5).
++ * @param {{speed:number}} stats
++ * @returns {number}
++ */
++export function getMaxSpeed(stats) {
++  return 40 + stats.speed * 2;
++}
++
++/**
++ * Seconds from standstill to max speed.  Range: 3.2s (accel=1) → 1.8s (accel=5).
++ * @param {{accel:number}} stats
++ * @returns {number}
++ */
++export function getAccelTime(stats) {
++  return 3.2 - (stats.accel - 1) * 0.35;
++}
++
++/**
++ * Acceleration rate (units/s²).
++ * @param {{speed:number, accel:number}} stats
++ * @returns {number}
++ */
++export function getAccelRate(stats) {
++  return getMaxSpeed(stats) / getAccelTime(stats);
++}
++
++/**
++ * Turn rate at max speed (rad/s).  Handling 3 → 2.0; scaled ±15% per point.
++ * @param {{handling:number}} stats
++ * @returns {number}
++ */
++export function getTurnRateHigh(stats) {
++  return 2.0 * (1 + (stats.handling - 3) * 0.15);
++}
++
++/**
++ * Turn rate at low/zero speed (rad/s).  Handling 3 → 3.5; scaled ±15% per point.
++ * @param {{handling:number}} stats
++ * @returns {number}
++ */
++export function getTurnRateLow(stats) {
++  return 3.5 * (1 + (stats.handling - 3) * 0.15);
++}
++
++/**
++ * Speed at which the kart can begin a drift.
++ * Base fraction 0.60 of max speed, shifted ±3% per weight point from 3.
++ * @param {{weight:number, speed:number}} stats
++ * @returns {number}
++ */
++export function getDriftThreshold(stats) {
++  return (0.60 + (stats.weight - 3) * 0.03) * getMaxSpeed(stats);
++}
+diff --git a/output/js/characters/kartBuilder.js b/output/js/characters/kartBuilder.js
+new file mode 100644
+index 0000000..f342e33
+--- /dev/null
++++ b/output/js/characters/kartBuilder.js
+@@ -0,0 +1,381 @@
++/**
++ * kartBuilder — voxel kart mesh generator.
++ *
++ * Each character gets a unique kart built from merged BoxGeometry primitives
++ * via buildMergedBoxes. Returns a THREE.Group with bounding info in userData.
++ */
++import * as THREE from 'three';
++import { buildMergedBoxes } from '../utils/voxelUtils.js';
++
++/* ── Per-character box definitions ─────────────────────────────────── */
++
++const WHEEL_COLOR = 0x222222;
++
++/**
++ * Brix — heavy red robot kart with silver bumper and tank-tread wheels.
++ */
++function buildBrixBoxes(def) {
++  const c1 = def.color1; // red
++  const c2 = def.color2; // silver
++
++  const boxes = [
++    // ── Chassis base ──
++    { x: 0, y: 0.65, z: 0, w: 2.2, h: 0.7, d: 3.2, color: c1 },
++    // Reinforced front bumper (silver bar across front)
++    { x: 0, y: 0.55, z: 1.75, w: 2.4, h: 0.25, d: 0.3, color: c2 },
++    // Under-chassis plate
++    { x: 0, y: 0.28, z: 0, w: 1.8, h: 0.06, d: 2.8, color: 0x444444 },
++    // Rear spoiler supports
++    { x: -0.5, y: 1.1, z: -1.45, w: 0.1, h: 0.2, d: 0.1, color: c2 },
++    { x: 0.5, y: 1.1, z: -1.45, w: 0.1, h: 0.2, d: 0.1, color: c2 },
++    // Rear spoiler blade
++    { x: 0, y: 1.25, z: -1.5, w: 1.8, h: 0.08, d: 0.35, color: c1 },
++
++    // ── Tank-tread-style wide wheels ──
++    { x: -1.3, y: 0.2, z: 1.0, w: 0.6, h: 0.35, d: 1.0, color: WHEEL_COLOR },
++    { x: 1.3, y: 0.2, z: 1.0, w: 0.6, h: 0.35, d: 1.0, color: WHEEL_COLOR },
++    { x: -1.3, y: 0.2, z: -1.0, w: 0.6, h: 0.35, d: 1.0, color: WHEEL_COLOR },
++    { x: 1.3, y: 0.2, z: -1.0, w: 0.6, h: 0.35, d: 1.0, color: WHEEL_COLOR },
++    // Wheel guards
++    { x: -1.15, y: 0.45, z: 1.0, w: 0.3, h: 0.15, d: 1.1, color: c1 },
++    { x: 1.15, y: 0.45, z: 1.0, w: 0.3, h: 0.15, d: 1.1, color: c1 },
++    { x: -1.15, y: 0.45, z: -1.0, w: 0.3, h: 0.15, d: 1.1, color: c1 },
++    { x: 1.15, y: 0.45, z: -1.0, w: 0.3, h: 0.15, d: 1.1, color: c1 },
++
++    // ── Seat ──
++    { x: 0, y: 1.08, z: -0.4, w: 0.9, h: 0.22, d: 0.8, color: c2 },
++    { x: 0, y: 1.28, z: -0.75, w: 0.9, h: 0.25, d: 0.2, color: c2 },
++
++    // ── Robot figure ──
++    // Torso
++    { x: 0, y: 1.6, z: -0.4, w: 0.8, h: 0.55, d: 0.5, color: c1 },
++    // Chest plate
++    { x: 0, y: 1.65, z: -0.12, w: 0.6, h: 0.3, d: 0.05, color: c2 },
++    // Head (square, metallic)
++    { x: 0, y: 2.1, z: -0.4, w: 0.65, h: 0.55, d: 0.65, color: 0xAAAAAA },
++    // Jaw piece
++    { x: 0, y: 1.88, z: -0.12, w: 0.5, h: 0.12, d: 0.08, color: 0x888888 },
++    // Visor strip
++    { x: 0, y: 2.12, z: -0.06, w: 0.55, h: 0.15, d: 0.04, color: 0x333333 },
++    // Thick arms
++    { x: -0.6, y: 1.55, z: -0.3, w: 0.3, h: 0.5, d: 0.35, color: c1 },
++    { x: 0.6, y: 1.55, z: -0.3, w: 0.3, h: 0.5, d: 0.35, color: c1 },
++    // Shoulder pads
++    { x: -0.6, y: 1.82, z: -0.3, w: 0.38, h: 0.12, d: 0.4, color: c2 },
++    { x: 0.6, y: 1.82, z: -0.3, w: 0.38, h: 0.12, d: 0.4, color: c2 },
++    // Hands (gripping steering wheel)
++    { x: -0.42, y: 1.32, z: 0.1, w: 0.2, h: 0.2, d: 0.2, color: 0x888888 },
++    { x: 0.42, y: 1.32, z: 0.1, w: 0.2, h: 0.2, d: 0.2, color: 0x888888 },
++    // Steering column
++    { x: 0, y: 1.2, z: 0.3, w: 0.08, h: 0.3, d: 0.08, color: 0x555555 },
++    // Steering wheel
++    { x: 0, y: 1.35, z: 0.15, w: 0.5, h: 0.06, d: 0.06, color: 0x555555 },
++    // Antenna base
++    { x: 0, y: 2.4, z: -0.4, w: 0.06, h: 0.2, d: 0.06, color: 0x888888 },
++  ];
++
++  const emissiveBoxes = [
++    // LED eyes (emissive red dots)
++    { x: -0.15, y: 2.14, z: -0.06, w: 0.1, h: 0.08, d: 0.04, color: 0xFF0000 },
++    { x: 0.15, y: 2.14, z: -0.06, w: 0.1, h: 0.08, d: 0.04, color: 0xFF0000 },
++    // Antenna tip
++    { x: 0, y: 2.55, z: -0.4, w: 0.1, h: 0.08, d: 0.1, color: 0xFF0000 },
++  ];
++
++  return { boxes, emissiveBoxes };
++}
++
++/**
++ * Zippy — narrow yellow kart with oversized wheels and big-headed character.
++ */
++function buildZippyBoxes(def) {
++  const c1 = def.color1; // yellow
++  const c2 = def.color2; // green
++
++  const boxes = [
++    // ── Chassis (narrow and light) ──
++    { x: 0, y: 0.55, z: 0, w: 1.6, h: 0.5, d: 2.6, color: c1 },
++    // Tapered nose
++    { x: 0, y: 0.5, z: 1.4, w: 1.0, h: 0.3, d: 0.4, color: c1 },
++    // Racing stripe (green center)
++    { x: 0, y: 0.82, z: 0.2, w: 0.3, h: 0.04, d: 2.0, color: c2 },
++    // Side trim
++    { x: -0.78, y: 0.55, z: 0, w: 0.06, h: 0.2, d: 2.4, color: c2 },
++    { x: 0.78, y: 0.55, z: 0, w: 0.06, h: 0.2, d: 2.4, color: c2 },
++
++    // ── Oversized round wheels ──
++    { x: -0.9, y: 0.28, z: 0.9, w: 0.5, h: 0.5, d: 0.5, color: WHEEL_COLOR },
++    { x: 0.9, y: 0.28, z: 0.9, w: 0.5, h: 0.5, d: 0.5, color: WHEEL_COLOR },
++    { x: -0.9, y: 0.28, z: -0.9, w: 0.5, h: 0.5, d: 0.5, color: WHEEL_COLOR },
++    { x: 0.9, y: 0.28, z: -0.9, w: 0.5, h: 0.5, d: 0.5, color: WHEEL_COLOR },
++    // Hubcaps (green)
++    { x: -1.18, y: 0.28, z: 0.9, w: 0.06, h: 0.2, d: 0.2, color: c2 },
++    { x: 1.18, y: 0.28, z: 0.9, w: 0.06, h: 0.2, d: 0.2, color: c2 },
++    { x: -1.18, y: 0.28, z: -0.9, w: 0.06, h: 0.2, d: 0.2, color: c2 },
++    { x: 1.18, y: 0.28, z: -0.9, w: 0.06, h: 0.2, d: 0.2, color: c2 },
++
++    // ── Seat ──
++    { x: 0, y: 0.85, z: -0.2, w: 0.6, h: 0.15, d: 0.6, color: c2 },
++    { x: 0, y: 0.97, z: -0.45, w: 0.55, h: 0.15, d: 0.15, color: c2 },
++
++    // ── Character figure: big head, tiny body ──
++    // Tiny body
++    { x: 0, y: 1.1, z: -0.2, w: 0.42, h: 0.25, d: 0.35, color: c1 },
++    // Spring legs (green)
++    { x: -0.12, y: 0.95, z: -0.15, w: 0.12, h: 0.15, d: 0.12, color: c2 },
++    { x: 0.12, y: 0.95, z: -0.15, w: 0.12, h: 0.15, d: 0.12, color: c2 },
++    // Spring coil detail
++    { x: -0.12, y: 0.9, z: -0.15, w: 0.15, h: 0.04, d: 0.15, color: c2 },
++    { x: 0.12, y: 0.9, z: -0.15, w: 0.15, h: 0.04, d: 0.15, color: c2 },
++    // Big head (1.0×1.0×1.0)
++    { x: 0, y: 1.75, z: -0.2, w: 1.0, h: 1.0, d: 1.0, color: c1 },
++    // Eyes (big dark circles)
++    { x: -0.22, y: 1.85, z: 0.33, w: 0.25, h: 0.3, d: 0.1, color: 0x111111 },
++    { x: 0.22, y: 1.85, z: 0.33, w: 0.25, h: 0.3, d: 0.1, color: 0x111111 },
++    // Eye highlights (white)
++    { x: -0.28, y: 1.92, z: 0.39, w: 0.08, h: 0.1, d: 0.04, color: 0xFFFFFF },
++    { x: 0.28, y: 1.92, z: 0.39, w: 0.08, h: 0.1, d: 0.04, color: 0xFFFFFF },
++    // Smile
++    { x: 0, y: 1.55, z: 0.36, w: 0.35, h: 0.08, d: 0.06, color: 0x111111 },
++    // Cheeks (rosy)
++    { x: -0.35, y: 1.65, z: 0.3, w: 0.15, h: 0.1, d: 0.05, color: 0xFFAA88 },
++    { x: 0.35, y: 1.65, z: 0.3, w: 0.15, h: 0.1, d: 0.05, color: 0xFFAA88 },
++    // Small arms (reaching for wheel)
++    { x: -0.32, y: 1.1, z: -0.05, w: 0.15, h: 0.22, d: 0.15, color: c1 },
++    { x: 0.32, y: 1.1, z: -0.05, w: 0.15, h: 0.22, d: 0.15, color: c1 },
++    // Tiny hands
++    { x: -0.28, y: 1.0, z: 0.08, w: 0.1, h: 0.1, d: 0.1, color: c1 },
++    { x: 0.28, y: 1.0, z: 0.08, w: 0.1, h: 0.1, d: 0.1, color: c1 },
++  ];
++
++  return { boxes, emissiveBoxes: [] };
++}
++
++/**
++ * Chunk — brown mine-cart kart with riveted panels and a dwarf driver.
++ */
++function buildChunkBoxes(def) {
++  const c1 = def.color1; // brown
++  const c2 = def.color2; // orange
++  const darkBrown = 0x5A3D28;
++  const skin = 0xDDB080;
++  const helmet = 0xFFDD00;
++
++  const boxes = [
++    // ── Mine-cart chassis ──
++    { x: 0, y: 0.7, z: 0, w: 2.0, h: 0.8, d: 3.0, color: c1 },
++    // Riveted edge strips (darker brown) — top edges
++    { x: -0.95, y: 1.14, z: 0, w: 0.12, h: 0.1, d: 3.0, color: darkBrown },
++    { x: 0.95, y: 1.14, z: 0, w: 0.12, h: 0.1, d: 3.0, color: darkBrown },
++    { x: 0, y: 1.14, z: 1.45, w: 2.0, h: 0.1, d: 0.12, color: darkBrown },
++    { x: 0, y: 1.14, z: -1.45, w: 2.0, h: 0.1, d: 0.12, color: darkBrown },
++    // Bottom edges
++    { x: -0.95, y: 0.35, z: 0, w: 0.12, h: 0.1, d: 3.0, color: darkBrown },
++    { x: 0.95, y: 0.35, z: 0, w: 0.12, h: 0.1, d: 3.0, color: darkBrown },
++    // Vertical rivet strips on sides
++    { x: -1.02, y: 0.75, z: 0.8, w: 0.05, h: 0.6, d: 0.08, color: darkBrown },
++    { x: -1.02, y: 0.75, z: -0.8, w: 0.05, h: 0.6, d: 0.08, color: darkBrown },
++    { x: 1.02, y: 0.75, z: 0.8, w: 0.05, h: 0.6, d: 0.08, color: darkBrown },
++    { x: 1.02, y: 0.75, z: -0.8, w: 0.05, h: 0.6, d: 0.08, color: darkBrown },
++    // Front plate (slightly lighter)
++    { x: 0, y: 0.7, z: 1.52, w: 1.8, h: 0.6, d: 0.05, color: 0x9B6E4C },
++
++    // ── Wheels (metal look) ──
++    { x: -1.1, y: 0.25, z: 1.0, w: 0.35, h: 0.45, d: 0.6, color: 0x333333 },
++    { x: 1.1, y: 0.25, z: 1.0, w: 0.35, h: 0.45, d: 0.6, color: 0x333333 },
++    { x: -1.1, y: 0.25, z: -1.0, w: 0.35, h: 0.45, d: 0.6, color: 0x333333 },
++    { x: 1.1, y: 0.25, z: -1.0, w: 0.35, h: 0.45, d: 0.6, color: 0x333333 },
++    // Hub caps (silver)
++    { x: -1.3, y: 0.25, z: 1.0, w: 0.05, h: 0.15, d: 0.15, color: 0xAAAAAA },
++    { x: 1.3, y: 0.25, z: 1.0, w: 0.05, h: 0.15, d: 0.15, color: 0xAAAAAA },
++    { x: -1.3, y: 0.25, z: -1.0, w: 0.05, h: 0.15, d: 0.15, color: 0xAAAAAA },
++    { x: 1.3, y: 0.25, z: -1.0, w: 0.05, h: 0.15, d: 0.15, color: 0xAAAAAA },
++
++    // ── Seat ──
++    { x: 0, y: 1.15, z: -0.3, w: 0.8, h: 0.18, d: 0.7, color: c2 },
++    { x: 0, y: 1.34, z: -0.6, w: 0.8, h: 0.22, d: 0.15, color: c2 },
++
++    // ── Dwarf figure ──
++    // Wide torso
++    { x: 0, y: 1.6, z: -0.3, w: 1.0, h: 0.5, d: 0.55, color: c2 },
++    // Belt
++    { x: 0, y: 1.4, z: -0.3, w: 1.02, h: 0.08, d: 0.57, color: darkBrown },
++    // Belt buckle
++    { x: 0, y: 1.4, z: -0.01, w: 0.15, h: 0.08, d: 0.05, color: 0xCCAA00 },
++    // Head
++    { x: 0, y: 2.05, z: -0.3, w: 0.6, h: 0.5, d: 0.55, color: skin },
++    // Nose (big round)
++    { x: 0, y: 2.0, z: 0.0, w: 0.2, h: 0.15, d: 0.15, color: 0xCC9970 },
++    // Eyes
++    { x: -0.14, y: 2.12, z: 0.0, w: 0.1, h: 0.1, d: 0.05, color: 0x222222 },
++    { x: 0.14, y: 2.12, z: 0.0, w: 0.1, h: 0.1, d: 0.05, color: 0x222222 },
++    // Bushy eyebrows
++    { x: -0.14, y: 2.22, z: 0.01, w: 0.16, h: 0.06, d: 0.06, color: c2 },
++    { x: 0.14, y: 2.22, z: 0.01, w: 0.16, h: 0.06, d: 0.06, color: c2 },
++    // Beard (orange boxes stacked)
++    { x: 0, y: 1.88, z: 0.05, w: 0.5, h: 0.15, d: 0.2, color: c2 },
++    { x: 0, y: 1.75, z: 0.08, w: 0.45, h: 0.12, d: 0.18, color: c2 },
++    { x: 0, y: 1.65, z: 0.1, w: 0.35, h: 0.1, d: 0.15, color: c2 },
++    // Mining helmet (yellow box on head)
++    { x: 0, y: 2.35, z: -0.3, w: 0.7, h: 0.14, d: 0.7, color: helmet },
++    // Helmet brim
++    { x: 0, y: 2.3, z: 0.1, w: 0.7, h: 0.06, d: 0.2, color: helmet },
++    // Arms (thick, short)
++    { x: -0.7, y: 1.55, z: -0.25, w: 0.35, h: 0.45, d: 0.35, color: c2 },
++    { x: 0.7, y: 1.55, z: -0.25, w: 0.35, h: 0.45, d: 0.35, color: c2 },
++    // Gloves
++    { x: -0.55, y: 1.35, z: 0.05, w: 0.25, h: 0.2, d: 0.25, color: darkBrown },
++    { x: 0.55, y: 1.35, z: 0.05, w: 0.25, h: 0.2, d: 0.25, color: darkBrown },
++  ];
++
++  const emissiveBoxes = [
++    // Helmet light (small emissive light on helmet)
++    { x: 0, y: 2.44, z: 0.12, w: 0.14, h: 0.14, d: 0.14, color: 0xFFFF80 },
++  ];
++
++  return { boxes, emissiveBoxes };
++}
++
++/**
++ * Pixel — sleek purple hover-kart with cyan accents and a cat driver.
++ */
++function buildPixelBoxes(def) {
++  const c1 = def.color1; // purple
++  const c2 = def.color2; // cyan
++  const darkPurple = 0x6010AA;
++
++  const boxes = [
++    // ── Sleek low chassis ──
++    { x: 0, y: 0.5, z: 0, w: 1.8, h: 0.4, d: 3.0, color: c1 },
++    // Tapered nose
++    { x: 0, y: 0.45, z: 1.35, w: 1.2, h: 0.25, d: 0.4, color: c1 },
++    // Side skirts
++    { x: -0.85, y: 0.35, z: 0, w: 0.14, h: 0.14, d: 2.6, color: darkPurple },
++    { x: 0.85, y: 0.35, z: 0, w: 0.14, h: 0.14, d: 2.6, color: darkPurple },
++    // Accent lines (cyan)
++    { x: -0.7, y: 0.72, z: 0.2, w: 0.06, h: 0.04, d: 2.0, color: c2 },
++    { x: 0.7, y: 0.72, z: 0.2, w: 0.06, h: 0.04, d: 2.0, color: c2 },
++    // Rear fin
++    { x: 0, y: 0.8, z: -1.4, w: 0.08, h: 0.3, d: 0.4, color: c1 },
++    // Rear fin tip (cyan)
++    { x: 0, y: 1.0, z: -1.55, w: 0.06, h: 0.06, d: 0.12, color: c2 },
++
++    // ── No visible wheels — hover plate housings (dark) ──
++    { x: -0.7, y: 0.25, z: 1.0, w: 0.5, h: 0.12, d: 0.7, color: darkPurple },
++    { x: 0.7, y: 0.25, z: 1.0, w: 0.5, h: 0.12, d: 0.7, color: darkPurple },
++    { x: -0.7, y: 0.25, z: -1.0, w: 0.5, h: 0.12, d: 0.7, color: darkPurple },
++    { x: 0.7, y: 0.25, z: -1.0, w: 0.5, h: 0.12, d: 0.7, color: darkPurple },
++
++    // ── Seat ──
++    { x: 0, y: 0.78, z: -0.3, w: 0.6, h: 0.14, d: 0.6, color: c2 },
++    { x: 0, y: 0.9, z: -0.55, w: 0.55, h: 0.14, d: 0.12, color: c2 },
++
++    // ── Cat figure ──
++    // Slim torso
++    { x: 0, y: 1.1, z: -0.3, w: 0.45, h: 0.35, d: 0.35, color: c1 },
++    // Head
++    { x: 0, y: 1.55, z: -0.3, w: 0.55, h: 0.5, d: 0.5, color: c1 },
++    // Pointed ears
++    { x: -0.22, y: 1.9, z: -0.3, w: 0.14, h: 0.25, d: 0.14, color: c1 },
++    { x: 0.22, y: 1.9, z: -0.3, w: 0.14, h: 0.25, d: 0.14, color: c1 },
++    // Inner ears
++    { x: -0.22, y: 1.92, z: -0.28, w: 0.08, h: 0.15, d: 0.08, color: 0xDD80FF },
++    { x: 0.22, y: 1.92, z: -0.28, w: 0.08, h: 0.15, d: 0.08, color: 0xDD80FF },
++    // Eyes (cat-shaped, cyan)
++    { x: -0.14, y: 1.6, z: -0.02, w: 0.14, h: 0.1, d: 0.05, color: c2 },
++    { x: 0.14, y: 1.6, z: -0.02, w: 0.14, h: 0.1, d: 0.05, color: c2 },
++    // Pupils (slit)
++    { x: -0.14, y: 1.6, z: 0.0, w: 0.04, h: 0.1, d: 0.03, color: 0x111111 },
++    { x: 0.14, y: 1.6, z: 0.0, w: 0.04, h: 0.1, d: 0.03, color: 0x111111 },
++    // Nose (tiny pink triangle)
++    { x: 0, y: 1.5, z: 0.01, w: 0.08, h: 0.06, d: 0.06, color: 0xDD80FF },
++    // Whiskers
++    { x: -0.3, y: 1.48, z: 0.0, w: 0.25, h: 0.02, d: 0.02, color: 0xCCCCCC },
++    { x: 0.3, y: 1.48, z: 0.0, w: 0.25, h: 0.02, d: 0.02, color: 0xCCCCCC },
++    { x: -0.28, y: 1.44, z: 0.0, w: 0.25, h: 0.02, d: 0.02, color: 0xCCCCCC },
++    { x: 0.28, y: 1.44, z: 0.0, w: 0.25, h: 0.02, d: 0.02, color: 0xCCCCCC },
++    // Slim arms
++    { x: -0.35, y: 1.05, z: -0.2, w: 0.16, h: 0.3, d: 0.16, color: c1 },
++    { x: 0.35, y: 1.05, z: -0.2, w: 0.16, h: 0.3, d: 0.16, color: c1 },
++    // Paws
++    { x: -0.32, y: 0.92, z: 0.0, w: 0.14, h: 0.12, d: 0.14, color: 0xDD80FF },
++    { x: 0.32, y: 0.92, z: 0.0, w: 0.14, h: 0.12, d: 0.14, color: 0xDD80FF },
++    // Tail (chain of 4 small purple cubes trailing behind)
++    { x: 0, y: 1.0, z: -0.7, w: 0.14, h: 0.14, d: 0.2, color: c1 },
++    { x: 0.08, y: 1.1, z: -0.95, w: 0.12, h: 0.12, d: 0.18, color: c1 },
++    { x: 0.15, y: 1.25, z: -1.15, w: 0.1, h: 0.1, d: 0.15, color: c1 },
++    { x: 0.12, y: 1.4, z: -1.3, w: 0.1, h: 0.1, d: 0.12, color: 0x9030EE },
++  ];
++
++  const emissiveBoxes = [
++    // Flat hover plates (cyan, emissive) at 4 corners
++    { x: -0.7, y: 0.15, z: 1.0, w: 0.4, h: 0.06, d: 0.55, color: 0x20DDDD },
++    { x: 0.7, y: 0.15, z: 1.0, w: 0.4, h: 0.06, d: 0.55, color: 0x20DDDD },
++    { x: -0.7, y: 0.15, z: -1.0, w: 0.4, h: 0.06, d: 0.55, color: 0x20DDDD },
++    { x: 0.7, y: 0.15, z: -1.0, w: 0.4, h: 0.06, d: 0.55, color: 0x20DDDD },
++    // Eye glow overlay
++    { x: -0.14, y: 1.6, z: 0.01, w: 0.12, h: 0.08, d: 0.02, color: 0x40FFFF },
++    { x: 0.14, y: 1.6, z: 0.01, w: 0.12, h: 0.08, d: 0.02, color: 0x40FFFF },
++  ];
++
++  return { boxes, emissiveBoxes };
++}
++
++/* ── Builder dispatch ──────────────────────────────────────────────── */
++
++const BUILDERS = {
++  brix: buildBrixBoxes,
++  zippy: buildZippyBoxes,
++  chunk: buildChunkBoxes,
++  pixel: buildPixelBoxes,
++};
++
++/**
++ * Build a kart mesh for the given character definition.
++ * @param {{id:string, color1:number, color2:number}} characterDef
++ * @returns {THREE.Group}
++ */
++export function buildKartMesh(characterDef) {
++  const builderFn = BUILDERS[characterDef.id];
++  if (!builderFn) {
++    throw new Error(`Unknown character id: ${characterDef.id}`);
++  }
++
++  const { boxes, emissiveBoxes } = builderFn(characterDef);
++
++  const group = new THREE.Group();
++
++  // Main body mesh (vertex-colored)
++  const bodyGeo = buildMergedBoxes(boxes);
++  const bodyMat = new THREE.MeshLambertMaterial({ vertexColors: true });
++  const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
++  group.add(bodyMesh);
++
++  // Emissive accent mesh (glowing parts)
++  if (emissiveBoxes.length > 0) {
++    const emGeo = buildMergedBoxes(emissiveBoxes);
++    const emMat = new THREE.MeshLambertMaterial({
++      vertexColors: true,
++      emissive: new THREE.Color(0xffffff),
++      emissiveIntensity: 0.8,
++    });
++    const emMesh = new THREE.Mesh(emGeo, emMat);
++    group.add(emMesh);
++  }
++
++  // Bounding info for collision
++  group.userData.boundingBox = { halfW: 1.0, halfH: 0.75, halfD: 1.5 };
++
++  return group;
++}
++
++/**
++ * Build a scaled-down kart for menu / character-select preview.
++ * @param {{id:string, color1:number, color2:number}} characterDef
++ * @returns {THREE.Group}
++ */
++export function buildCharacterPreview(characterDef) {
++  const group = buildKartMesh(characterDef);
++  group.scale.setScalar(0.5);
++  return group;
++}
+diff --git a/output/js/drift.js b/output/js/drift.js
+new file mode 100644
+index 0000000..8722cca
+--- /dev/null
++++ b/output/js/drift.js
+@@ -0,0 +1,98 @@
++/**
++ * drift — drift / mini-turbo boost state machine.
++ *
++ * Called after physics steering, before position update. Modifies kart heading
++ * during active drifts and awards boost on release.
++ */
++import { clamp } from './utils/mathUtils.js';
++
++/* ── Tier thresholds (seconds of drift hold) ───────────────────────── */
++
++const TIER1_TIME = 0.6;
++const TIER2_TIME = 1.2;
++const TIER3_TIME = 2.0;
++
++/* ── Boost rewards per tier ────────────────────────────────────────── */
++
++const BOOST = [
++  null,                                     // tier 0 — no boost
++  { duration: 0.7, multiplier: 1.3 },       // tier 1 — blue sparks
++  { duration: 1.1, multiplier: 1.4 },       // tier 2 — orange sparks
++  { duration: 1.5, multiplier: 1.5 },       // tier 3 — pink sparks
++];
++
++/* ── Drift rotation constants ──────────────────────────────────────── */
++
++const BASE_DRIFT_RATE    = 1.8;  // rad/s in drift direction (replaces normal steering)
++const COUNTER_STEER_RATE = 0.5;  // extra tightening when counter-steering
++const SAME_STEER_RATE    = 0.6;  // reduce turn rate when steering into drift
++
++/**
++ * Update the drift state machine for a single kart.
++ *
++ * @param {object} kart   — mutable kart state (from createKartState)
++ * @param {object} input  — { accel, brake, left, right, drift } booleans
++ * @param {number} dt     — frame delta time in seconds
++ */
++export function updateDrift(kart, input, dt) {
++  const steerInput = (input.left ? 1 : 0) - (input.right ? 1 : 0);
++
++  /* ── 1. Idle → Drifting ──────────────────────────────────────────── */
++  if (
++    !kart.isDrifting &&
++    input.drift &&
++    (input.left || input.right) &&
++    Math.abs(kart.speed) > kart.driftThreshold
++  ) {
++    kart.isDrifting = true;
++    kart.driftDirection = input.left ? 1 : -1;
++    kart.driftTimer = 0;
++    kart.driftTier = 0;
++    return; // initialisation frame — no rotation added yet
++  }
++
++  /* ── 2. During drift ─────────────────────────────────────────────── */
++  if (kart.isDrifting) {
++
++    // Release check first: drift button released → grant boost and exit
++    if (!input.drift) {
++      if (kart.driftTimer >= TIER1_TIME) {
++        const tier = kart.driftTier || 1;
++        const reward = BOOST[tier];
++        kart.boostTimer += reward.duration;
++        kart.boostMultiplier = reward.multiplier;
++      }
++      kart.isDrifting = false;
++      kart.driftTimer = 0;
++      kart.driftTier = 0;
++      kart.driftDirection = 0;
++      return;
++    }
++
++    // Accumulate drift timer
++    kart.driftTimer += dt;
++
++    // Update tier
++    if (kart.driftTimer >= TIER3_TIME) {
++      kart.driftTier = 3;
++    } else if (kart.driftTimer >= TIER2_TIME) {
++      kart.driftTier = 2;
++    } else if (kart.driftTimer >= TIER1_TIME) {
++      kart.driftTier = 1;
++    }
++
++    // Base drift rotation
++    kart.heading += kart.driftDirection * BASE_DRIFT_RATE * dt;
++
++    // Steer modulation
++    if (steerInput !== 0) {
++      if (steerInput !== kart.driftDirection) {
++        // Counter-steer: tighten the arc (more rotation in drift direction)
++        kart.heading += kart.driftDirection * COUNTER_STEER_RATE * dt;
++      } else {
++        // Same-direction: widen the arc (reduce drift rotation)
++        kart.heading -= kart.driftDirection * SAME_STEER_RATE * dt;
++      }
++    }
++  }
++}
+\ No newline at end of file
+diff --git a/output/js/input.js b/output/js/input.js
+new file mode 100644
+index 0000000..c7cc6b3
+--- /dev/null
++++ b/output/js/input.js
+@@ -0,0 +1,147 @@
++/**
++ * InputManager — singleton keyboard input with edge-detection.
++ *
++ * Usage:
++ *   import { InputManager } from './input.js';
++ *   const input = InputManager.instance;
++ *   // in game loop:
++ *   if (input.isAccel()) { … }
++ *   // at end of every frame:
++ *   input.endFrame();
++ */
++
++const GAME_KEYS = new Set([
++  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
++  'w', 'a', 's', 'd',
++  'W', 'A', 'S', 'D',
++  'Shift', ' ', 'e', 'E', 'x', 'X',
++  'Escape', 'p', 'P',
++  'f', 'F',
++  'Enter',
++]);
++
++let _instance = null;
++
++export class InputManager {
++  /** @returns {InputManager} */
++  static get instance() {
++    if (!_instance) {
++      _instance = new InputManager();
++    }
++    return _instance;
++  }
++
++  constructor() {
++    if (_instance) return _instance;
++
++    /** Currently-held keys */
++    this._down = new Set();
++    /** Keys that went down this frame */
++    this._justPressed = new Set();
++    /** Keys that went up this frame */
++    this._justReleased = new Set();
++
++    this._onKeyDown = this._onKeyDown.bind(this);
++    this._onKeyUp = this._onKeyUp.bind(this);
++
++    window.addEventListener('keydown', this._onKeyDown);
++    window.addEventListener('keyup', this._onKeyUp);
++
++    _instance = this;
++  }
++
++  /* ── internal listeners ──────────────────────────────────────────── */
++
++  _onKeyDown(e) {
++    if (GAME_KEYS.has(e.key)) {
++      e.preventDefault();
++    }
++    if (!this._down.has(e.key)) {
++      this._justPressed.add(e.key);
++    }
++    this._down.add(e.key);
++  }
++
++  _onKeyUp(e) {
++    if (GAME_KEYS.has(e.key)) {
++      e.preventDefault();
++    }
++    this._down.delete(e.key);
++    this._justReleased.add(e.key);
++  }
++
++  /* ── public API ──────────────────────────────────────────────────── */
++
++  /** True while the key is held. */
++  isDown(key) {
++    return this._down.has(key);
++  }
++
++  /** True only on the first frame the key is pressed. */
++  justPressed(key) {
++    return this._justPressed.has(key);
++  }
++
++  /** True only on the frame the key is released. */
++  justReleased(key) {
++    return this._justReleased.has(key);
++  }
++
++  /** Call at the very end of each frame to clear edge buffers. */
++  endFrame() {
++    this._justPressed.clear();
++    this._justReleased.clear();
++  }
++
++  /* ── logical action helpers ──────────────────────────────────────── */
++
++  isAccel() {
++    return this.isDown('w') || this.isDown('W') || this.isDown('ArrowUp');
++  }
++
++  isBrake() {
++    return this.isDown('s') || this.isDown('S') || this.isDown('ArrowDown');
++  }
++
++  isLeft() {
++    return this.isDown('a') || this.isDown('A') || this.isDown('ArrowLeft');
++  }
++
++  isRight() {
++    return this.isDown('d') || this.isDown('D') || this.isDown('ArrowRight');
++  }
++
++  isDrift() {
++    return this.isDown('Shift') || this.isDown(' ');
++  }
++
++  isItem() {
++    return this.isDown('e') || this.isDown('E') || this.isDown('x') || this.isDown('X');
++  }
++
++  /** Edge-detected — true only on the frame Escape/P is first pressed. */
++  isPause() {
++    return this.justPressed('Escape') || this.justPressed('p') || this.justPressed('P');
++  }
++
++  /** Edge-detected — true only on the frame F is first pressed. */
++  isFullscreen() {
++    return this.justPressed('f') || this.justPressed('F');
++  }
++
++  /** Edge-detected — true only on the frame Enter is first pressed. */
++  isConfirm() {
++    return this.justPressed('Enter');
++  }
++
++  /* ── cleanup (optional) ─────────────────────────────────────────── */
++
++  destroy() {
++    window.removeEventListener('keydown', this._onKeyDown);
++    window.removeEventListener('keyup', this._onKeyUp);
++    this._down.clear();
++    this._justPressed.clear();
++    this._justReleased.clear();
++    _instance = null;
++  }
++}
+diff --git a/output/js/main.js b/output/js/main.js
+new file mode 100644
+index 0000000..9ec0965
+--- /dev/null
++++ b/output/js/main.js
+@@ -0,0 +1,563 @@
++/**
++ * main.js — Entry point: bootstrap Three.js scene, game loop, state machine.
++ *
++ * Phases 1-4: Core engine with track rendering, kart physics, drift/boost.
++ */
++import * as THREE from 'three';
++import { clamp } from './utils/mathUtils.js';
++import { InputManager } from './input.js';
++import { buildFullTrack, testCheckpointCrossing, getNearestSplineT } from './tracks/trackBase.js';
++import { sunsetCircuit } from './tracks/sunsetCircuit.js';
++import { crystalCaverns } from './tracks/crystalCaverns.js';
++import { CHARACTERS, CHARACTER_LIST } from './characters/characterData.js';
++import { buildKartMesh } from './characters/kartBuilder.js';
++import { createKartState, updateKartPhysics, respawnKart } from './physics.js';
++import { createCameraController } from './camera.js';
++
++/* ── Globals ───────────────────────────────────────────────────────── */
++
++const canvas = document.getElementById('gameCanvas');
++const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
++renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
++renderer.setSize(window.innerWidth, window.innerHeight);
++
++const scene = new THREE.Scene();
++scene.background = new THREE.Color(0x1a0a3e);
++
++const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1200);
++camera.position.set(0, 30, -50);
++camera.lookAt(0, 0, 0);
++
++const input = InputManager.instance;
++const cameraCtrl = createCameraController(camera);
++
++/* ── Resize handler ────────────────────────────────────────────────── */
++
++window.addEventListener('resize', () => {
++  const w = window.innerWidth;
++  const h = window.innerHeight;
++  renderer.setSize(w, h);
++  camera.aspect = w / h;
++  camera.updateProjectionMatrix();
++});
++
++/* ── Game State ─────────────────────────────────────────────────────── */
++
++let gameState = 'menu'; // 'menu' | 'countdown' | 'racing' | 'paused' | 'results'
++let trackGroup = null;
++let collisionData = null;
++let playerKart = null;
++let raceTimer = 0;
++let currentTrackData = null;
++
++// Track options
++const TRACKS = { sunset: sunsetCircuit, caverns: crystalCaverns };
++let selectedTrack = 'sunset';
++let selectedCharacter = 'brix';
++
++/* ── Track Loading ──────────────────────────────────────────────────── */
++
++function loadTrack(trackId) {
++  // Clean up old track
++  if (trackGroup) {
++    scene.remove(trackGroup);
++    trackGroup = null;
++  }
++  if (playerKart && playerKart.mesh) {
++    scene.remove(playerKart.mesh);
++  }
++
++  // Remove any old fog
++  scene.fog = null;
++
++  const trackData = TRACKS[trackId];
++  currentTrackData = trackData;
++  const result = buildFullTrack(trackData, scene);
++  trackGroup = result.group;
++  collisionData = result.collisionData;
++  scene.add(trackGroup);
++
++  // Set scene background based on track
++  scene.background = new THREE.Color(trackData.lighting.skyTop);
++}
++
++/* ── Kart Spawning ─────────────────────────────────────────────────── */
++
++function spawnPlayer(characterId) {
++  const charDef = CHARACTERS[characterId];
++  const startPos = currentTrackData.startPositions[0];
++  playerKart = createKartState(charDef, startPos.x, startPos.z, startPos.heading);
++  playerKart.y = startPos.y;
++
++  const mesh = buildKartMesh(charDef);
++  mesh.position.set(startPos.x, startPos.y, startPos.z);
++  playerKart.mesh = mesh;
++  scene.add(mesh);
++
++  cameraCtrl.setTarget(playerKart);
++  cameraCtrl.reset();
++}
++
++/* ── Checkpoint System ─────────────────────────────────────────────── */
++
++function updateCheckpoints(kart, prevX, prevZ) {
++  if (!collisionData || !collisionData.checkpoints) return;
++
++  const checkpoints = collisionData.checkpoints;
++  const prevPos = { x: prevX, z: prevZ };
++  const currPos = { x: kart.x, z: kart.z };
++
++  for (let i = 0; i < checkpoints.length; i++) {
++    if (testCheckpointCrossing(prevPos, currPos, checkpoints[i])) {
++      if (i === 0) {
++        // Finish/start line crossing
++        // Check if all other checkpoints were hit
++        const allHit = checkpoints.length <= 1 ||
++          kart.checkpointsHit.size >= checkpoints.length - 1;
++
++        if (allHit && kart.currentLap >= 1 && kart.lastCheckpoint !== -1) {
++          // Completed a lap
++          const lapTime = raceTimer - kart.lapStartTime;
++          if (lapTime < kart.bestLapTime) {
++            kart.bestLapTime = lapTime;
++          }
++
++          if (kart.currentLap >= 3) {
++            kart.finished = true;
++            kart.finishTime = raceTimer;
++          } else {
++            kart.currentLap++;
++            kart.lapStartTime = raceTimer;
++          }
++          kart.checkpointsHit.clear();
++        }
++        kart.lastCheckpoint = 0;
++      } else {
++        kart.checkpointsHit.add(i);
++        kart.lastCheckpoint = i;
++      }
++    }
++  }
++}
++
++/* ── HUD Display ───────────────────────────────────────────────────── */
++
++const hudContainer = document.getElementById('hud-container');
++
++function initHUD() {
++  hudContainer.classList.remove('hidden');
++  hudContainer.innerHTML = `
++    <div id="hud-position" style="position:absolute;top:20px;left:20px;font-size:36px;font-weight:bold;pointer-events:auto;color:var(--gold);text-shadow:2px 2px 4px #000;">1ST</div>
++    <div id="hud-lap" style="position:absolute;top:20px;left:50%;transform:translateX(-50%);font-size:24px;font-weight:bold;pointer-events:auto;text-shadow:2px 2px 4px #000;">LAP 1/3</div>
++    <div id="hud-timer" style="position:absolute;top:52px;left:50%;transform:translateX(-50%);font-size:18px;pointer-events:auto;text-shadow:1px 1px 3px #000;">0:00.000</div>
++    <div id="hud-speed" style="position:absolute;bottom:30px;left:20px;font-size:20px;pointer-events:auto;text-shadow:1px 1px 3px #000;">0%</div>
++    <div id="hud-drift" style="position:absolute;bottom:30px;left:50%;transform:translateX(-50%);width:200px;height:12px;background:rgba(0,0,0,0.5);border-radius:6px;display:none;pointer-events:auto;">
++      <div id="hud-drift-fill" style="height:100%;width:0%;border-radius:6px;background:#4488FF;transition:background 0.2s;"></div>
++    </div>
++    <div id="hud-item" style="position:absolute;top:20px;right:20px;width:64px;height:64px;border:2px solid rgba(255,255,255,0.3);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:28px;background:rgba(0,0,0,0.4);pointer-events:auto;color:#555;">?</div>
++    <div id="hud-info" style="position:absolute;bottom:55px;left:20px;font-size:14px;opacity:0.7;pointer-events:auto;text-shadow:1px 1px 2px #000;">W/↑: Accel | A/D: Steer | Shift/Space: Drift | S/↓: Brake</div>
++  `;
++}
++
++function updateHUD() {
++  if (!playerKart) return;
++
++  const posEl = document.getElementById('hud-position');
++  const lapEl = document.getElementById('hud-lap');
++  const timerEl = document.getElementById('hud-timer');
++  const speedEl = document.getElementById('hud-speed');
++  const driftEl = document.getElementById('hud-drift');
++  const driftFill = document.getElementById('hud-drift-fill');
++
++  if (posEl) posEl.textContent = `${playerKart.currentPlace}${getOrdinal(playerKart.currentPlace)}`;
++  if (lapEl) lapEl.textContent = `LAP ${Math.min(playerKart.currentLap, 3)}/3`;
++
++  // Timer
++  if (timerEl) {
++    const mins = Math.floor(raceTimer / 60);
++    const secs = raceTimer % 60;
++    timerEl.textContent = `${mins}:${secs < 10 ? '0' : ''}${secs.toFixed(3)}`;
++  }
++
++  // Speed
++  if (speedEl) {
++    const pct = Math.round(Math.abs(playerKart.speed) / playerKart.maxSpeed * 100);
++    speedEl.textContent = `${pct}%`;
++    speedEl.style.color = playerKart.boostTimer > 0 ? 'var(--accent-cyan)' : '#fff';
++  }
++
++  // Drift bar
++  if (driftEl && driftFill) {
++    if (playerKart.isDrifting) {
++      driftEl.style.display = 'block';
++      const maxTime = 2.5;
++      const pct = Math.min(playerKart.driftTimer / maxTime * 100, 100);
++      driftFill.style.width = `${pct}%`;
++      if (playerKart.driftTier >= 3) driftFill.style.background = '#FF66AA';
++      else if (playerKart.driftTier >= 2) driftFill.style.background = '#FF8800';
++      else driftFill.style.background = '#4488FF';
++    } else {
++      driftEl.style.display = 'none';
++    }
++  }
++}
++
++function getOrdinal(n) {
++  const suffixes = ['TH', 'ST', 'ND', 'RD'];
++  const v = n % 100;
++  return suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0];
++}
++
++/* ── Simple Menu ───────────────────────────────────────────────────── */
++
++const menuContainer = document.getElementById('menu-container');
++
++let menuScreen = 'title'; // 'title' | 'trackSelect' | 'charSelect' | 'ready'
++let menuTrackIdx = 0;
++let menuCharIdx = 0;
++const trackKeys = ['sunset', 'caverns'];
++const charKeys = ['brix', 'zippy', 'chunk', 'pixel'];
++
++function showMenu() {
++  menuContainer.style.pointerEvents = 'auto';
++  renderMenu();
++}
++
++function renderMenu() {
++  if (menuScreen === 'title') {
++    menuContainer.innerHTML = `
++      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;">
++        <h1 style="font-size:48px;letter-spacing:8px;text-transform:uppercase;margin-bottom:20px;text-shadow:3px 3px 6px #000,0 0 30px var(--accent-cyan);">FABRO RACER MINI</h1>
++        <p style="font-size:18px;opacity:0.7;margin-bottom:40px;">A voxel kart racing game</p>
++        <div style="font-size:24px;padding:16px 48px;border:2px solid var(--accent-cyan);border-radius:8px;cursor:pointer;animation:pulse 2s infinite;" id="btn-start">START RACE</div>
++        <p style="font-size:14px;opacity:0.5;margin-top:20px;">Press Enter to start</p>
++      </div>
++    `;
++    const btn = document.getElementById('btn-start');
++    if (btn) btn.addEventListener('click', () => { menuScreen = 'trackSelect'; renderMenu(); });
++  } else if (menuScreen === 'trackSelect') {
++    const tracks = [
++      { key: 'sunset', name: 'Sunset Circuit', desc: 'Coastal highway — hairpin, beach run, cliff tunnel', diff: '★★☆', color: '#FF8844' },
++      { key: 'caverns', name: 'Crystal Caverns', desc: 'Underground mine — lava canyons, crystal grotto, rickety bridge', diff: '★★★', color: '#8844FF' },
++    ];
++    menuContainer.innerHTML = `
++      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;">
++        <h2 style="font-size:32px;margin-bottom:30px;">SELECT TRACK</h2>
++        <div style="display:flex;gap:30px;">
++          ${tracks.map((t, i) => `
++            <div style="padding:24px;border:3px solid ${i === menuTrackIdx ? t.color : 'rgba(255,255,255,0.2)'};border-radius:12px;width:280px;cursor:pointer;background:${i === menuTrackIdx ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.3)'};" class="track-card" data-idx="${i}">
++              <h3 style="font-size:22px;color:${t.color};margin-bottom:8px;">${t.name}</h3>
++              <p style="font-size:14px;opacity:0.7;margin-bottom:12px;">${t.desc}</p>
++              <p style="font-size:18px;">Difficulty: ${t.diff}</p>
++            </div>
++          `).join('')}
++        </div>
++        <p style="margin-top:20px;font-size:14px;opacity:0.5;">← → to select, Enter to confirm, Esc to go back</p>
++      </div>
++    `;
++    document.querySelectorAll('.track-card').forEach(el => {
++      el.addEventListener('click', () => {
++        menuTrackIdx = parseInt(el.dataset.idx);
++        selectedTrack = trackKeys[menuTrackIdx];
++        menuScreen = 'charSelect';
++        renderMenu();
++      });
++    });
++  } else if (menuScreen === 'charSelect') {
++    const chars = CHARACTER_LIST;
++    menuContainer.innerHTML = `
++      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;">
++        <h2 style="font-size:32px;margin-bottom:30px;">SELECT CHARACTER</h2>
++        <div style="display:flex;gap:20px;">
++          ${chars.map((c, i) => `
++            <div style="padding:20px;border:3px solid ${i === menuCharIdx ? '#' + c.color1.toString(16).padStart(6, '0') : 'rgba(255,255,255,0.2)'};border-radius:12px;width:180px;cursor:pointer;background:${i === menuCharIdx ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.3)'};" class="char-card" data-idx="${i}">
++              <h3 style="font-size:20px;margin-bottom:8px;color:#${c.color1.toString(16).padStart(6, '0')};">${c.name}</h3>
++              <div style="font-size:13px;">
++                <div>Speed: ${'★'.repeat(c.speed)}${'☆'.repeat(5-c.speed)}</div>
++                <div>Accel: ${'★'.repeat(c.accel)}${'☆'.repeat(5-c.accel)}</div>
++                <div>Handling: ${'★'.repeat(c.handling)}${'☆'.repeat(5-c.handling)}</div>
++                <div>Weight: ${'★'.repeat(c.weight)}${'☆'.repeat(5-c.weight)}</div>
++              </div>
++            </div>
++          `).join('')}
++        </div>
++        <p style="margin-top:20px;font-size:14px;opacity:0.5;">← → to select, Enter to confirm, Esc to go back</p>
++      </div>
++    `;
++    document.querySelectorAll('.char-card').forEach(el => {
++      el.addEventListener('click', () => {
++        menuCharIdx = parseInt(el.dataset.idx);
++        selectedCharacter = charKeys[menuCharIdx];
++        startRace();
++      });
++    });
++  }
++}
++
++function updateMenu() {
++  if (menuScreen === 'title') {
++    if (input.isConfirm()) {
++      menuScreen = 'trackSelect';
++      renderMenu();
++    }
++  } else if (menuScreen === 'trackSelect') {
++    if (input.justPressed('ArrowLeft') || input.justPressed('a') || input.justPressed('A')) {
++      menuTrackIdx = (menuTrackIdx - 1 + trackKeys.length) % trackKeys.length;
++      renderMenu();
++    }
++    if (input.justPressed('ArrowRight') || input.justPressed('d') || input.justPressed('D')) {
++      menuTrackIdx = (menuTrackIdx + 1) % trackKeys.length;
++      renderMenu();
++    }
++    if (input.isConfirm()) {
++      selectedTrack = trackKeys[menuTrackIdx];
++      menuScreen = 'charSelect';
++      renderMenu();
++    }
++    if (input.justPressed('Escape')) {
++      menuScreen = 'title';
++      renderMenu();
++    }
++  } else if (menuScreen === 'charSelect') {
++    if (input.justPressed('ArrowLeft') || input.justPressed('a') || input.justPressed('A')) {
++      menuCharIdx = (menuCharIdx - 1 + charKeys.length) % charKeys.length;
++      renderMenu();
++    }
++    if (input.justPressed('ArrowRight') || input.justPressed('d') || input.justPressed('D')) {
++      menuCharIdx = (menuCharIdx + 1) % charKeys.length;
++      renderMenu();
++    }
++    if (input.isConfirm()) {
++      selectedCharacter = charKeys[menuCharIdx];
++      startRace();
++    }
++    if (input.justPressed('Escape')) {
++      menuScreen = 'trackSelect';
++      renderMenu();
++    }
++  }
++}
++
++/* ── Race Start ─────────────────────────────────────────────────────── */
++
++function startRace() {
++  gameState = 'racing';
++  raceTimer = 0;
++  menuContainer.innerHTML = '';
++  menuContainer.style.pointerEvents = 'none';
++
++  loadTrack(selectedTrack);
++  spawnPlayer(selectedCharacter);
++  initHUD();
++}
++
++/* ── Racing Update ─────────────────────────────────────────────────── */
++
++function updateRacing(dt) {
++  if (!playerKart || !collisionData) return;
++
++  raceTimer += dt;
++
++  // Build input from keyboard state
++  const playerInput = {
++    accel: input.isAccel(),
++    brake: input.isBrake(),
++    left: input.isLeft(),
++    right: input.isRight(),
++    drift: input.isDrift(),
++  };
++
++  // Store previous position for checkpoint detection
++  const prevX = playerKart.x;
++  const prevZ = playerKart.z;
++
++  // Update physics (includes drift)
++  updateKartPhysics(playerKart, playerInput, collisionData, dt);
++
++  // Check for respawn
++  if (playerKart.needsRespawn) {
++    const cpIdx = Math.max(0, playerKart.lastCheckpoint);
++    const cp = collisionData.checkpoints[cpIdx];
++    if (cp) {
++      const tangent = collisionData.curve.getTangent(currentTrackData.checkpoints[cpIdx].t);
++      respawnKart(playerKart, {
++        x: cp.point.x,
++        z: cp.point.z,
++        heading: Math.atan2(tangent.x, tangent.z),
++      }, collisionData.curve);
++    }
++  }
++
++  // Update checkpoint tracking
++  updateCheckpoints(playerKart, prevX, prevZ);
++
++  // Update mesh transform
++  if (playerKart.mesh) {
++    playerKart.mesh.position.set(playerKart.x, playerKart.y, playerKart.z);
++    playerKart.mesh.rotation.y = playerKart.heading;
++
++    // Visual tilt during drift
++    if (playerKart.isDrifting) {
++      playerKart.mesh.rotation.z = -playerKart.driftDirection * 0.15;
++    } else {
++      playerKart.mesh.rotation.z *= 0.9; // lerp back
++    }
++
++    // Invincibility blink
++    if (playerKart.invincibleTimer > 0) {
++      playerKart.mesh.visible = Math.floor(playerKart.invincibleTimer * 10) % 2 === 0;
++    } else {
++      playerKart.mesh.visible = true;
++    }
++  }
++
++  // Camera follow
++  cameraCtrl.update(dt);
++
++  // Update HUD
++  updateHUD();
++
++  // Pause check
++  if (input.isPause()) {
++    gameState = 'paused';
++    showPause();
++  }
++
++  // Fullscreen toggle
++  if (input.isFullscreen()) {
++    if (!document.fullscreenElement) {
++      document.documentElement.requestFullscreen().catch(() => {});
++    } else {
++      document.exitFullscreen();
++    }
++  }
++}
++
++/* ── Pause ─────────────────────────────────────────────────────────── */
++
++const pauseContainer = document.getElementById('pause-container');
++
++function showPause() {
++  pauseContainer.classList.remove('hidden');
++  pauseContainer.style.pointerEvents = 'auto';
++  pauseContainer.innerHTML = `
++    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:rgba(0,0,0,0.6);">
++      <h2 style="font-size:36px;margin-bottom:30px;">PAUSED</h2>
++      <div style="font-size:20px;padding:12px 40px;border:2px solid rgba(255,255,255,0.5);border-radius:8px;margin:8px;cursor:pointer;" id="btn-resume">Resume</div>
++      <div style="font-size:20px;padding:12px 40px;border:2px solid rgba(255,255,255,0.5);border-radius:8px;margin:8px;cursor:pointer;" id="btn-restart">Restart Race</div>
++      <div style="font-size:20px;padding:12px 40px;border:2px solid rgba(255,255,255,0.5);border-radius:8px;margin:8px;cursor:pointer;" id="btn-quit">Quit to Menu</div>
++    </div>
++  `;
++  document.getElementById('btn-resume')?.addEventListener('click', resumeRace);
++  document.getElementById('btn-restart')?.addEventListener('click', () => { hidePause(); startRace(); });
++  document.getElementById('btn-quit')?.addEventListener('click', () => { hidePause(); goToMenu(); });
++}
++
++function resumeRace() {
++  hidePause();
++  gameState = 'racing';
++}
++
++function hidePause() {
++  pauseContainer.classList.add('hidden');
++  pauseContainer.style.pointerEvents = 'none';
++}
++
++function goToMenu() {
++  gameState = 'menu';
++  hudContainer.classList.add('hidden');
++  menuScreen = 'title';
++  showMenu();
++}
++
++/* ── Game Loop ─────────────────────────────────────────────────────── */
++
++let lastTime = 0;
++
++function gameLoop(timestamp) {
++  const dt = clamp((timestamp - lastTime) / 1000, 0, 1 / 30);
++  lastTime = timestamp;
++
++  switch (gameState) {
++    case 'menu':
++      updateMenu();
++      break;
++    case 'countdown':
++      break;
++    case 'racing':
++      updateRacing(dt);
++      break;
++    case 'paused':
++      if (input.isPause()) {
++        resumeRace();
++      }
++      break;
++    case 'results':
++      break;
++  }
++
++  renderer.render(scene, camera);
++  input.endFrame();
++  requestAnimationFrame(gameLoop);
++}
++
++/* ── Test Hooks ─────────────────────────────────────────────────────── */
++
++window.render_game_to_text = function () {
++  const p = playerKart;
++  return JSON.stringify({
++    mode: gameState,
++    track: currentTrackData ? currentTrackData.name : null,
++    race: p ? {
++      lap: p.currentLap,
++      totalLaps: 3,
++      timer: raceTimer.toFixed(3),
++      finished: p.finished,
++    } : null,
++    player: p ? {
++      character: p.characterName,
++      position: { x: p.x.toFixed(1), y: p.y.toFixed(1), z: p.z.toFixed(1) },
++      speed: p.speed.toFixed(1),
++      maxSpeed: p.maxSpeed.toFixed(1),
++      heading: p.heading.toFixed(2),
++      lap: p.currentLap,
++      checkpoint: p.lastCheckpoint,
++      place: p.currentPlace,
++      item: p.heldItem,
++      drifting: p.isDrifting,
++      driftTier: p.driftTier,
++      boostTimer: p.boostTimer.toFixed(2),
++      offRoad: p.isOffRoad,
++    } : null,
++    cpus: [],
++    items: [],
++  });
++};
++
++window.advanceTime = function (ms) {
++  const steps = Math.ceil(ms / 16.67);
++  for (let i = 0; i < steps; i++) {
++    const stepDt = Math.min(16.67, ms - i * 16.67) / 1000;
++    if (gameState === 'racing') {
++      updateRacing(stepDt);
++    }
++  }
++  return window.render_game_to_text();
++};
++
++// Direct boost test hook — simulate drift boost grant
++window._testGrantBoost = function (tier) {
++  if (!playerKart) return 'no kart';
++  const rewards = [null, { d: 0.7, m: 1.3 }, { d: 1.1, m: 1.4 }, { d: 1.5, m: 1.5 }];
++  const r = rewards[tier];
++  if (r) {
++    playerKart.boostTimer += r.d;
++    playerKart.boostMultiplier = r.m;
++  }
++  return window.render_game_to_text();
++};
++
++/* ── Boot ──────────────────────────────────────────────────────────── */
++
++showMenu();
++requestAnimationFrame(gameLoop);
+\ No newline at end of file
+diff --git a/output/js/physics.js b/output/js/physics.js
+new file mode 100644
+index 0000000..2203718
+--- /dev/null
++++ b/output/js/physics.js
+@@ -0,0 +1,339 @@
++/**
++ * physics — arcade kart physics: acceleration, steering, collisions, and respawn.
++ */
++import { clamp, lerp } from './utils/mathUtils.js';
++import {
++  getMaxSpeed,
++  getAccelRate,
++  getTurnRateHigh,
++  getTurnRateLow,
++  getDriftThreshold,
++} from './characters/characterData.js';
++import { updateDrift } from './drift.js';
++import { getNearestSplineT, getTrackYAtXZ, isOnRoad } from './tracks/trackBase.js';
++
++/* ── Constants ─────────────────────────────────────────────────────── */
++
++const KART_RADIUS = 1.5;
++const GLANCING_ANGLE = Math.PI / 6; // 30 degrees
++
++/* ── Kart state factory ────────────────────────────────────────────── */
++
++/**
++ * Create an initialised kart state object for a given character.
++ *
++ * @param {{id:string, name:string, speed:number, accel:number, handling:number, weight:number}} characterDef
++ * @param {number} [x=0]       — starting X position
++ * @param {number} [z=0]       — starting Z position
++ * @param {number} [heading=0] — starting yaw in radians (0 = +Z forward)
++ * @returns {object} mutable kart state
++ */
++export function createKartState(characterDef, x = 0, z = 0, heading = 0) {
++  const maxSpeed = getMaxSpeed(characterDef);
++
++  return {
++    // Position / orientation
++    x,
++    y: 0,
++    z,
++    heading,
++
++    // Motion
++    speed: 0,
++
++    // Surface state
++    isOffRoad: false,
++    onGround: true,
++
++    // Timers
++    stunTimer: 0,
++    invincibleTimer: 0,
++    stuckTimer: 0,
++    boostTimer: 0,
++    boostMultiplier: 1.0,
++
++    // Drift state
++    isDrifting: false,
++    driftDirection: 0,
++    driftTimer: 0,
++    driftTier: 0,
++
++    // Items
++    heldItem: null,
++
++    // Race progress
++    currentLap: 1,
++    lastCheckpoint: -1,
++    checkpointsHit: new Set(),
++    currentPlace: 1,
++    finished: false,
++    finishTime: 0,
++    bestLapTime: Infinity,
++    lapStartTime: 0,
++
++    // Derived from character stats
++    maxSpeed,
++    accelRate: getAccelRate(characterDef),
++    brakeRate: getAccelRate(characterDef) * 2,
++    turnRateHigh: getTurnRateHigh(characterDef),
++    turnRateLow: getTurnRateLow(characterDef),
++    driftThreshold: getDriftThreshold(characterDef),
++    weight: characterDef.weight,
++
++    // Character identity
++    characterId: characterDef.id,
++    characterName: characterDef.name,
++
++    // Visual mesh (set after building)
++    mesh: null,
++
++    // Respawn flag
++    needsRespawn: false,
++  };
++}
++
++/* ── Helpers ───────────────────────────────────────────────────────── */
++
++/**
++ * Find the closest point on line segment AB to point P (2D, XZ plane).
++ *
++ * @param {number} px
++ * @param {number} pz
++ * @param {number} ax
++ * @param {number} az
++ * @param {number} bx
++ * @param {number} bz
++ * @returns {{x:number, z:number, t:number}}
++ */
++export function closestPointOnSegment(px, pz, ax, az, bx, bz) {
++  const dx = bx - ax;
++  const dz = bz - az;
++  const lenSq = dx * dx + dz * dz;
++  if (lenSq === 0) return { x: ax, z: az, t: 0 };
++
++  let t = ((px - ax) * dx + (pz - az) * dz) / lenSq;
++  t = clamp(t, 0, 1);
++
++  return {
++    x: ax + t * dx,
++    z: az + t * dz,
++    t,
++  };
++}
++
++/* ── Sub-steps ─────────────────────────────────────────────────────── */
++
++function cancelDrift(kart) {
++  kart.isDrifting = false;
++  kart.driftTimer = 0;
++  kart.driftTier = 0;
++  kart.driftDirection = 0;
++}
++
++function updatePosition(kart, dt) {
++  kart.x += Math.sin(kart.heading) * kart.speed * dt;
++  kart.z += Math.cos(kart.heading) * kart.speed * dt;
++}
++
++function updateTrackSurface(kart, cd, dt) {
++  // Height — smooth lerp toward track surface
++  const targetY = getTrackYAtXZ(kart.x, kart.z, cd.curve);
++  kart.y = lerp(kart.y, targetY, clamp(10 * dt, 0, 1));
++
++  // Surface type
++  const surface = isOnRoad(
++    kart.x, kart.z,
++    cd.curve, cd.widthProfile, cd.surfaceZones,
++  );
++  kart.isOffRoad = surface !== 'road';
++}
++
++function handleWallCollisions(kart, cd) {
++  const walls = cd.wallSegments;
++  if (!walls) return;
++
++  for (let i = 0; i < walls.length; i++) {
++    const seg = walls[i];
++    const cp = closestPointOnSegment(
++      kart.x, kart.z,
++      seg.a.x, seg.a.z, seg.b.x, seg.b.z,
++    );
++
++    const dx = kart.x - cp.x;
++    const dz = kart.z - cp.z;
++    const dist = Math.sqrt(dx * dx + dz * dz);
++
++    if (dist >= KART_RADIUS) continue;
++
++    // Push kart out to KART_RADIUS from wall
++    if (dist > 0.001) {
++      const pushScale = KART_RADIUS / dist;
++      kart.x = cp.x + dx * pushScale;
++      kart.z = cp.z + dz * pushScale;
++    } else {
++      // Exactly on the segment — use perpendicular to wall for push
++      const wx = seg.b.x - seg.a.x;
++      const wz = seg.b.z - seg.a.z;
++      const wLen = Math.sqrt(wx * wx + wz * wz);
++      if (wLen > 0) {
++        kart.x = cp.x + (-wz / wLen) * KART_RADIUS;
++        kart.z = cp.z + (wx / wLen) * KART_RADIUS;
++      }
++    }
++
++    // Angle between velocity direction and wall tangent
++    const vx = Math.sin(kart.heading);
++    const vz = Math.cos(kart.heading);
++    const segDx = seg.b.x - seg.a.x;
++    const segDz = seg.b.z - seg.a.z;
++    const segLen = Math.sqrt(segDx * segDx + segDz * segDz);
++
++    if (segLen > 0) {
++      const tx = segDx / segLen;
++      const tz = segDz / segLen;
++      const absDot = Math.abs(vx * tx + vz * tz);
++      const hitAngle = Math.acos(clamp(absDot, 0, 1));
++
++      if (hitAngle < GLANCING_ANGLE) {
++        // Glancing blow — mild slowdown
++        kart.speed *= 0.8;
++      } else {
++        // Direct hit — significant slowdown + brief stun
++        kart.speed *= 0.5;
++        kart.stunTimer = 0.2;
++      }
++    } else {
++      kart.speed *= 0.5;
++    }
++
++    // Cancel drift on wall hit (no boost awarded)
++    if (kart.isDrifting) {
++      cancelDrift(kart);
++    }
++  }
++}
++
++function handleStuck(kart, dt) {
++  if (Math.abs(kart.speed) < 1.0) {
++    kart.stuckTimer += dt;
++  } else {
++    kart.stuckTimer = 0;
++  }
++
++  if (kart.stuckTimer > 5) {
++    kart.needsRespawn = true;
++  }
++}
++
++/* ── Main physics tick ─────────────────────────────────────────────── */
++
++/**
++ * Advance kart physics for one frame.  Mutates kart state in place.
++ *
++ * @param {object} kart          — mutable kart state
++ * @param {object} input         — { accel, brake, left, right, drift } booleans
++ * @param {object} collisionData — { wallSegments, curve, widthProfile, surfaceZones, lookup }
++ * @param {number} dt            — frame delta time (seconds)
++ */
++export function updateKartPhysics(kart, input, collisionData, dt) {
++
++  /* ── 1. Stun check ──────────────────────────────────────────────── */
++  if (kart.stunTimer > 0) {
++    kart.stunTimer = Math.max(0, kart.stunTimer - dt);
++    kart.heading += 8 * dt;            // spin out
++    kart.speed *= (1 - 1.5 * dt);      // coast decel
++
++    if (kart.isDrifting) cancelDrift(kart);
++
++    // Still move and collide, but skip all input processing
++    updatePosition(kart, dt);
++    updateTrackSurface(kart, collisionData, dt);
++    handleWallCollisions(kart, collisionData);
++    handleStuck(kart, dt);
++    return;
++  }
++
++  /* ── 2. Invincibility timer ─────────────────────────────────────── */
++  if (kart.invincibleTimer > 0) {
++    kart.invincibleTimer = Math.max(0, kart.invincibleTimer - dt);
++  }
++
++  /* ── 3. Boost handling ──────────────────────────────────────────── */
++  if (kart.boostTimer > 0) {
++    kart.boostTimer = Math.max(0, kart.boostTimer - dt);
++    if (kart.boostTimer <= 0) {
++      kart.boostMultiplier = 1.0;
++    }
++  }
++
++  /* ── 4. Acceleration ────────────────────────────────────────────── */
++  const offRoadAccelScale = kart.isOffRoad ? 0.6 : 1.0;
++
++  if (input.accel) {
++    kart.speed += kart.accelRate * offRoadAccelScale * dt;
++  }
++  if (input.brake) {
++    kart.speed -= kart.brakeRate * dt;
++  }
++  if (!input.accel && !input.brake) {
++    kart.speed *= (1 - 1.5 * dt);      // gentle coast decel
++  }
++
++  // Effective max speed (off-road penalty reduced when boosting)
++  let offRoadSpeedScale = 1.0;
++  if (kart.isOffRoad) {
++    offRoadSpeedScale = kart.boostTimer > 0 ? 0.8 : 0.6;
++  }
++  const effectiveMaxSpeed = kart.maxSpeed * kart.boostMultiplier * offRoadSpeedScale;
++  kart.speed = clamp(kart.speed, -kart.maxSpeed * 0.33, effectiveMaxSpeed);
++
++  /* ── 5. Steering + Drift ──────────────────────────────────────── */
++  // Drift handles its own steering when active
++  updateDrift(kart, input, dt);
++
++  if (!kart.isDrifting && Math.abs(kart.speed) > 0.5) {
++    const speedRatio = clamp(Math.abs(kart.speed) / kart.maxSpeed, 0, 1);
++    const turnRate = lerp(kart.turnRateLow, kart.turnRateHigh, speedRatio);
++
++    if (input.left)  kart.heading += turnRate * dt;
++    if (input.right) kart.heading -= turnRate * dt;
++  }
++
++  /* ── 6. Position update ─────────────────────────────────────────── */
++  updatePosition(kart, dt);
++
++  /* ── 7. Track height + surface check ────────────────────────────── */
++  updateTrackSurface(kart, collisionData, dt);
++
++  /* ── 8. Wall collision ──────────────────────────────────────────── */
++  handleWallCollisions(kart, collisionData);
++
++  /* ── 9. Stuck detection ─────────────────────────────────────────── */
++  handleStuck(kart, dt);
++}
++
++/* ── Respawn ───────────────────────────────────────────────────────── */
++
++/**
++ * Reset kart to a checkpoint position, facing forward, all motion cleared.
++ *
++ * @param {object} kart       — mutable kart state
++ * @param {{x:number, z:number, heading:number}} checkpoint
++ * @param {object} curve      — track spline curve
++ */
++export function respawnKart(kart, checkpoint, curve) {
++  kart.x = checkpoint.x;
++  kart.z = checkpoint.z;
++  kart.heading = checkpoint.heading;
++  kart.y = getTrackYAtXZ(checkpoint.x, checkpoint.z, curve);
++  kart.speed = 0;
++
++  cancelDrift(kart);
++
++  kart.invincibleTimer = 1.5;
++  kart.stunTimer = 0;
++  kart.stuckTimer = 0;
++  kart.boostTimer = 0;
++  kart.boostMultiplier = 1.0;
++  kart.needsRespawn = false;
++}
+\ No newline at end of file
+diff --git a/output/js/tracks/crystalCaverns.js b/output/js/tracks/crystalCaverns.js
+new file mode 100644
+index 0000000..e8ed65a
+--- /dev/null
++++ b/output/js/tracks/crystalCaverns.js
+@@ -0,0 +1,529 @@
++/**
++ * crystalCaverns.js — Track 2: Crystal Caverns
++ *
++ * A figure-8 underground track (~1200 units) with lava canyons,
++ * a rickety bridge, a crystal-studded grotto, a spiral descent,
++ * a mushroom fork, and a mine-cart themed return tunnel.
++ *
++ * The figure-8 crossover: upper path at Y≈8, lower path at Y≈0.
++ */
++import * as THREE from 'three';
++import { buildMergedBoxes, createInstancedVoxels, hexToRgb } from '../utils/voxelUtils.js';
++
++/* ── Control Points ─────────────────────────────────────────────────── */
++// Figure-8 loop proceeding from start, looping left (bottom half),
++// crossing over itself, looping right (top half), crossing back.
++//
++// The crossover happens near (0, ?, -40). Lower path at Y≈0, upper at Y≈8.
++
++const controlPoints = [
++  // ── 1. Mineshaft Straight (START) — 150u, flat ───
++  { x:   0, y: 0,   z:   0 },
++  { x:   0, y: 0,   z:  30 },
++  { x:   0, y: 0,   z:  60 },
++  { x:   0, y: 0,   z:  90 },
++  { x:   0, y: 0,   z: 120 },
++
++  // ── 2. Lava Canyon Curve — 120° left turn, gentle ───
++  { x: -15, y: 0,   z: 150 },
++  { x: -40, y: 0,   z: 170 },
++  { x: -70, y: 0,   z: 175 },
++  { x: -95, y: 0,   z: 165 },
++  { x:-115, y: 0,   z: 140 },
++  { x:-125, y: 0,   z: 110 },
++
++  // ── 3. Rickety Bridge — 80u straight, narrow, elevated Y=4 ───
++  { x:-125, y: 1,   z:  90 },
++  { x:-125, y: 2.5, z:  70 },
++  { x:-125, y: 4,   z:  50 },
++  { x:-125, y: 4,   z:  30 },
++  { x:-125, y: 4,   z:  10 },
++  { x:-125, y: 2.5, z:  -5 },
++
++  // ── 4. Crossover Ramp — uphill to Y=8 for figure-8 crossover ───
++  { x:-115, y: 3,   z: -25 },
++  { x: -95, y: 4.5, z: -38 },
++  { x: -70, y: 5.5, z: -42 },
++  { x: -45, y: 6.5, z: -42 },
++  { x: -20, y: 7.5, z: -42 },
++  // Crossover point (over the return tunnel below at Y≈0)
++  { x:   0, y: 8,   z: -40 },
++  { x:  20, y: 7.5, z: -38 },
++
++  // ── 5. Crystal Grotto — 200u winding, 2 gentle turns ───
++  { x:  45, y: 7,   z: -30 },
++  { x:  70, y: 6.5, z: -15 },
++  { x:  90, y: 6,   z:   5 },
++  { x: 105, y: 6,   z:  30 },
++  { x: 110, y: 6,   z:  60 },
++  { x: 105, y: 6,   z:  90 },
++  { x:  90, y: 6,   z: 115 },
++  { x:  70, y: 6,   z: 130 },
++  { x:  50, y: 6,   z: 138 },
++
++  // ── 6. Spiral Descent — 270° right downhill, Y drops 8→0 ───
++  { x:  30, y: 5.5, z: 140 },
++  { x:  15, y: 5,   z: 145 },
++  { x:   0, y: 4.5, z: 140 },  // top of spiral
++  { x: -10, y: 3.5, z: 125 },
++  { x:  -5, y: 2.5, z: 108 },
++  { x:  10, y: 1.5, z:  98 },
++  { x:  25, y: 0.8, z: 100 },
++  { x:  35, y: 0.3, z: 110 },
++
++  // ── 7. Mushroom Fork — straight, 100u ───
++  { x:  35, y: 0,   z: 125 },
++  { x:  30, y: 0,   z: 140 },
++  { x:  22, y: 0,   z: 155 },
++  { x:  15, y: 0,   z: 170 },
++
++  // ── 8. Return Tunnel — 120u back to start ───
++  // Passes UNDER the crossover point at Y=0
++  { x:  10, y: 0,   z: 180 },
++  { x:   5, y: 0,   z: 160 },
++  { x:   5, y: 0,   z: 130 },
++  { x:   8, y: 0,   z:  90 },
++  { x:   5, y: 0,   z:  55 },
++  { x:   3, y: 0,   z:  30 },
++];
++
++/* ── Width Profile ──────────────────────────────────────────────────── */
++const widthProfile = [
++  { t: 0.00, width: 14 },  // mineshaft straight
++  { t: 0.08, width: 14 },  // end straight
++  { t: 0.10, width: 14 },  // lava canyon entry
++  { t: 0.18, width: 14 },  // lava canyon mid
++  { t: 0.22, width: 10 },  // bridge approach - narrowing
++  { t: 0.24, width:  8 },  // bridge (narrow!)
++  { t: 0.30, width:  8 },  // bridge end
++  { t: 0.33, width: 12 },  // post-bridge widen
++  { t: 0.38, width: 12 },  // crossover ramp
++  { t: 0.42, width: 12 },  // crossover
++  { t: 0.46, width: 12 },  // crystal grotto entry
++  { t: 0.55, width: 12 },  // grotto
++  { t: 0.62, width: 12 },  // grotto end
++  { t: 0.66, width: 12 },  // spiral entry
++  { t: 0.75, width: 12 },  // spiral end
++  { t: 0.78, width: 10 },  // mushroom fork
++  { t: 0.85, width: 10 },  // mushroom fork end
++  { t: 0.88, width: 12 },  // return tunnel
++  { t: 0.96, width: 14 },  // approaching start
++];
++
++/* ── Checkpoints ────────────────────────────────────────────────────── */
++const checkpoints = [
++  { t: 0.00 },   // start/finish
++  { t: 0.13 },   // lava canyon mid
++  { t: 0.24 },   // bridge entrance
++  { t: 0.37 },   // crossover ramp
++  { t: 0.50 },   // crystal grotto mid
++  { t: 0.63 },   // grotto exit
++  { t: 0.75 },   // spiral descent end
++  { t: 0.88 },   // return tunnel
++];
++
++/* ── No-Wall Ranges (bridge section) ───────────────────────────────── */
++const noWallRanges = [
++  { startT: 0.23, endT: 0.31 },
++];
++
++/* ── Surface Zones ──────────────────────────────────────────────────── */
++const surfaceZones = [
++  // Lava river on inside of lava canyon curve
++  {
++    polygon: [
++      { x: -30, z: 180 },
++      { x: -60, z: 190 },
++      { x: -95, z: 180 },
++      { x:-120, z: 155 },
++      { x:-135, z: 125 },
++      { x:-140, z:  95 },
++      { x:-135, z:  70 },
++      { x:-110, z:  70 },
++      { x:-105, z:  95 },
++      { x:-105, z: 125 },
++      { x: -85, z: 155 },
++      { x: -55, z: 168 },
++      { x: -30, z: 165 },
++    ],
++    type: 'lava'
++  },
++  // Lava below bridge
++  {
++    polygon: [
++      { x:-140, z:  -5 },
++      { x:-110, z:  -5 },
++      { x:-110, z:  90 },
++      { x:-140, z:  90 },
++    ],
++    type: 'lava'
++  },
++  // Mushroom shortcut off-road zone
++  {
++    polygon: [
++      { x: 40, z: 120 },
++      { x: 55, z: 130 },
++      { x: 50, z: 170 },
++      { x: 35, z: 180 },
++      { x: 20, z: 175 },
++    ],
++    type: 'offroad'
++  },
++];
++
++/* ── Start Positions (2×2 grid) ─────────────────────────────────────── */
++const startPositions = [
++  { x: -3, y: 0.1, z:  10, heading: 0 },
++  { x:  3, y: 0.1, z:  10, heading: 0 },
++  { x: -3, y: 0.1, z:   2, heading: 0 },
++  { x:  3, y: 0.1, z:   2, heading: 0 },
++];
++
++/* ── Lighting ───────────────────────────────────────────────────────── */
++const lighting = {
++  ambientColor: 0x101030,
++  ambientIntensity: 0.2,
++  sunColor: 0x444466,
++  sunIntensity: 0.3,
++  sunDirection: { x: 0, y: 1, z: 0 },
++  skyTop: 0x0A0A1A,
++  skyBottom: 0x0A0A1A,
++  groundColor: 0x111122,
++  fog: { color: 0x0A0A1A, density: 0.008 },
++};
++
++/* ── AI Racing Splines ──────────────────────────────────────────────── */
++
++// Racing line: hugs inside of lava canyon, centered on bridge, apexes spiral
++const aiRacing = [
++  // Mineshaft straight
++  { x:  0, y: 0, z:   0 },
++  { x:  0, y: 0, z:  40 },
++  { x:  0, y: 0, z:  80 },
++  { x:  0, y: 0, z: 120 },
++
++  // Lava canyon — hug inside (right side, away from lava)
++  { x: -10, y: 0, z: 145 },
++  { x: -30, y: 0, z: 160 },
++  { x: -60, y: 0, z: 165 },
++  { x: -88, y: 0, z: 155 },
++  { x:-108, y: 0, z: 130 },
++  { x:-118, y: 0, z: 105 },
++
++  // Bridge — stay centered
++  { x:-125, y: 1,   z:  88 },
++  { x:-125, y: 2.5, z:  68 },
++  { x:-125, y: 4,   z:  48 },
++  { x:-125, y: 4,   z:  28 },
++  { x:-125, y: 4,   z:   8 },
++  { x:-125, y: 2.5, z:  -5 },
++
++  // Crossover ramp
++  { x:-112, y: 3,   z: -24 },
++  { x: -90, y: 4.5, z: -36 },
++  { x: -65, y: 5.5, z: -40 },
++  { x: -40, y: 6.5, z: -40 },
++  { x: -15, y: 7.5, z: -40 },
++  { x:   0, y: 8,   z: -38 },
++  { x:  18, y: 7.5, z: -36 },
++
++  // Crystal grotto
++  { x:  42, y: 7,   z: -28 },
++  { x:  68, y: 6.5, z: -13 },
++  { x:  88, y: 6,   z:   7 },
++  { x: 102, y: 6,   z:  32 },
++  { x: 108, y: 6,   z:  62 },
++  { x: 102, y: 6,   z:  92 },
++  { x:  88, y: 6,   z: 113 },
++  { x:  68, y: 6,   z: 128 },
++  { x:  48, y: 6,   z: 136 },
++
++  // Spiral descent — apex the turns
++  { x:  28, y: 5.5, z: 138 },
++  { x:  13, y: 5,   z: 142 },
++  { x:   0, y: 4.5, z: 137 },
++  { x:  -8, y: 3.5, z: 122 },
++  { x:  -3, y: 2.5, z: 108 },
++  { x:  12, y: 1.5, z:  99 },
++  { x:  26, y: 0.8, z: 101 },
++  { x:  34, y: 0.3, z: 111 },
++
++  // Mushroom fork
++  { x:  34, y: 0,   z: 126 },
++  { x:  29, y: 0,   z: 141 },
++  { x:  21, y: 0,   z: 156 },
++  { x:  14, y: 0,   z: 171 },
++
++  // Return tunnel
++  { x:   9, y: 0,   z: 178 },
++  { x:   5, y: 0,   z: 158 },
++  { x:   5, y: 0,   z: 128 },
++  { x:   7, y: 0,   z:  88 },
++  { x:   5, y: 0,   z:  53 },
++  { x:   3, y: 0,   z:  28 },
++];
++
++const aiCenter = controlPoints.map(p => ({ x: p.x, y: p.y, z: p.z }));
++
++const aiSplines = {
++  racing: aiRacing,
++  center: aiCenter,
++  driftZones: [
++    { startT: 0.10, endT: 0.20 },  // lava canyon
++    { startT: 0.65, endT: 0.76 },  // spiral descent
++  ],
++};
++
++/* ── Scenery Builder ────────────────────────────────────────────────── */
++
++function buildScenery(group) {
++  const boxDefs = [];
++
++  // ── Crystal Clusters in the Crystal Grotto ──
++  const crystalClusters = [
++    { x:  60, y: 6, z:  -5, hue: 0x4488FF },
++    { x:  80, y: 6, z:  15, hue: 0x44FF88 },
++    { x: 100, y: 6, z:  45, hue: 0xFF44AA },
++    { x: 115, y: 6, z:  70, hue: 0x4488FF },
++    { x: 110, y: 6, z: 100, hue: 0x44FF88 },
++    { x:  80, y: 6, z: 125, hue: 0xFF44AA },
++    { x:  55, y: 6, z: 140, hue: 0x4488FF },
++    { x:  95, y: 6, z:  -5, hue: 0x44FF88 },
++    { x: 118, y: 6, z:  35, hue: 0xFF44AA },
++    { x:  65, y: 6, z: 135, hue: 0x4488FF },
++  ];
++
++  let lightCount = 0;
++  for (const cluster of crystalClusters) {
++    const cx = cluster.x + 8;
++    const cz = cluster.z;
++    const baseY = cluster.y;
++
++    // Main crystal (tall thin box)
++    boxDefs.push({
++      x: cx, y: baseY + 2, z: cz,
++      w: 0.6, h: 4, d: 0.6,
++      color: cluster.hue
++    });
++    // Smaller crystals around it
++    boxDefs.push({
++      x: cx + 1, y: baseY + 1.2, z: cz + 0.5,
++      w: 0.4, h: 2.4, d: 0.4,
++      color: cluster.hue
++    });
++    boxDefs.push({
++      x: cx - 0.8, y: baseY + 0.8, z: cz - 0.6,
++      w: 0.3, h: 1.6, d: 0.3,
++      color: cluster.hue
++    });
++    boxDefs.push({
++      x: cx + 0.3, y: baseY + 1, z: cz - 1,
++      w: 0.5, h: 2, d: 0.5,
++      color: cluster.hue
++    });
++
++    // Point light for glow (limit to 8 total)
++    if (lightCount < 8) {
++      const light = new THREE.PointLight(cluster.hue, 0.6, 30);
++      light.position.set(cx, baseY + 3, cz);
++      group.add(light);
++      lightCount++;
++    }
++  }
++
++  // ── Lava Planes ──
++  // Lava inside canyon curve
++  const lavaGeo1 = new THREE.PlaneGeometry(80, 130);
++  const lavaMat = new THREE.MeshBasicMaterial({
++    color: 0xFF4400,
++    transparent: true,
++    opacity: 0.85,
++  });
++  const lava1 = new THREE.Mesh(lavaGeo1, lavaMat);
++  lava1.rotation.x = -Math.PI / 2;
++  lava1.position.set(-100, -1, 130);
++  group.add(lava1);
++
++  // Lava below bridge
++  const lavaGeo2 = new THREE.PlaneGeometry(35, 100);
++  const lava2 = new THREE.Mesh(lavaGeo2, lavaMat.clone());
++  lava2.rotation.x = -Math.PI / 2;
++  lava2.position.set(-125, -1, 42);
++  group.add(lava2);
++
++  // Lava glow lights
++  const lavaLight1 = new THREE.PointLight(0xFF4400, 0.5, 60);
++  lavaLight1.position.set(-100, 0, 130);
++  group.add(lavaLight1);
++
++  const lavaLight2 = new THREE.PointLight(0xFF4400, 0.4, 40);
++  lavaLight2.position.set(-125, 0, 42);
++  group.add(lavaLight2);
++
++  // ── Wooden Bridge Planks ──
++  for (let z = -5; z <= 90; z += 2) {
++    boxDefs.push({
++      x: -125, y: 3.6, z,
++      w: 9, h: 0.3, d: 1.5,
++      color: 0x8B6914
++    });
++  }
++  // Bridge rails (thin)
++  for (let z = -5; z <= 90; z += 8) {
++    boxDefs.push({ x: -121, y: 4.5, z, w: 0.3, h: 1.5, d: 0.3, color: 0x6B4914 });
++    boxDefs.push({ x: -129, y: 4.5, z, w: 0.3, h: 1.5, d: 0.3, color: 0x6B4914 });
++  }
++  // Rope/rail horizontal
++  boxDefs.push({ x: -121, y: 5.2, z: 42, w: 0.15, h: 0.15, d: 95, color: 0x6B4914 });
++  boxDefs.push({ x: -129, y: 5.2, z: 42, w: 0.15, h: 0.15, d: 95, color: 0x6B4914 });
++
++  // Bridge support pillars
++  for (const pz of [0, 30, 60, 85]) {
++    boxDefs.push({ x: -121, y: 1.8, z: pz, w: 0.8, h: 3.6, d: 0.8, color: 0x5A3A0A });
++    boxDefs.push({ x: -129, y: 1.8, z: pz, w: 0.8, h: 3.6, d: 0.8, color: 0x5A3A0A });
++  }
++
++  // ── Mushrooms at mushroom fork ──
++  const mushPositions = [
++    { x: 42, z: 132 },
++    { x: 48, z: 145 },
++    { x: 44, z: 160 },
++    { x: 40, z: 175 },
++    { x: 50, z: 155 },
++    { x: 46, z: 170 },
++  ];
++  for (const mp of mushPositions) {
++    const scale = 0.8 + Math.random() * 0.6;
++    // Stem
++    boxDefs.push({
++      x: mp.x, y: scale, z: mp.z,
++      w: 0.6 * scale, h: 2 * scale, d: 0.6 * scale,
++      color: 0x20DDAA
++    });
++    // Cap
++    boxDefs.push({
++      x: mp.x, y: 2.2 * scale, z: mp.z,
++      w: 2.2 * scale, h: 0.8 * scale, d: 2.2 * scale,
++      color: 0x20DDAA
++    });
++    // Cap top spots
++    boxDefs.push({
++      x: mp.x + 0.4 * scale, y: 2.7 * scale, z: mp.z - 0.3 * scale,
++      w: 0.4 * scale, h: 0.2 * scale, d: 0.4 * scale,
++      color: 0xFFFFDD
++    });
++  }
++
++  // ── Mine Cart Rails along mineshaft straight ──
++  // Left rail
++  for (let z = -5; z <= 120; z += 3) {
++    boxDefs.push({ x: -9, y: 0.1, z, w: 0.2, h: 0.2, d: 3, color: 0x888888 });
++    boxDefs.push({ x:  9, y: 0.1, z, w: 0.2, h: 0.2, d: 3, color: 0x888888 });
++  }
++  // Cross ties
++  for (let z = -5; z <= 120; z += 5) {
++    boxDefs.push({ x: -9, y: 0.02, z, w: 1.5, h: 0.15, d: 0.5, color: 0x5A3A0A });
++    boxDefs.push({ x:  9, y: 0.02, z, w: 1.5, h: 0.15, d: 0.5, color: 0x5A3A0A });
++  }
++
++  // ── Cave Walls — large dark box formations surrounding track ──
++  const caveWalls = [
++    // Left side walls
++    { x: -50, y: 8, z:  60, w: 10, h: 16, d: 180, color: 0x1a1a2e },
++    { x:  50, y: 8, z:  60, w: 10, h: 16, d: 180, color: 0x1a1a2e },
++
++    // Ceiling over mineshaft
++    { x:   0, y: 14, z:  60, w: 80, h: 4, d: 180, color: 0x121228 },
++
++    // Walls around lava canyon
++    { x: -80, y: 8, z: 195, w: 120, h: 16, d: 10, color: 0x1a1a2e },
++    { x:-155, y: 8, z: 130, w: 10, h: 16, d: 140, color: 0x1a1a2e },
++
++    // Cave ceiling over grotto
++    { x:  85, y: 14, z:  60, w: 80, h: 4, d: 180, color: 0x121228 },
++
++    // Walls on far side of grotto
++    { x: 135, y: 8, z:  60, w: 10, h: 16, d: 200, color: 0x1a1a2e },
++
++    // Floor under bridge (rocky)
++    { x:-125, y: -2.5, z:  42, w: 40, h: 3, d: 100, color: 0x222233 },
++
++    // Stalactites (hanging from ceiling at intervals)
++    { x:  10, y: 12, z:  30, w: 1, h: 4, d: 1, color: 0x2a2a3e },
++    { x: -15, y: 12, z:  70, w: 1.5, h: 5, d: 1, color: 0x2a2a3e },
++    { x:   5, y: 12, z: 100, w: 1, h: 3, d: 1.5, color: 0x2a2a3e },
++    { x:  75, y: 12, z:  50, w: 1, h: 4, d: 1, color: 0x2a2a3e },
++    { x:  95, y: 12, z:  80, w: 1.5, h: 5, d: 1.5, color: 0x2a2a3e },
++    { x:  65, y: 12, z: 120, w: 1, h: 3, d: 1, color: 0x2a2a3e },
++  ];
++
++  for (const wall of caveWalls) {
++    boxDefs.push(wall);
++  }
++
++  // ── Return tunnel archway markers ──
++  for (let z = 30; z <= 170; z += 20) {
++    // Arch left
++    boxDefs.push({ x: -3, y: 3, z, w: 0.5, h: 6, d: 1, color: 0x333344 });
++    // Arch right
++    boxDefs.push({ x: 13, y: 3, z, w: 0.5, h: 6, d: 1, color: 0x333344 });
++    // Arch top
++    boxDefs.push({ x:  5, y: 6.5, z, w: 17, h: 1, d: 1, color: 0x333344 });
++  }
++
++  // ── Crossover support columns ──
++  // Pillars supporting the upper crossover path
++  for (const px of [-30, -10, 10]) {
++    boxDefs.push({
++      x: px, y: 4, z: -40,
++      w: 1.5, h: 8, d: 1.5,
++      color: 0x444455
++    });
++  }
++
++  // ── Start/Finish markers ──
++  boxDefs.push({ x: -8, y: 3, z: 0, w: 0.4, h: 6, d: 0.4, color: 0xCCCCCC });
++  boxDefs.push({ x:  8, y: 3, z: 0, w: 0.4, h: 6, d: 0.4, color: 0xCCCCCC });
++  for (let bx = -7; bx <= 7; bx += 1) {
++    for (let by = 0; by < 2; by++) {
++      const isBlack = (Math.floor(bx + 8) + by) % 2 === 0;
++      boxDefs.push({
++        x: bx, y: 6.5 + by * 0.5, z: 0,
++        w: 1, h: 0.5, d: 0.3,
++        color: isBlack ? 0x111111 : 0xEEEEEE
++      });
++    }
++  }
++
++  // ── Mine cart prop near start ──
++  boxDefs.push({ x: 11, y: 0.6, z: 15, w: 2, h: 1.2, d: 3, color: 0x8B6914 });
++  boxDefs.push({ x: 10.3, y: 0.2, z: 14, w: 0.5, h: 0.5, d: 0.5, color: 0x555555 });
++  boxDefs.push({ x: 11.7, y: 0.2, z: 14, w: 0.5, h: 0.5, d: 0.5, color: 0x555555 });
++  boxDefs.push({ x: 10.3, y: 0.2, z: 16, w: 0.5, h: 0.5, d: 0.5, color: 0x555555 });
++  boxDefs.push({ x: 11.7, y: 0.2, z: 16, w: 0.5, h: 0.5, d: 0.5, color: 0x555555 });
++
++  // Build and add merged geometry
++  if (boxDefs.length > 0) {
++    const geo = buildMergedBoxes(boxDefs);
++    const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
++    const mesh = new THREE.Mesh(geo, mat);
++    mesh.castShadow = true;
++    mesh.receiveShadow = true;
++    group.add(mesh);
++  }
++}
++
++/* ── Export ──────────────────────────────────────────────────────────── */
++
++export const crystalCaverns = {
++  name: 'Crystal Caverns',
++  controlPoints,
++  widthProfile,
++  checkpoints,
++  surfaceZones,
++  noWallRanges,
++  startPositions,
++  lighting,
++  aiSplines,
++  buildScenery,
++};
+diff --git a/output/js/tracks/sunsetCircuit.js b/output/js/tracks/sunsetCircuit.js
+new file mode 100644
+index 0000000..5501823
+--- /dev/null
++++ b/output/js/tracks/sunsetCircuit.js
+@@ -0,0 +1,348 @@
++/**
++ * sunsetCircuit.js — Track 1: Sunset Circuit
++ *
++ * An oval-ish coastal loop with a tight hairpin, palm-lined beach run,
++ * an S-curve climb, a cliff tunnel, and an ocean vista straight.
++ * Total length ~900 units.
++ */
++import * as THREE from 'three';
++import { buildMergedBoxes, createInstancedVoxels, hexToRgb } from '../utils/voxelUtils.js';
++
++/* ── Control Points ─────────────────────────────────────────────────── */
++// Closed loop proceeding clockwise when viewed from above.
++// Sections:
++//   1. Start Straight    — Z-forward, flat, ~200u
++//   2. Sunset Hairpin    — tight 180° right turn, radius ~30u
++//   3. Palm Beach Run    — 180u gentle left curve along water
++//   4. S-Curve Climb     — 150u uphill, Y rises ~8u
++//   5. Cliff Tunnel      — 120u slight downhill
++//   6. Ocean Vista Str.  — 160u downhill back to start
++
++const controlPoints = [
++  // ── 1. Start Straight (Z-forward, Y=0) ───
++  { x:   0, y: 0,   z:   0 },
++  { x:   0, y: 0,   z:  40 },
++  { x:   0, y: 0,   z:  80 },
++  { x:   0, y: 0,   z: 120 },
++  { x:   0, y: 0,   z: 160 },
++  { x:   0, y: 0,   z: 200 },
++
++  // ── 2. Sunset Hairpin (tight 180° right, radius ~30u) ───
++  { x:  10, y: 0,   z: 230 },
++  { x:  25, y: 0,   z: 248 },
++  { x:  45, y: 0,   z: 255 },
++  { x:  60, y: 0,   z: 248 },
++  { x:  68, y: 0,   z: 230 },
++  { x:  60, y: 0,   z: 210 },
++  { x:  45, y: 0,   z: 200 },
++  { x:  30, y: 0,   z: 198 },
++
++  // ── 3. Palm Beach Run (180u gentle left along water) ───
++  { x:  30, y: 0,   z: 175 },
++  { x:  35, y: 0,   z: 145 },
++  { x:  50, y: 0,   z: 110 },
++  { x:  70, y: 0,   z:  80 },
++  { x:  85, y: 0,   z:  55 },
++  { x:  90, y: 0,   z:  30 },
++
++  // ── 4. S-Curve Climb (uphill, Y rises ~8u) ───
++  { x:  85, y: 1,   z:   5 },
++  { x:  70, y: 2.5, z: -20 },
++  { x:  50, y: 4,   z: -40 },
++  { x:  35, y: 6,   z: -55 },
++  { x:  25, y: 7.5, z: -70 },
++  { x:  30, y: 8,   z: -90 },
++
++  // ── 5. Cliff Tunnel (slight downhill) ───
++  { x:  25, y: 7,   z:-115 },
++  { x:  15, y: 6,   z:-140 },
++  { x:   0, y: 5,   z:-155 },
++  { x: -15, y: 4,   z:-150 },
++
++  // ── 6. Ocean Vista Straight (downhill back to start) ───
++  { x: -25, y: 3,   z:-130 },
++  { x: -30, y: 2.5, z:-105 },
++  { x: -30, y: 2,   z: -75 },
++  { x: -25, y: 1.5, z: -45 },
++  { x: -18, y: 1,   z: -20 },
++  { x: -10, y: 0.3, z:   0 },
++];
++
++/* ── Width Profile ──────────────────────────────────────────────────── */
++const widthProfile = [
++  { t: 0.00, width: 16 },  // start straight
++  { t: 0.14, width: 16 },  // end of start straight
++  { t: 0.18, width: 14 },  // hairpin entry
++  { t: 0.30, width: 14 },  // hairpin exit
++  { t: 0.33, width: 16 },  // palm beach
++  { t: 0.50, width: 16 },  // end of palm beach
++  { t: 0.55, width: 12 },  // S-curve
++  { t: 0.68, width: 12 },  // end S-curve / tunnel
++  { t: 0.78, width: 12 },  // tunnel end
++  { t: 0.83, width: 16 },  // ocean vista
++  { t: 0.97, width: 16 },  // approaching start
++];
++
++/* ── Checkpoints ────────────────────────────────────────────────────── */
++const checkpoints = [
++  { t: 0.00 },
++  { t: 0.17 },
++  { t: 0.33 },
++  { t: 0.50 },
++  { t: 0.67 },
++  { t: 0.83 },
++];
++
++/* ── Surface Zones ──────────────────────────────────────────────────── */
++// Sand trap outside the hairpin
++const surfaceZones = [
++  {
++    polygon: [
++      { x:  30, z: 260 },
++      { x:  75, z: 270 },
++      { x:  85, z: 245 },
++      { x:  80, z: 215 },
++      { x:  55, z: 195 },
++      { x:  25, z: 205 },
++    ],
++    type: 'offroad'
++  },
++  // Small sand patch at beach side
++  {
++    polygon: [
++      { x:  95, z: 100 },
++      { x: 115, z:  80 },
++      { x: 110, z:  40 },
++      { x:  95, z:  25 },
++    ],
++    type: 'offroad'
++  },
++];
++
++/* ── Start Positions (2×2 grid) ─────────────────────────────────────── */
++const startPositions = [
++  { x: -3, y: 0.1, z:  10, heading: 0 },
++  { x:  3, y: 0.1, z:  10, heading: 0 },
++  { x: -3, y: 0.1, z:   2, heading: 0 },
++  { x:  3, y: 0.1, z:   2, heading: 0 },
++];
++
++/* ── Lighting ───────────────────────────────────────────────────────── */
++const lighting = {
++  ambientColor: 0x4466AA,
++  ambientIntensity: 0.4,
++  sunColor: 0xFFA040,
++  sunIntensity: 1.2,
++  sunDirection: { x: -0.5, y: 0.8, z: 0.3 },
++  skyTop: 0x1a0a3e,
++  skyBottom: 0xFF8844,
++  groundColor: 0x228B22,
++};
++
++/* ── AI Racing Splines ──────────────────────────────────────────────── */
++
++// Optimal racing line — wide entry into hairpin, tight apex, smooth elsewhere
++const aiRacing = [
++  // Start straight — slight right bias for hairpin setup
++  { x:  2, y: 0, z:   0 },
++  { x:  2, y: 0, z:  50 },
++  { x:  3, y: 0, z: 100 },
++  { x:  3, y: 0, z: 160 },
++  { x:  4, y: 0, z: 200 },
++
++  // Hairpin — wide entry, tight apex
++  { x: 10, y: 0, z: 225 },
++  { x: 30, y: 0, z: 244 },
++  { x: 48, y: 0, z: 245 },  // apex close to inner wall
++  { x: 55, y: 0, z: 230 },
++  { x: 48, y: 0, z: 210 },
++  { x: 35, y: 0, z: 200 },
++
++  // Palm Beach — smooth gentle line
++  { x: 32, y: 0, z: 170 },
++  { x: 38, y: 0, z: 140 },
++  { x: 52, y: 0, z: 105 },
++  { x: 72, y: 0, z:  75 },
++  { x: 86, y: 0, z:  48 },
++  { x: 88, y: 0, z:  28 },
++
++  // S-curve — smooth alternating line
++  { x: 82, y: 1, z:   5 },
++  { x: 65, y: 2.5, z: -22 },
++  { x: 48, y: 4, z: -42 },
++  { x: 38, y: 6, z: -56 },
++  { x: 28, y: 7.5, z: -72 },
++  { x: 32, y: 8, z: -90 },
++
++  // Cliff tunnel
++  { x: 24, y: 7, z: -116 },
++  { x: 14, y: 6, z: -140 },
++  { x:  0, y: 5, z: -152 },
++  { x: -14, y: 4, z: -148 },
++
++  // Ocean vista
++  { x: -24, y: 3, z: -128 },
++  { x: -28, y: 2.5, z: -103 },
++  { x: -28, y: 2, z: -73 },
++  { x: -23, y: 1.5, z: -43 },
++  { x: -16, y: 1, z: -18 },
++  { x:  -8, y: 0.3, z:  0 },
++];
++
++const aiCenter = controlPoints.map(p => ({ x: p.x, y: p.y, z: p.z }));
++
++const aiSplines = {
++  racing: aiRacing,
++  center: aiCenter,
++  driftZones: [
++    { startT: 0.15, endT: 0.28 },   // hairpin
++    { startT: 0.54, endT: 0.66 },   // S-curve
++  ],
++};
++
++/* ── Scenery Builder ────────────────────────────────────────────────── */
++
++function buildScenery(group) {
++  const boxDefs = [];
++
++  // ── Palm Trees along beach run ──
++  const palmPositions = [
++    { x: 100, z: 100 }, { x: 105, z: 80 }, { x: 110, z: 60 },
++    { x: 108, z: 42 }, { x: 100, z: 22 }, { x: 95, z: 5 },
++    { x: 102, z: 120 }, { x: 98, z: 140 }, { x: 48, z: 175 },
++    { x: 15, z: 185 }, { x: 42, z: 192 }, { x: 55, z: 180 },
++    { x: 112, z: 95 }, { x: 107, z: 52 }, { x: 115, z: 70 },
++    { x: -8, z: 200 }, { x: -15, z: 175 }, { x: -20, z: 150 },
++  ];
++
++  for (const pos of palmPositions) {
++    const bx = pos.x;
++    const bz = pos.z;
++    // Trunk: 3 stacked segments
++    boxDefs.push({ x: bx, y: 1, z: bz, w: 0.5, h: 2, d: 0.5, color: 0x8B4513 });
++    boxDefs.push({ x: bx, y: 3, z: bz, w: 0.5, h: 2, d: 0.5, color: 0x8B4513 });
++    boxDefs.push({ x: bx, y: 5, z: bz, w: 0.5, h: 2, d: 0.5, color: 0x8B4513 });
++    // Crown
++    boxDefs.push({ x: bx, y: 6.5, z: bz, w: 3, h: 1, d: 3, color: 0x228822 });
++    boxDefs.push({ x: bx + 1.5, y: 6.2, z: bz, w: 2, h: 0.6, d: 1.5, color: 0x33AA33 });
++    boxDefs.push({ x: bx - 1.5, y: 6.2, z: bz, w: 2, h: 0.6, d: 1.5, color: 0x33AA33 });
++    boxDefs.push({ x: bx, y: 6.2, z: bz + 1.5, w: 1.5, h: 0.6, d: 2, color: 0x33AA33 });
++  }
++
++  // ── Ocean plane ──
++  const oceanGeo = new THREE.PlaneGeometry(400, 500);
++  const oceanMat = new THREE.MeshLambertMaterial({
++    color: 0x1166AA,
++    transparent: true,
++    opacity: 0.8,
++  });
++  const ocean = new THREE.Mesh(oceanGeo, oceanMat);
++  ocean.rotation.x = -Math.PI / 2;
++  ocean.position.set(160, -2, 100);
++  group.add(ocean);
++
++  // Second ocean plane for wider coverage
++  const ocean2 = ocean.clone();
++  ocean2.position.set(160, -2, -60);
++  group.add(ocean2);
++
++  // ── Sun sphere at horizon ──
++  const sunGeo = new THREE.SphereGeometry(25, 16, 16);
++  const sunMat = new THREE.MeshBasicMaterial({ color: 0xFF6622 });
++  const sunMesh = new THREE.Mesh(sunGeo, sunMat);
++  sunMesh.position.set(-200, 40, 150);
++  group.add(sunMesh);
++
++  // Sun glow
++  const glowGeo = new THREE.SphereGeometry(35, 16, 16);
++  const glowMat = new THREE.MeshBasicMaterial({
++    color: 0xFF8844,
++    transparent: true,
++    opacity: 0.3,
++  });
++  const glow = new THREE.Mesh(glowGeo, glowMat);
++  glow.position.copy(sunMesh.position);
++  group.add(glow);
++
++  // ── Start/Finish banner ──
++  // Left pole
++  boxDefs.push({ x: -8, y: 3, z: 0, w: 0.4, h: 6, d: 0.4, color: 0xCCCCCC });
++  // Right pole
++  boxDefs.push({ x:  8, y: 3, z: 0, w: 0.4, h: 6, d: 0.4, color: 0xCCCCCC });
++  // Banner — checkered pattern with alternating black/white small cubes
++  for (let bx = -7; bx <= 7; bx += 1) {
++    for (let by = 0; by < 2; by++) {
++      const isBlack = (Math.floor(bx + 8) + by) % 2 === 0;
++      boxDefs.push({
++        x: bx, y: 6.5 + by * 0.5, z: 0,
++        w: 1, h: 0.5, d: 0.3,
++        color: isBlack ? 0x111111 : 0xEEEEEE
++      });
++    }
++  }
++
++  // ── Beach Huts near hairpin ──
++  const hutPositions = [
++    { x: -10, z: 225, color: 0xDD4444 },
++    { x: -15, z: 240, color: 0x44AADD },
++    { x:  -8, z: 255, color: 0xDDDD44 },
++  ];
++  for (const hut of hutPositions) {
++    // Walls
++    boxDefs.push({ x: hut.x, y: 1.5, z: hut.z, w: 4, h: 3, d: 4, color: hut.color });
++    // Roof
++    boxDefs.push({ x: hut.x, y: 3.5, z: hut.z, w: 5, h: 0.6, d: 5, color: 0x8B4513 });
++    // Door
++    boxDefs.push({ x: hut.x + 2.01, y: 0.8, z: hut.z, w: 0.1, h: 1.6, d: 1, color: 0x333333 });
++  }
++
++  // ── Sand dune texturing near hairpin ──
++  boxDefs.push({ x: 50, y: -0.05, z: 265, w: 30, h: 0.3, d: 15, color: 0xD2B48C });
++  boxDefs.push({ x: 70, y: -0.05, z: 255, w: 20, h: 0.2, d: 20, color: 0xC4A882 });
++  boxDefs.push({ x: 40, y: -0.05, z: 210, w: 25, h: 0.2, d: 10, color: 0xD2B48C });
++
++  // ── Rocks along cliff section ──
++  const rockPositions = [
++    { x: 40, y: 4, z: -50 }, { x: 15, y: 6, z: -80 },
++    { x: 35, y: 7, z: -100 }, { x: 5, y: 5.5, z: -145 },
++    { x: -20, y: 3.5, z: -160 },
++  ];
++  for (const rock of rockPositions) {
++    const s = 1.5 + Math.random() * 2;
++    boxDefs.push({
++      x: rock.x + 12, y: rock.y - 0.5, z: rock.z,
++      w: s * 1.2, h: s, d: s * 1.3,
++      color: 0x777777
++    });
++    boxDefs.push({
++      x: rock.x + 14, y: rock.y + 0.3, z: rock.z + 1,
++      w: s * 0.7, h: s * 0.6, d: s * 0.8,
++      color: 0x888888
++    });
++  }
++
++  // Build and add merged geometry
++  if (boxDefs.length > 0) {
++    const geo = buildMergedBoxes(boxDefs);
++    const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
++    const mesh = new THREE.Mesh(geo, mat);
++    mesh.castShadow = true;
++    mesh.receiveShadow = true;
++    group.add(mesh);
++  }
++}
++
++/* ── Export ──────────────────────────────────────────────────────────── */
++
++export const sunsetCircuit = {
++  name: 'Sunset Circuit',
++  controlPoints,
++  widthProfile,
++  checkpoints,
++  surfaceZones,
++  noWallRanges: [],
++  startPositions,
++  lighting,
++  aiSplines,
++  buildScenery,
++};
+diff --git a/output/js/tracks/trackBase.js b/output/js/tracks/trackBase.js
+new file mode 100644
+index 0000000..25f66a7
+--- /dev/null
++++ b/output/js/tracks/trackBase.js
+@@ -0,0 +1,583 @@
++/**
++ * trackBase.js — Shared track construction utilities for voxel kart racer.
++ */
++import * as THREE from 'three';
++import { clamp, lerp, distanceXZ, pointInPolygon2D } from '../utils/mathUtils.js';
++import { buildMergedBoxes, createInstancedVoxels, hexToRgb } from '../utils/voxelUtils.js';
++
++/* ── Spline helpers ─────────────────────────────────────────────────── */
++
++/**
++ * Build a closed CatmullRom spline from control points.
++ * @param {{x:number,y:number,z:number}[]} controlPoints
++ * @returns {THREE.CatmullRomCurve3}
++ */
++export function buildTrackSpline(controlPoints) {
++  const pts = controlPoints.map(p => new THREE.Vector3(p.x, p.y, p.z));
++  const curve = new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.5);
++  return curve;
++}
++
++/**
++ * Sample point and tangent at parametric t.
++ * @param {THREE.CatmullRomCurve3} curve
++ * @param {number} t - 0..1
++ * @returns {{ point: THREE.Vector3, tangent: THREE.Vector3 }}
++ */
++export function sampleSpline(curve, t) {
++  const point = curve.getPoint(t);
++  const tangent = curve.getTangent(t).normalize();
++  return { point, tangent };
++}
++
++/* ── Width profile interpolation ────────────────────────────────────── */
++
++/**
++ * Interpolate width from a width profile at parametric t.
++ * Profile is sorted array of {t, width}.
++ */
++function interpolateWidth(widthProfile, t) {
++  if (widthProfile.length === 0) return 12;
++  if (widthProfile.length === 1) return widthProfile[0].width;
++
++  // Handle wrapping: t may be slightly outside [0,1] — clamp it
++  t = ((t % 1) + 1) % 1;
++
++  // Find bounding entries
++  let lower = widthProfile[widthProfile.length - 1];
++  let upper = widthProfile[0];
++
++  for (let i = 0; i < widthProfile.length; i++) {
++    if (widthProfile[i].t <= t) {
++      lower = widthProfile[i];
++      upper = widthProfile[(i + 1) % widthProfile.length];
++    }
++  }
++
++  // Compute interpolation factor
++  let dt = upper.t - lower.t;
++  if (dt <= 0) dt += 1; // wrap around
++  let localT = (t - lower.t);
++  if (localT < 0) localT += 1;
++  const frac = dt > 0.0001 ? clamp(localT / dt, 0, 1) : 0;
++
++  return lerp(lower.width, upper.width, frac);
++}
++
++/* ── Road Mesh ──────────────────────────────────────────────────────── */
++
++/**
++ * Compute left and right edge positions at a spline sample.
++ */
++function getEdgePoints(point, tangent, halfWidth) {
++  const up = new THREE.Vector3(0, 1, 0);
++  const right = new THREE.Vector3().crossVectors(tangent, up).normalize();
++  const left = point.clone().add(right.clone().multiplyScalar(-halfWidth));
++  const rightPt = point.clone().add(right.clone().multiplyScalar(halfWidth));
++  return { left, right: rightPt, rightDir: right };
++}
++
++/**
++ * Build the road surface mesh with vertex colors for lane markings and curbing.
++ * @param {THREE.CatmullRomCurve3} curve
++ * @param {{t:number, width:number}[]} widthProfile
++ * @param {number} totalSamples
++ * @returns {THREE.Mesh}
++ */
++export function buildRoadMesh(curve, widthProfile, totalSamples = 200) {
++  const positions = [];
++  const normals = [];
++  const colors = [];
++
++  const asphalt = hexToRgb(0x333333);
++  const white = hexToRgb(0xFFFFFF);
++  const curb1 = hexToRgb(0xFF4400);
++  const curb2 = hexToRgb(0xFFFFFF);
++
++  // Sample edge points
++  const leftPts = [];
++  const rightPts = [];
++  const halfWidths = [];
++
++  for (let i = 0; i <= totalSamples; i++) {
++    const t = i / totalSamples;
++    const { point, tangent } = sampleSpline(curve, t);
++    const w = interpolateWidth(widthProfile, t);
++    const hw = w / 2;
++    halfWidths.push(hw);
++    const edges = getEdgePoints(point, tangent, hw);
++    leftPts.push(edges.left);
++    rightPts.push(edges.right);
++  }
++
++  // Build triangle strip: for each segment (i to i+1), create 2 triangles
++  for (let i = 0; i < totalSamples; i++) {
++    const l0 = leftPts[i], r0 = rightPts[i];
++    const l1 = leftPts[i + 1], r1 = rightPts[i + 1];
++    const hw = halfWidths[i];
++
++    // Determine colors for this segment
++    // We subdivide across the width into strips for coloring
++    const crossDivs = 10;
++    for (let c = 0; c < crossDivs; c++) {
++      const frac0 = c / crossDivs;
++      const frac1 = (c + 1) / crossDivs;
++
++      // Interpolate corners
++      const p00 = new THREE.Vector3().lerpVectors(l0, r0, frac0);
++      const p10 = new THREE.Vector3().lerpVectors(l0, r0, frac1);
++      const p01 = new THREE.Vector3().lerpVectors(l1, r1, frac0);
++      const p11 = new THREE.Vector3().lerpVectors(l1, r1, frac1);
++
++      // Determine color for this cross-strip
++      let col = asphalt;
++
++      // Position across road: -1 (left edge) to +1 (right edge)
++      const crossPos = frac0 + (frac1 - frac0) * 0.5; // center of strip
++      const distFromCenter = Math.abs(crossPos - 0.5) * 2; // 0=center, 1=edge
++      const distFromEdgeU = (1 - distFromCenter) * hw; // distance in units from edge
++
++      // Curbing: last 0.5u on each side, alternating colors every 5 samples
++      if (distFromEdgeU < 0.5) {
++        const curbIdx = Math.floor(i / 5);
++        col = (curbIdx % 2 === 0) ? curb1 : curb2;
++      }
++
++      // Lane markings at ±0.3 of half-width every 20th sample (dashed)
++      if (i % 20 < 10) {
++        const lanePos = crossPos - 0.5; // -0.5 to 0.5
++        if (Math.abs(Math.abs(lanePos) - 0.3 * 0.5) < 0.03) {
++          col = white;
++        }
++      }
++
++      // Center line (dashed)
++      if (i % 20 < 10 && Math.abs(crossPos - 0.5) < 0.03) {
++        col = white;
++      }
++
++      // Two triangles
++      pushTriangle(positions, normals, colors, p00, p10, p01, col);
++      pushTriangle(positions, normals, colors, p10, p11, p01, col);
++    }
++  }
++
++  const geometry = new THREE.BufferGeometry();
++  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
++  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
++  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
++
++  const material = new THREE.MeshLambertMaterial({ vertexColors: true });
++  return new THREE.Mesh(geometry, material);
++}
++
++function pushTriangle(positions, normals, colors, a, b, c, col) {
++  const ab = new THREE.Vector3().subVectors(b, a);
++  const ac = new THREE.Vector3().subVectors(c, a);
++  const n = new THREE.Vector3().crossVectors(ab, ac).normalize();
++
++  positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
++  normals.push(n.x, n.y, n.z, n.x, n.y, n.z, n.x, n.y, n.z);
++  colors.push(col.r, col.g, col.b, col.r, col.g, col.b, col.r, col.g, col.b);
++}
++
++/* ── Walls ──────────────────────────────────────────────────────────── */
++
++/**
++ * Build wall geometry along road edges and return collision segments.
++ * @param {THREE.CatmullRomCurve3} curve
++ * @param {{t:number, width:number}[]} widthProfile
++ * @param {number} wallHeight
++ * @param {number} totalSamples
++ * @param {{startT:number, endT:number}[]} noWallRanges
++ * @returns {{ mesh: THREE.Mesh, segments: {a:{x:number,z:number}, b:{x:number,z:number}, normal:{x:number,z:number}}[] }}
++ */
++export function buildWalls(curve, widthProfile, wallHeight = 2, totalSamples = 200, noWallRanges = []) {
++  const wallBoxes = [];
++  const segments = [];
++  const wallThickness = 0.5;
++
++  function isInNoWallRange(t) {
++    for (const range of noWallRanges) {
++      if (range.startT <= range.endT) {
++        if (t >= range.startT && t <= range.endT) return true;
++      } else {
++        // Wraps around
++        if (t >= range.startT || t <= range.endT) return true;
++      }
++    }
++    return false;
++  }
++
++  for (let i = 0; i < totalSamples; i++) {
++    const t0 = i / totalSamples;
++    const t1 = (i + 1) / totalSamples;
++    const tMid = (t0 + t1) / 2;
++
++    if (isInNoWallRange(tMid)) continue;
++
++    const s0 = sampleSpline(curve, t0);
++    const s1 = sampleSpline(curve, t1);
++    const w0 = interpolateWidth(widthProfile, t0) / 2;
++    const w1 = interpolateWidth(widthProfile, t1) / 2;
++
++    const e0 = getEdgePoints(s0.point, s0.tangent, w0);
++    const e1 = getEdgePoints(s1.point, s1.tangent, w1);
++
++    // Left wall
++    const lMid = new THREE.Vector3().addVectors(e0.left, e1.left).multiplyScalar(0.5);
++    const lLen = e0.left.distanceTo(e1.left);
++    const lDir = new THREE.Vector3().subVectors(e1.left, e0.left).normalize();
++    const lAngle = Math.atan2(lDir.x, lDir.z);
++
++    wallBoxes.push({
++      x: lMid.x - e0.rightDir.x * wallThickness * 0.5,
++      y: lMid.y + wallHeight / 2,
++      z: lMid.z - e0.rightDir.z * wallThickness * 0.5,
++      w: wallThickness, h: wallHeight, d: Math.max(lLen, 0.1),
++      color: 0x666666
++    });
++
++    // Right wall
++    const rMid = new THREE.Vector3().addVectors(e0.right, e1.right).multiplyScalar(0.5);
++
++    wallBoxes.push({
++      x: rMid.x + e0.rightDir.x * wallThickness * 0.5,
++      y: rMid.y + wallHeight / 2,
++      z: rMid.z + e0.rightDir.z * wallThickness * 0.5,
++      w: wallThickness, h: wallHeight, d: Math.max(lLen, 0.1),
++      color: 0x666666
++    });
++
++    // Collision segments (left wall — normal points inward/right)
++    segments.push({
++      a: { x: e0.left.x, z: e0.left.z },
++      b: { x: e1.left.x, z: e1.left.z },
++      normal: { x: e0.rightDir.x, z: e0.rightDir.z }
++    });
++
++    // Collision segments (right wall — normal points inward/left)
++    segments.push({
++      a: { x: e0.right.x, z: e0.right.z },
++      b: { x: e1.right.x, z: e1.right.z },
++      normal: { x: -e0.rightDir.x, z: -e0.rightDir.z }
++    });
++  }
++
++  // Build merged geometry from wall boxes using simple quads instead
++  const geometry = buildMergedBoxes(wallBoxes);
++  const material = new THREE.MeshLambertMaterial({ vertexColors: true });
++  const mesh = new THREE.Mesh(geometry, material);
++
++  return { mesh, segments };
++}
++
++/* ── Checkpoints ────────────────────────────────────────────────────── */
++
++/**
++ * Build checkpoint plane descriptors for lap detection.
++ * @param {THREE.CatmullRomCurve3} curve
++ * @param {{t:number}[]} checkpoints
++ * @param {{t:number, width:number}[]} widthProfile
++ * @returns {{ point:{x:number,y:number,z:number}, normal:{x:number,z:number}, width:number, index:number }[]}
++ */
++export function buildCheckpointPlanes(curve, checkpoints, widthProfile) {
++  return checkpoints.map((cp, index) => {
++    const { point, tangent } = sampleSpline(curve, cp.t);
++    const w = interpolateWidth(widthProfile, cp.t);
++    // Normal is the tangent direction projected to XZ
++    const len = Math.sqrt(tangent.x * tangent.x + tangent.z * tangent.z);
++    const nx = len > 0.001 ? tangent.x / len : 0;
++    const nz = len > 0.001 ? tangent.z / len : 1;
++    return {
++      point: { x: point.x, y: point.y, z: point.z },
++      normal: { x: nx, z: nz },
++      width: w,
++      index
++    };
++  });
++}
++
++/**
++ * Test if a kart crossed a checkpoint plane between two frames.
++ * Uses sign change of dot product with plane normal.
++ * @param {{x:number, z:number}} prevPos
++ * @param {{x:number, z:number}} currPos
++ * @param {{ point:{x:number,z:number}, normal:{x:number,z:number}, width:number }} checkpoint
++ * @returns {boolean}
++ */
++export function testCheckpointCrossing(prevPos, currPos, checkpoint) {
++  const cp = checkpoint.point;
++  const n = checkpoint.normal;
++
++  // Signed distance from plane
++  const prevDist = (prevPos.x - cp.x) * n.x + (prevPos.z - cp.z) * n.z;
++  const currDist = (currPos.x - cp.x) * n.x + (currPos.z - cp.z) * n.z;
++
++  // Sign change means crossing
++  if (prevDist * currDist > 0) return false;
++
++  // Check that the crossing point is within the checkpoint width
++  const totalDist = Math.abs(prevDist) + Math.abs(currDist);
++  if (totalDist < 0.0001) return false;
++
++  const frac = Math.abs(prevDist) / totalDist;
++  const crossX = prevPos.x + (currPos.x - prevPos.x) * frac;
++  const crossZ = prevPos.z + (currPos.z - prevPos.z) * frac;
++
++  // Distance from checkpoint center perpendicular to normal
++  const perpX = -n.z;
++  const perpZ = n.x;
++  const perpDist = Math.abs((crossX - cp.x) * perpX + (crossZ - cp.z) * perpZ);
++
++  return perpDist <= checkpoint.width / 2;
++}
++
++/* ── Surface detection ──────────────────────────────────────────────── */
++
++// Cache for precomputed lookups, keyed by curve uuid
++const _lookupCache = new Map();
++
++/**
++ * Build a precomputed lookup table for fast nearest-point queries.
++ * @param {THREE.CatmullRomCurve3} curve
++ * @param {number} samples
++ * @returns {{t:number, x:number, z:number}[]}
++ */
++export function buildPrecomputedLookup(curve, samples = 400) {
++  const table = [];
++  for (let i = 0; i < samples; i++) {
++    const t = i / samples;
++    const pt = curve.getPoint(t);
++    table.push({ t, x: pt.x, z: pt.z });
++  }
++  return table;
++}
++
++/**
++ * Find the nearest parametric t on the spline to a given XZ position.
++ * @param {number} x
++ * @param {number} z
++ * @param {THREE.CatmullRomCurve3} curve
++ * @param {{t:number, x:number, z:number}[]|null} lookupTable
++ * @returns {number}
++ */
++export function getNearestSplineT(x, z, curve, lookupTable = null) {
++  const table = lookupTable || buildPrecomputedLookup(curve, 400);
++
++  // Coarse pass: find closest entry
++  let bestIdx = 0;
++  let bestDist = Infinity;
++  for (let i = 0; i < table.length; i++) {
++    const dx = table[i].x - x;
++    const dz = table[i].z - z;
++    const d2 = dx * dx + dz * dz;
++    if (d2 < bestDist) {
++      bestDist = d2;
++      bestIdx = i;
++    }
++  }
++
++  // Refinement pass: binary-search-style subdivision around best entry
++  const n = table.length;
++  const prevIdx = (bestIdx - 1 + n) % n;
++  const nextIdx = (bestIdx + 1) % n;
++
++  let tLow = table[prevIdx].t;
++  let tHigh = table[nextIdx].t;
++  if (tLow > tHigh) tHigh += 1; // handle wrap
++
++  for (let iter = 0; iter < 8; iter++) {
++    const tA = tLow + (tHigh - tLow) * 0.33;
++    const tB = tLow + (tHigh - tLow) * 0.67;
++    const pA = curve.getPoint(((tA % 1) + 1) % 1);
++    const pB = curve.getPoint(((tB % 1) + 1) % 1);
++    const dA = (pA.x - x) ** 2 + (pA.z - z) ** 2;
++    const dB = (pB.x - x) ** 2 + (pB.z - z) ** 2;
++    if (dA < dB) {
++      tHigh = tB;
++    } else {
++      tLow = tA;
++    }
++  }
++
++  const result = (tLow + tHigh) / 2;
++  return ((result % 1) + 1) % 1;
++}
++
++/**
++ * Determine surface type at an XZ position.
++ * @param {number} x
++ * @param {number} z
++ * @param {THREE.CatmullRomCurve3} curve
++ * @param {{t:number, width:number}[]} widthProfile
++ * @param {{polygon:{x:number,z:number}[], type:string}[]} surfaceZones
++ * @param {number} totalSamples
++ * @returns {'road'|'offroad'|'lava'}
++ */
++export function isOnRoad(x, z, curve, widthProfile, surfaceZones, totalSamples = 200) {
++  // Get or build cached lookup
++  const cacheKey = curve.uuid || 'default';
++  if (!_lookupCache.has(cacheKey)) {
++    _lookupCache.set(cacheKey, buildPrecomputedLookup(curve, totalSamples));
++  }
++  const lookup = _lookupCache.get(cacheKey);
++
++  // Check special surface zones first
++  for (const zone of surfaceZones) {
++    if (pointInPolygon2D(x, z, zone.polygon)) {
++      return zone.type;
++    }
++  }
++
++  // Check road bounds
++  const t = getNearestSplineT(x, z, curve, lookup);
++  const pt = curve.getPoint(t);
++  const hw = interpolateWidth(widthProfile, t) / 2;
++  const dx = x - pt.x;
++  const dz = z - pt.z;
++  const dist = Math.sqrt(dx * dx + dz * dz);
++
++  if (dist <= hw) return 'road';
++  return 'offroad';
++}
++
++/**
++ * Get the road surface Y height at an XZ position.
++ * @param {number} x
++ * @param {number} z
++ * @param {THREE.CatmullRomCurve3} curve
++ * @returns {number}
++ */
++export function getTrackYAtXZ(x, z, curve) {
++  const cacheKey = curve.uuid || 'default';
++  const lookup = _lookupCache.get(cacheKey) || null;
++  const t = getNearestSplineT(x, z, curve, lookup);
++  return curve.getPoint(t).y;
++}
++
++/* ── Environment ────────────────────────────────────────────────────── */
++
++/**
++ * Build a large ground plane.
++ * @param {number} color
++ * @returns {THREE.Mesh}
++ */
++export function buildGroundPlane(color = 0x228B22) {
++  const geo = new THREE.PlaneGeometry(2000, 2000);
++  const mat = new THREE.MeshLambertMaterial({ color });
++  const mesh = new THREE.Mesh(geo, mat);
++  mesh.rotation.x = -Math.PI / 2;
++  mesh.position.y = -0.1;
++  mesh.receiveShadow = true;
++  return mesh;
++}
++
++/**
++ * Build a sky gradient sphere (viewed from inside).
++ * @param {number} topColor
++ * @param {number} bottomColor
++ * @returns {THREE.Mesh}
++ */
++export function buildSkyGradient(topColor, bottomColor) {
++  const geo = new THREE.SphereGeometry(500, 32, 32);
++  const posAttr = geo.getAttribute('position');
++  const colorArr = new Float32Array(posAttr.count * 3);
++  const top = hexToRgb(topColor);
++  const bot = hexToRgb(bottomColor);
++
++  for (let i = 0; i < posAttr.count; i++) {
++    const y = posAttr.getY(i);
++    const frac = clamp((y + 500) / 1000, 0, 1); // 0=bottom, 1=top
++    colorArr[i * 3] = lerp(bot.r, top.r, frac);
++    colorArr[i * 3 + 1] = lerp(bot.g, top.g, frac);
++    colorArr[i * 3 + 2] = lerp(bot.b, top.b, frac);
++  }
++
++  geo.setAttribute('color', new THREE.Float32BufferAttribute(colorArr, 3));
++  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide });
++  return new THREE.Mesh(geo, mat);
++}
++
++/* ── Full Track Builder ─────────────────────────────────────────────── */
++
++/**
++ * Build all track geometry and collision data from a track definition.
++ * @param {object} trackData - Track definition (e.g., sunsetCircuit, crystalCaverns)
++ * @param {THREE.Scene} scene
++ * @returns {{ group: THREE.Group, collisionData: object }}
++ */
++export function buildFullTrack(trackData, scene) {
++  const group = new THREE.Group();
++
++  // Build spline
++  const curve = buildTrackSpline(trackData.controlPoints);
++  const wp = trackData.widthProfile;
++
++  // Road surface
++  const roadMesh = buildRoadMesh(curve, wp);
++  roadMesh.receiveShadow = true;
++  group.add(roadMesh);
++
++  // Walls
++  const { mesh: wallMesh, segments: wallSegments } = buildWalls(
++    curve, wp, 2, 200, trackData.noWallRanges || []
++  );
++  group.add(wallMesh);
++
++  // Checkpoints
++  const checkpoints = buildCheckpointPlanes(curve, trackData.checkpoints, wp);
++
++  // Precomputed lookup
++  const lookup = buildPrecomputedLookup(curve, 400);
++
++  // Ground plane
++  const groundColor = trackData.lighting.groundColor || 0x228B22;
++  group.add(buildGroundPlane(groundColor));
++
++  // Sky
++  group.add(buildSkyGradient(trackData.lighting.skyTop, trackData.lighting.skyBottom));
++
++  // Lighting
++  const ambient = new THREE.AmbientLight(
++    trackData.lighting.ambientColor,
++    trackData.lighting.ambientIntensity
++  );
++  group.add(ambient);
++
++  const sun = new THREE.DirectionalLight(
++    trackData.lighting.sunColor,
++    trackData.lighting.sunIntensity
++  );
++  const sd = trackData.lighting.sunDirection;
++  sun.position.set(sd.x * 200, sd.y * 200, sd.z * 200);
++  sun.castShadow = true;
++  group.add(sun);
++
++  // Fog
++  if (trackData.lighting.fog) {
++    scene.fog = new THREE.FogExp2(
++      trackData.lighting.fog.color,
++      trackData.lighting.fog.density
++    );
++  } else {
++    scene.fog = null;
++  }
++
++  // Track-specific scenery
++  if (trackData.buildScenery) {
++    trackData.buildScenery(group);
++  }
++
++  return {
++    group,
++    collisionData: {
++      wallSegments,
++      checkpoints,
++      surfaceZones: trackData.surfaceZones || [],
++      curve,
++      widthProfile: wp,
++      lookup
++    }
++  };
++}
+diff --git a/output/js/utils/mathUtils.js b/output/js/utils/mathUtils.js
+new file mode 100644
+index 0000000..0b6c38a
+--- /dev/null
++++ b/output/js/utils/mathUtils.js
+@@ -0,0 +1,117 @@
++/**
++ * mathUtils — pure-function math helpers for kart physics and track logic.
++ */
++
++/**
++ * Clamp value between min and max.
++ * @param {number} v
++ * @param {number} min
++ * @param {number} max
++ * @returns {number}
++ */
++export function clamp(v, min, max) {
++  return v < min ? min : v > max ? max : v;
++}
++
++/**
++ * Linear interpolation from a to b by factor t.
++ * @param {number} a
++ * @param {number} b
++ * @param {number} t - 0..1
++ * @returns {number}
++ */
++export function lerp(a, b, t) {
++  return a + (b - a) * t;
++}
++
++/**
++ * Remap v from [inMin, inMax] to [outMin, outMax].
++ * @param {number} v
++ * @param {number} inMin
++ * @param {number} inMax
++ * @param {number} outMin
++ * @param {number} outMax
++ * @returns {number}
++ */
++export function remap(v, inMin, inMax, outMin, outMax) {
++  const t = (v - inMin) / (inMax - inMin);
++  return outMin + (outMax - outMin) * t;
++}
++
++/**
++ * Hermite smoothstep: smooth transition 0→1 over [a, b].
++ * @param {number} a - left edge
++ * @param {number} b - right edge
++ * @param {number} t - input value
++ * @returns {number}
++ */
++export function smoothstep(a, b, t) {
++  const x = clamp((t - a) / (b - a), 0, 1);
++  return x * x * (3 - 2 * x);
++}
++
++/**
++ * Normalize angle to [-π, π].
++ * @param {number} a - angle in radians
++ * @returns {number}
++ */
++export function wrapAngle(a) {
++  a = a % (2 * Math.PI);
++  if (a > Math.PI) a -= 2 * Math.PI;
++  if (a < -Math.PI) a += 2 * Math.PI;
++  return a;
++}
++
++/**
++ * Shortest signed angular difference from a to b.
++ * @param {number} a - start angle (radians)
++ * @param {number} b - target angle (radians)
++ * @returns {number}
++ */
++export function angleDiff(a, b) {
++  return wrapAngle(b - a);
++}
++
++/**
++ * Shortest-arc rotation interpolation.
++ * @param {number} a - start angle (radians)
++ * @param {number} b - target angle (radians)
++ * @param {number} t - interpolation factor 0..1
++ * @returns {number}
++ */
++export function angleLerp(a, b, t) {
++  return a + angleDiff(a, b) * t;
++}
++
++/**
++ * Point-in-polygon test (2D, XZ plane) using ray-casting.
++ * @param {number} px
++ * @param {number} pz
++ * @param {{x:number, z:number}[]} polygon - ordered vertices
++ * @returns {boolean}
++ */
++export function pointInPolygon2D(px, pz, polygon) {
++  let inside = false;
++  const n = polygon.length;
++  for (let i = 0, j = n - 1; i < n; j = i++) {
++    const xi = polygon[i].x, zi = polygon[i].z;
++    const xj = polygon[j].x, zj = polygon[j].z;
++    const intersect =
++      ((zi > pz) !== (zj > pz)) &&
++      (px < ((xj - xi) * (pz - zi)) / (zj - zi) + xi);
++    if (intersect) inside = !inside;
++  }
++  return inside;
++}
++
++/**
++ * 2D Euclidean distance on the XZ plane (Y ignored).
++ * @param {{x:number, z:number}} a
++ * @param {{x:number, z:number}} b
++ * @returns {number}
++ */
++export function distanceXZ(a, b) {
++  const dx = a.x - b.x;
++  const dz = a.z - b.z;
++  return Math.sqrt(dx * dx + dz * dz);
++}
+diff --git a/output/js/utils/voxelUtils.js b/output/js/utils/voxelUtils.js
+new file mode 100644
+index 0000000..668f3ef
+--- /dev/null
++++ b/output/js/utils/voxelUtils.js
+@@ -0,0 +1,151 @@
++/**
++ * voxelUtils — helpers for building merged and instanced voxel geometry.
++ */
++import * as THREE from 'three';
++
++/**
++ * Convert a hex color (number or string) to normalized {r, g, b}.
++ * Accepts 0xRRGGBB, '#RRGGBB', or '#RGB'.
++ * @param {number|string} hex
++ * @returns {{r:number, g:number, b:number}}
++ */
++export function hexToRgb(hex) {
++  let n;
++  if (typeof hex === 'string') {
++    let h = hex.replace('#', '');
++    if (h.length === 3) {
++      h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
++    }
++    n = parseInt(h, 16);
++  } else {
++    n = hex;
++  }
++  return {
++    r: ((n >> 16) & 0xFF) / 255,
++    g: ((n >> 8) & 0xFF) / 255,
++    b: (n & 0xFF) / 255,
++  };
++}
++
++/* ── Box face data ─────────────────────────────────────────────────── */
++
++// Each face: 4 corner offsets (as fractions of w,h,d from center), normal, and
++// two-triangle winding (indices into the 4 corners).
++// Corner offsets are [sx, sy, sz] where s ∈ {-1, +1} selects the half-extent.
++
++const FACE_DEFS = [
++  // +X
++  { corners: [[1,-1,-1],[1, 1,-1],[1, 1, 1],[1,-1, 1]], normal: [ 1, 0, 0] },
++  // -X
++  { corners: [[-1,-1, 1],[-1, 1, 1],[-1, 1,-1],[-1,-1,-1]], normal: [-1, 0, 0] },
++  // +Y
++  { corners: [[-1, 1,-1],[-1, 1, 1],[ 1, 1, 1],[ 1, 1,-1]], normal: [ 0, 1, 0] },
++  // -Y
++  { corners: [[-1,-1, 1],[-1,-1,-1],[ 1,-1,-1],[ 1,-1, 1]], normal: [ 0,-1, 0] },
++  // +Z
++  { corners: [[-1,-1, 1],[ 1,-1, 1],[ 1, 1, 1],[-1, 1, 1]], normal: [ 0, 0, 1] },
++  // -Z
++  { corners: [[ 1,-1,-1],[-1,-1,-1],[-1, 1,-1],[ 1, 1,-1]], normal: [ 0, 0,-1] },
++];
++
++// Two triangles per face: indices into the 4 corners (CCW winding).
++const FACE_TRIS = [0, 1, 2, 0, 2, 3];
++
++const VERTS_PER_BOX = 36; // 6 faces × 2 tris × 3 verts
++
++/**
++ * Build a single merged BufferGeometry from an array of box definitions.
++ * Each box becomes 36 vertices with position, normal, and vertex color.
++ *
++ * @param {{x:number, y:number, z:number, w:number, h:number, d:number, color:number|string}[]} boxDefs
++ * @returns {THREE.BufferGeometry}
++ */
++export function buildMergedBoxes(boxDefs) {
++  const count = boxDefs.length;
++  const totalVerts = count * VERTS_PER_BOX;
++
++  const positions = new Float32Array(totalVerts * 3);
++  const normals   = new Float32Array(totalVerts * 3);
++  const colors    = new Float32Array(totalVerts * 3);
++
++  let vi = 0; // vertex write index (in floats, stride 3)
++
++  for (let b = 0; b < count; b++) {
++    const def = boxDefs[b];
++    const cx = def.x;
++    const cy = def.y;
++    const cz = def.z;
++    const hw = def.w * 0.5;
++    const hh = def.h * 0.5;
++    const hd = def.d * 0.5;
++    const { r, g, b: bl } = hexToRgb(def.color);
++
++    for (let f = 0; f < 6; f++) {
++      const face = FACE_DEFS[f];
++      const nx = face.normal[0];
++      const ny = face.normal[1];
++      const nz = face.normal[2];
++
++      // Expand the 4 corners to world positions
++      const c = face.corners;
++      const corners = [
++        [cx + c[0][0] * hw, cy + c[0][1] * hh, cz + c[0][2] * hd],
++        [cx + c[1][0] * hw, cy + c[1][1] * hh, cz + c[1][2] * hd],
++        [cx + c[2][0] * hw, cy + c[2][1] * hh, cz + c[2][2] * hd],
++        [cx + c[3][0] * hw, cy + c[3][1] * hh, cz + c[3][2] * hd],
++      ];
++
++      // 6 indices → 2 triangles
++      for (let t = 0; t < 6; t++) {
++        const corner = corners[FACE_TRIS[t]];
++        positions[vi]     = corner[0];
++        positions[vi + 1] = corner[1];
++        positions[vi + 2] = corner[2];
++
++        normals[vi]     = nx;
++        normals[vi + 1] = ny;
++        normals[vi + 2] = nz;
++
++        colors[vi]     = r;
++        colors[vi + 1] = g;
++        colors[vi + 2] = bl;
++
++        vi += 3;
++      }
++    }
++  }
++
++  const geometry = new THREE.BufferGeometry();
++  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
++  geometry.setAttribute('normal',   new THREE.BufferAttribute(normals, 3));
++  geometry.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
++
++  return geometry;
++}
++
++/**
++ * Create an InstancedMesh from a shared geometry + material and per-instance transforms.
++ *
++ * @param {THREE.BufferGeometry} geometry
++ * @param {THREE.Material} material
++ * @param {{x:number, y:number, z:number, sx:number, sy:number, sz:number}[]} transforms
++ * @returns {THREE.InstancedMesh}
++ */
++export function createInstancedVoxels(geometry, material, transforms) {
++  const count = transforms.length;
++  const mesh = new THREE.InstancedMesh(geometry, material, count);
++  const matrix = new THREE.Matrix4();
++
++  for (let i = 0; i < count; i++) {
++    const t = transforms[i];
++    matrix.compose(
++      new THREE.Vector3(t.x, t.y, t.z),
++      new THREE.Quaternion(), // identity rotation
++      new THREE.Vector3(t.sx, t.sy, t.sz),
++    );
++    mesh.setMatrixAt(i, matrix);
++  }
++
++  mesh.instanceMatrix.needsUpdate = true;
++  return mesh;
++}
+diff --git a/output/textures/dirt.png b/output/textures/dirt.png
+new file mode 100644
+index 0000000..40eb9c7
+Binary files /dev/null and b/output/textures/dirt.png differ
+diff --git a/output/textures/grass.png b/output/textures/grass.png
+new file mode 100644
+index 0000000..c6b45ea
+Binary files /dev/null and b/output/textures/grass.png differ
+diff --git a/output/textures/road.png b/output/textures/road.png
+new file mode 100644
+index 0000000..8cd559e
+Binary files /dev/null and b/output/textures/road.png differ
