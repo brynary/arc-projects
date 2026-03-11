@@ -7,7 +7,7 @@ import { FIXED_DT } from './utils.js';
 import { createKart, updateKart, placeKart } from './kart.js';
 import { updatePhysics } from './physics.js';
 import { updateDrift, getDriftSparkColor, getDriftProgress, applyBoost } from './drift.js';
-import { updateCamera, resetCamera, cameraState, setCameraTrackData } from './camera.js';
+import { updateCamera, resetCamera, cameraState, setCameraTrackData, triggerCameraShake, startFlyover } from './camera.js';
 import { buildTrack, findNearestSplinePoint } from './track.js';
 import { characters } from './characters.js';
 import { initParticles, updateParticles, emitDriftSparks, emitBoostFlame, emitDust, emitStarTrail } from './particles.js';
@@ -267,22 +267,33 @@ function fixedUpdate(dt) {
     if (playerKart._wallHitFrame) {
       _audioSync.playWallHit();
       playerKart._wallHitFrame = false;
+      triggerCameraShake(0.3);
     }
     // Kart-to-kart bump
     if (playerKart._kartBumpFrame) {
       _audioSync.playKartBump();
       playerKart._kartBumpFrame = false;
+      triggerCameraShake(0.15);
     }
     // Item hit (player was struck by an item)
     if (playerKart._itemHitFrame) {
       _audioSync.playItemHit();
       playerKart._itemHitFrame = false;
+      triggerCameraShake(0.5);
     }
     // Shield pop (shield blocked a hit or expired)
     if (playerKart._shieldPopFrame) {
       _audioSync.playShieldPop();
       playerKart._shieldPopFrame = false;
     }
+  }
+
+  // Camera shake for impacts even when audio isn't loaded
+  // (The flags may already be consumed above, so only trigger if still set)
+  if (playerKart) {
+    if (playerKart._wallHitFrame) { triggerCameraShake(0.3); playerKart._wallHitFrame = false; }
+    if (playerKart._kartBumpFrame) { triggerCameraShake(0.15); playerKart._kartBumpFrame = false; }
+    if (playerKart._itemHitFrame) { triggerCameraShake(0.5); playerKart._itemHitFrame = false; }
   }
 }
 
@@ -734,6 +745,7 @@ async function startRace() {
     playerKart._startBoostGranted = false;
   }
   resetCamera(camera, playerKart);
+  startFlyover(playerKart); // Begin countdown flyover sweep per spec
 
   // Expose for debug / testing
   window.__allKarts = allKarts;
