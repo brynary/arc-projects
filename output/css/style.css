@@ -1,0 +1,70 @@
+/* ── Reset ─────────────────────────────────────────────────────────── */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* ── CSS Variables ─────────────────────────────────────────────────── */
+:root {
+  --gold: #FFD700;
+  --silver: #C0C0C0;
+  --bronze: #CD7F32;
+  --accent-cyan: #00DDFF;
+  --bg-dark: rgba(0, 0, 0, 0.7);
+
+  --z-canvas: 0;
+  --z-hud: 10;
+  --z-menu: 20;
+  --z-pause: 30;
+  --z-countdown: 40;
+}
+
+/* ── Base ──────────────────────────────────────────────────────────── */
+html, body {
+  overflow: hidden;
+  background: #000;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  color: #fff;
+}
+
+/* ── Game Canvas ───────────────────────────────────────────────────── */
+#gameCanvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  z-index: var(--z-canvas);
+}
+
+/* ── UI Overlay ────────────────────────────────────────────────────── */
+#ui-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: var(--z-hud);
+}
+
+#ui-overlay * {
+  text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.8), 0 0 6px rgba(0, 0, 0, 0.5);
+}
+
+/* Children opt into interactivity */
+#ui-overlay button,
+#ui-overlay a,
+#ui-overlay input,
+#ui-overlay select,
+#ui-overlay [data-interactive] {
+  pointer-events: auto;
+}
+
+/* ── Z-index layers ───────────────────────────────────────────────── */
+.layer-hud      { z-index: var(--z-hud); }
+.layer-menu     { z-index: var(--z-menu); }
+.layer-pause    { z-index: var(--z-pause); }
+.layer-countdown { z-index: var(--z-countdown); }
+
+/* ── Utility ───────────────────────────────────────────────────────── */
+.hidden {
+  display: none !important;
+}
