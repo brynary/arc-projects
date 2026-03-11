@@ -1,0 +1,776 @@
+diff --git a/.workflow/improve_log.md b/.workflow/improve_log.md
+new file mode 100644
+index 0000000..d78155f
+--- /dev/null
++++ b/.workflow/improve_log.md
+@@ -0,0 +1,11 @@
++## Iteration 1 — Focus: Performance & Stability
++
++- **Cache findNearestSplinePoint per kart per frame**: The most expensive function in the physics loop (`findNearestSplinePoint`) was called 3-4 times per kart per frame (in `isOnRoad`, `getRoadY`, `checkWallCollisions`, and `updatePositions`). Now computed once in `updatePhysics` and cached on `kart._cachedNearest`, with `updateGroundDetection`, `checkWallCollisions`, and `updatePositions` (race.js) all reusing the cached result. Eliminates ~24 redundant spline searches per frame for 8 karts.
++
++- **Particle Color object pooling**: Replaced `new THREE.Color(color)` allocation on every `spawnParticle` call with a reusable `_spawnColor` object. Particle data now stores raw r/g/b floats instead of Color objects, reducing GC pressure during heavy particle emission (drift sparks, boost flames, hit effects).
++
++- **Single-pass wall geometry merge**: Replaced the O(n²) sequential `mergeTwo` approach (which created and copied intermediate Float32Arrays for every wall segment) with a single-pass merge that pre-allocates the final arrays and fills them directly. Eliminates hundreds of intermediate array allocations during track loading.
++
++- **GPU memory leak fix — geometry/material disposal**: Added `disposeObject()` recursive disposal for track groups and kart meshes on restart/quit. Previously, switching tracks or restarting races would leak GPU-side geometry and material buffers. Also fixed a null reference crash in camera.js when `playerKart` is null during state transitions.
++
++- Verified: pass — All 4 tracks load without errors, restart/quit/new-track cycle works cleanly, no console errors
+diff --git a/output/js/camera.js b/output/js/camera.js
+index caef9ce..9f2c7b5 100644
+--- a/output/js/camera.js
++++ b/output/js/camera.js
+@@ -19,6 +19,7 @@ export const cameraState = {
+ };
+ 
+ export function updateCamera(camera, kart, input, dt) {
++  if (!kart) return;
+   lookBehind = input.isDown('lookBehind');
+ 
+   // Drift camera shift
+@@ -117,4 +118,4 @@ export function resetCamera(camera, kart) {
+   camera.lookAt(_currentLook);
+   driftShift = 0;
+   cameraState.mode = 'chase';
+-}
++}
+\ No newline at end of file
+diff --git a/output/js/main.js b/output/js/main.js
+index f7142be..f206a68 100644
+--- a/output/js/main.js
++++ b/output/js/main.js
+@@ -16,6 +16,26 @@ import { initAI, updateAI, getAIInput, setDifficulty } from './ai.js';
+ import { initRace, updateRace, raceState, formatTime, getRaceResults } from './race.js';
+ 
+ /* ═══════════════════════  STATE  ═══════════════════════ */
++
++/** Recursively dispose all geometries and materials in a Three.js object hierarchy */
++function disposeObject(obj) {
++  if (!obj) return;
++  if (obj.geometry) obj.geometry.dispose();
++  if (obj.material) {
++    if (Array.isArray(obj.material)) {
++      for (const m of obj.material) { m.dispose(); if (m.map) m.map.dispose(); }
++    } else {
++      obj.material.dispose();
++      if (obj.material.map) obj.material.map.dispose();
++    }
++  }
++  if (obj.children) {
++    for (let i = obj.children.length - 1; i >= 0; i--) {
++      disposeObject(obj.children[i]);
++    }
++  }
++}
++
+ let gameState = 'TITLE';          // TITLE | TRACK_SELECT | CHAR_SELECT | DIFF_SELECT | COUNTDOWN | RACING | PAUSED | RACE_FINISH | RESULTS
+ let trackData = null, trackDef = null;
+ let playerKart = null, allKarts = [];
+@@ -156,6 +176,7 @@ function fixedUpdate(dt) {
+ 
+ /* ═══════════════════════  VISUAL UPDATE  ═══════════════════════ */
+ function visualUpdate(dt) {
++  if (!playerKart) return;
+   updateCamera(camera, playerKart, input, dt);
+   updateParticles(dt);
+   for (const k of allKarts) {
+@@ -474,8 +495,14 @@ async function startRace() {
+   /* clean previous track */
+   if (trackData) {
+     clearItems(scene);
+-    for (const k of allKarts) scene.remove(k.mesh);
+-    if (trackData.group) scene.remove(trackData.group);
++    for (const k of allKarts) {
++      disposeObject(k.mesh);
++      scene.remove(k.mesh);
++    }
++    if (trackData.group) {
++      disposeObject(trackData.group);
++      scene.remove(trackData.group);
++    }
+     allKarts = []; playerKart = null; trackData = null;
+   }
+ 
+@@ -544,12 +571,18 @@ function quitToMenu() {
+   getAudio().then(a => { a.stopEngine(); a.stopMusic(); });
+   if (trackData) {
+     clearItems(scene);
+-    for (const k of allKarts) scene.remove(k.mesh);
+-    if (trackData.group) scene.remove(trackData.group);
++    for (const k of allKarts) {
++      disposeObject(k.mesh);
++      scene.remove(k.mesh);
++    }
++    if (trackData.group) {
++      disposeObject(trackData.group);
++      scene.remove(trackData.group);
++    }
+     allKarts = []; playerKart = null; trackData = null;
+   }
+   hudEl.classList.remove('active');
+   resultsEl?.classList.add('hidden');
+   cameraState.mode = 'chase';
+   showTitle();
+-}
++}
+\ No newline at end of file
+diff --git a/output/js/particles.js b/output/js/particles.js
+index d07de85..410ebe1 100644
+--- a/output/js/particles.js
++++ b/output/js/particles.js
+@@ -40,6 +40,9 @@ export function initParticles(scene) {
+   scene.add(instancedMesh);
+ }
+ 
++// Reusable Color object for spawning particles — avoids per-spawn allocation
++const _spawnColor = new THREE.Color();
++
+ /**
+  * Spawn a particle.
+  */
+@@ -47,13 +50,16 @@ export function spawnParticle(x, y, z, vx, vy, vz, color, life = 0.3, size = 0.3
+   if (particlePool.length === 0) return;
+ 
+   const idx = particlePool.pop();
++  _spawnColor.set(color);
+   activeParticles.push({
+     idx,
+     x, y, z,
+     vx, vy, vz,
+     life,
+     maxLife: life,
+-    color: new THREE.Color(color),
++    r: _spawnColor.r,
++    g: _spawnColor.g,
++    b: _spawnColor.b,
+     size,
+   });
+ }
+@@ -93,7 +99,8 @@ export function updateParticles(dt) {
+     dummyMatrix.compose(dummyPos, dummyQuat, dummyScale);
+ 
+     instancedMesh.setMatrixAt(p.idx, dummyMatrix);
+-    instancedMesh.setColorAt(p.idx, p.color);
++    dummyColor.setRGB(p.r, p.g, p.b);
++    instancedMesh.setColorAt(p.idx, dummyColor);
+   }
+ 
+   instancedMesh.instanceMatrix.needsUpdate = true;
+@@ -164,4 +171,4 @@ export function emitDust(kart, count = 2) {
+ 
+     spawnParticle(rx, ry, rz, vx, vy, vz, 0xBB9966, 0.4, 0.3);
+   }
+-}
++}
+\ No newline at end of file
+diff --git a/output/js/physics.js b/output/js/physics.js
+index 37c783a..daa8fe1 100644
+--- a/output/js/physics.js
++++ b/output/js/physics.js
+@@ -2,7 +2,7 @@
+ 
+ import * as THREE from 'three';
+ import { clamp } from './utils.js';
+-import { findNearestSplinePoint, isOnRoad, getRoadY } from './track.js';
++import { findNearestSplinePoint } from './track.js';
+ 
+ const _pushVec = new THREE.Vector3();
+ 
+@@ -13,6 +13,13 @@ export function updatePhysics(karts, trackData, dt) {
+   for (const kart of karts) {
+     if (kart.frozenTimer > 0) continue;
+ 
++    // Compute nearest spline point ONCE per kart per frame
++    if (trackData && trackData.centerCurve) {
++      kart._cachedNearest = findNearestSplinePoint(
++        trackData.centerCurve, kart.position.x, kart.position.z, 50
++      );
++    }
++
+     // Ground detection & surface type
+     updateGroundDetection(kart, trackData);
+ 
+@@ -33,11 +40,21 @@ export function updatePhysics(karts, trackData, dt) {
+ function updateGroundDetection(kart, trackData) {
+   if (!trackData || !trackData.centerCurve) return;
+ 
+-  const onRoad = isOnRoad(trackData, kart.position.x, kart.position.z);
++  const nearest = kart._cachedNearest;
++  if (!nearest) return;
++
++  // Check if on road using cached nearest point and width
++  const idx = nearest.t * (trackData.samples.length - 1);
++  const i0 = Math.floor(idx);
++  const i1 = Math.min(i0 + 1, trackData.samples.length - 1);
++  const frac = idx - i0;
++  const width = trackData.samples[i0].width * (1 - frac) + trackData.samples[i1].width * frac;
++  const onRoad = nearest.distance < width / 2;
++
+   kart.surfaceType = onRoad ? 'road' : 'offroad';
+ 
+-  // Get road Y height
+-  const roadY = getRoadY(trackData, kart.position.x, kart.position.z);
++  // Get road Y height from cached point
++  const roadY = nearest.point.y;
+ 
+   // Ground snapping
+   if (kart.position.y <= roadY + 0.5 && kart.verticalVelocity <= 0) {
+@@ -56,8 +73,9 @@ function checkWallCollisions(kart, trackData) {
+   const kartZ = kart.position.z;
+   const kartRadius = 2.5;
+ 
+-  // Find nearby walls via sector lookup
+-  const nearest = findNearestSplinePoint(trackData.centerCurve, kartX, kartZ, 50);
++  // Use cached nearest spline point for sector lookup
++  const nearest = kart._cachedNearest;
++  if (!nearest) return;
+   const sectorIdx = Math.floor(nearest.t * trackData.sectors.length);
+ 
+   // Check current sector ± 1
+@@ -185,4 +203,4 @@ function checkKartCollision(kartA, kartB) {
+     kartA.speed *= (1 - speedLoss * modA);
+     kartB.speed *= (1 - speedLoss * modB);
+   }
+-}
++}
+\ No newline at end of file
+diff --git a/output/js/race.js b/output/js/race.js
+index f3b3d25..4e206e0 100644
+--- a/output/js/race.js
++++ b/output/js/race.js
+@@ -181,11 +181,15 @@ function updatePositions(allKarts, trackData) {
+   const numCheckpoints = trackData.checkpoints.length;
+ 
+   for (const kart of allKarts) {
+-    // Compute fraction to next checkpoint
++    // Compute fraction to next checkpoint — reuse cached nearest from physics if available
+     let fraction = 0;
+     if (numCheckpoints > 0 && trackData.centerCurve) {
+-      const nearest = findNearestSplinePoint(trackData.centerCurve, kart.position.x, kart.position.z, 50);
+-      fraction = nearest.t;
++      if (kart._cachedNearest) {
++        fraction = kart._cachedNearest.t;
++      } else {
++        const nearest = findNearestSplinePoint(trackData.centerCurve, kart.position.x, kart.position.z, 50);
++        fraction = nearest.t;
++      }
+     }
+     kart.checkpointFraction = fraction;
+     kart.raceProgress = (kart.currentLap * numCheckpoints) + kart.lastCheckpoint + 1 + fraction;
+@@ -233,4 +237,4 @@ export function getRaceResults(allKarts) {
+     isPlayer: kart.isPlayer,
+     lapTimes: kart.lapTimes,
+   }));
+-}
++}
+\ No newline at end of file
+diff --git a/output/js/track.js b/output/js/track.js
+index a03f0c4..9ae488e 100644
+--- a/output/js/track.js
++++ b/output/js/track.js
+@@ -274,72 +274,73 @@ function addWallSegment(p1, p2, height, thickness, mat, meshes, collisionWalls,
+ }
+ 
+ function mergeWallGeometries(wallData, mat) {
+-  const geometries = [];
+-  for (const w of wallData) {
+-    const geo = new THREE.BoxGeometry(w.thickness, w.height, w.len);
+-    const m = new THREE.Matrix4();
+-    m.compose(
+-      new THREE.Vector3(w.cx, w.cy, w.cz),
+-      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, w.angle, 0)),
+-      new THREE.Vector3(1, 1, 1)
++  // Single-pass merge: compute total size, then fill arrays directly
++  const boxGeo = new THREE.BoxGeometry(1, 1, 1);
++  const basePositions = boxGeo.attributes.position.array;
++  const baseNormals = boxGeo.attributes.normal.array;
++  const baseIndex = boxGeo.index ? Array.from(boxGeo.index.array) : [];
++  const vertsPerBox = basePositions.length / 3;
++  const indicesPerBox = baseIndex.length;
++
++  const totalVerts = wallData.length * vertsPerBox;
++  const totalIndices = wallData.length * indicesPerBox;
++
++  const positions = new Float32Array(totalVerts * 3);
++  const normals = new Float32Array(totalVerts * 3);
++  const indices = new Uint32Array(totalIndices);
++
++  const _m = new THREE.Matrix4();
++  const _v = new THREE.Vector3();
++  const _n = new THREE.Vector3();
++  const _normalMatrix = new THREE.Matrix3();
++
++  for (let w = 0; w < wallData.length; w++) {
++    const wd = wallData[w];
++    _m.compose(
++      new THREE.Vector3(wd.cx, wd.cy, wd.cz),
++      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, wd.angle, 0)),
++      new THREE.Vector3(wd.thickness, wd.height, wd.len)
+     );
+-    geo.applyMatrix4(m);
+-    geometries.push(geo);
+-  }
++    _normalMatrix.getNormalMatrix(_m);
++
++    const vOffset = w * vertsPerBox;
++    const pOffset = vOffset * 3;
++    const iOffset = w * indicesPerBox;
++
++    // Transform positions and normals
++    for (let i = 0; i < vertsPerBox; i++) {
++      _v.set(basePositions[i * 3], basePositions[i * 3 + 1], basePositions[i * 3 + 2]);
++      _v.applyMatrix4(_m);
++      positions[pOffset + i * 3] = _v.x;
++      positions[pOffset + i * 3 + 1] = _v.y;
++      positions[pOffset + i * 3 + 2] = _v.z;
++
++      _n.set(baseNormals[i * 3], baseNormals[i * 3 + 1], baseNormals[i * 3 + 2]);
++      _n.applyMatrix3(_normalMatrix).normalize();
++      normals[pOffset + i * 3] = _n.x;
++      normals[pOffset + i * 3 + 1] = _n.y;
++      normals[pOffset + i * 3 + 2] = _n.z;
++    }
+ 
+-  // Batch merge in chunks to avoid memory issues
+-  const batchSize = 500;
+-  let merged = geometries[0];
+-  for (let i = 1; i < geometries.length; i++) {
+-    if (i % batchSize === 0) {
+-      // Do nothing special, just keep merging
++    // Offset indices
++    for (let i = 0; i < indicesPerBox; i++) {
++      indices[iOffset + i] = baseIndex[i] + vOffset;
+     }
+-    merged = mergeTwo(merged, geometries[i]);
+   }
+ 
++  boxGeo.dispose();
++
++  const merged = new THREE.BufferGeometry();
++  merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
++  merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
++  merged.setIndex(new THREE.BufferAttribute(indices, 1));
++
+   const mesh = new THREE.Mesh(merged, mat);
+   mesh.castShadow = false;
+   mesh.receiveShadow = true;
+   return mesh;
+ }
+ 
+-function mergeTwo(g1, g2) {
+-  const positions1 = g1.attributes.position.array;
+-  const positions2 = g2.attributes.position.array;
+-  const normals1 = g1.attributes.normal.array;
+-  const normals2 = g2.attributes.normal.array;
+-
+-  const newPositions = new Float32Array(positions1.length + positions2.length);
+-  newPositions.set(positions1);
+-  newPositions.set(positions2, positions1.length);
+-
+-  const newNormals = new Float32Array(normals1.length + normals2.length);
+-  newNormals.set(normals1);
+-  newNormals.set(normals2, normals1.length);
+-
+-  const idx1 = g1.index ? Array.from(g1.index.array) : [];
+-  const idx2 = g2.index ? Array.from(g2.index.array) : [];
+-
+-  if (idx1.length === 0) {
+-    for (let i = 0; i < positions1.length / 3; i++) idx1.push(i);
+-  }
+-  if (idx2.length === 0) {
+-    for (let i = 0; i < positions2.length / 3; i++) idx2.push(i);
+-  }
+-
+-  const offset = positions1.length / 3;
+-  const newIndices = new Uint32Array(idx1.length + idx2.length);
+-  for (let i = 0; i < idx1.length; i++) newIndices[i] = idx1[i];
+-  for (let i = 0; i < idx2.length; i++) newIndices[idx1.length + i] = idx2[i] + offset;
+-
+-  const merged = new THREE.BufferGeometry();
+-  merged.setAttribute('position', new THREE.BufferAttribute(newPositions, 3));
+-  merged.setAttribute('normal', new THREE.BufferAttribute(newNormals, 3));
+-  merged.setIndex(new THREE.BufferAttribute(newIndices, 1));
+-
+-  return merged;
+-}
+-
+ function buildGround(trackDef) {
+   const env = trackDef.environment || {};
+   const groundColor = env.groundColor || 0x4A7C4A;
+@@ -526,4 +527,4 @@ export function isOnRoad(trackData, x, z) {
+ export function getRoadY(trackData, x, z) {
+   const nearest = findNearestSplinePoint(trackData.centerCurve, x, z);
+   return nearest.point.y;
+-}
++}
+\ No newline at end of file
+diff --git a/perf_countdown.png b/perf_countdown.png
+new file mode 100644
+index 0000000..f08c1d1
+Binary files /dev/null and b/perf_countdown.png differ
+diff --git a/perf_driving.png b/perf_driving.png
+new file mode 100644
+index 0000000..75d2c9e
+Binary files /dev/null and b/perf_driving.png differ
+diff --git a/perf_menu.png b/perf_menu.png
+new file mode 100644
+index 0000000..f74341c
+Binary files /dev/null and b/perf_menu.png differ
+diff --git a/perf_new_track.png b/perf_new_track.png
+new file mode 100644
+index 0000000..cc55fb8
+Binary files /dev/null and b/perf_new_track.png differ
+diff --git a/perf_paused.png b/perf_paused.png
+new file mode 100644
+index 0000000..d4e73b0
+Binary files /dev/null and b/perf_paused.png differ
+diff --git a/perf_racing.png b/perf_racing.png
+new file mode 100644
+index 0000000..5b9f7da
+Binary files /dev/null and b/perf_racing.png differ
+diff --git a/perf_restarted.png b/perf_restarted.png
+new file mode 100644
+index 0000000..4a571e8
+Binary files /dev/null and b/perf_restarted.png differ
+diff --git a/perf_title.png b/perf_title.png
+new file mode 100644
+index 0000000..42caeee
+Binary files /dev/null and b/perf_title.png differ
+diff --git a/perf_track_0.png b/perf_track_0.png
+new file mode 100644
+index 0000000..2d58c63
+Binary files /dev/null and b/perf_track_0.png differ
+diff --git a/perf_track_1.png b/perf_track_1.png
+new file mode 100644
+index 0000000..945b48c
+Binary files /dev/null and b/perf_track_1.png differ
+diff --git a/perf_track_2.png b/perf_track_2.png
+new file mode 100644
+index 0000000..765ebdc
+Binary files /dev/null and b/perf_track_2.png differ
+diff --git a/perf_track_3.png b/perf_track_3.png
+new file mode 100644
+index 0000000..6b2a771
+Binary files /dev/null and b/perf_track_3.png differ
+diff --git a/test_all_tracks.js b/test_all_tracks.js
+new file mode 100644
+index 0000000..498bf38
+--- /dev/null
++++ b/test_all_tracks.js
+@@ -0,0 +1,73 @@
++// Test all 4 tracks load correctly with optimizations
++import { chromium } from 'playwright';
++
++const browser = await chromium.launch({ headless: true });
++const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
++const page = await context.newPage();
++
++const errors = [];
++page.on('pageerror', err => errors.push(err.message));
++page.on('console', msg => {
++  if (msg.type() === 'error') errors.push(msg.text());
++});
++
++async function testTrack(trackIdx, trackName) {
++  console.log(`\nTesting track ${trackIdx}: ${trackName}`);
++  errors.length = 0;
++  
++  await page.goto('http://localhost:4567/', { waitUntil: 'networkidle', timeout: 30000 });
++  await page.waitForTimeout(1500);
++  
++  // Press Enter
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(800);
++  
++  // Select track
++  const cards = await page.$$('.card');
++  if (cards[trackIdx]) await cards[trackIdx].click();
++  await page.waitForTimeout(300);
++  
++  const nextBtn = await page.$('#ts-next');
++  if (nextBtn) await nextBtn.click();
++  await page.waitForTimeout(500);
++  
++  // Select first character
++  const charCard = await page.$('.card');
++  if (charCard) await charCard.click();
++  await page.waitForTimeout(300);
++  
++  const csNext = await page.$('#cs-next');
++  if (csNext) await csNext.click();
++  await page.waitForTimeout(300);
++  
++  // Start race
++  const startBtn = await page.$('#ds-start');
++  if (startBtn) await startBtn.click();
++  
++  // Wait for countdown + some racing
++  await page.waitForTimeout(8000);
++  
++  // Hold W to drive
++  await page.keyboard.down('KeyW');
++  await page.waitForTimeout(3000);
++  await page.keyboard.up('KeyW');
++  
++  await page.screenshot({ path: `/home/daytona/workspace/perf_track_${trackIdx}.png` });
++  
++  if (errors.length > 0) {
++    console.log(`  ERRORS on ${trackName}:`);
++    for (const e of errors) console.log(`    ${e}`);
++    return false;
++  }
++  console.log(`  ${trackName}: OK (no errors)`);
++  return true;
++}
++
++let allOk = true;
++allOk &= await testTrack(0, 'Sunset Bay');
++allOk &= await testTrack(1, 'Mossy Canyon');
++allOk &= await testTrack(2, 'Neon Grid');
++allOk &= await testTrack(3, 'Volcano Peak');
++
++console.log('\n' + (allOk ? 'ALL TRACKS PASSED' : 'SOME TRACKS FAILED'));
++await browser.close();
+diff --git a/test_cleanup.js b/test_cleanup.js
+new file mode 100644
+index 0000000..9559098
+--- /dev/null
++++ b/test_cleanup.js
+@@ -0,0 +1,102 @@
++// Test race restart and quit (dispose/cleanup path)
++import { chromium } from 'playwright';
++
++const browser = await chromium.launch({ headless: true });
++const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
++const page = await context.newPage();
++
++const errors = [];
++page.on('pageerror', err => errors.push(err.message));
++page.on('console', msg => {
++  if (msg.type() === 'error') errors.push(msg.text());
++});
++
++await page.goto('http://localhost:4567/', { waitUntil: 'networkidle', timeout: 30000 });
++await page.waitForTimeout(1500);
++
++// Start a race
++await page.keyboard.press('Enter');
++await page.waitForTimeout(800);
++const nextBtn = await page.$('#ts-next');
++if (nextBtn) await nextBtn.click();
++await page.waitForTimeout(500);
++const csNext = await page.$('#cs-next');
++if (csNext) await csNext.click();
++await page.waitForTimeout(300);
++const startBtn = await page.$('#ds-start');
++if (startBtn) await startBtn.click();
++await page.waitForTimeout(8000);
++console.log('Race started, driving...');
++
++await page.keyboard.down('KeyW');
++await page.waitForTimeout(2000);
++await page.keyboard.up('KeyW');
++
++// Pause and restart
++console.log('Pausing...');
++await page.keyboard.press('Escape');
++await page.waitForTimeout(500);
++await page.screenshot({ path: '/home/daytona/workspace/perf_paused.png' });
++
++// Click restart
++const restartBtn = await page.evaluate(() => {
++  const btns = document.querySelectorAll('.pause-btn');
++  for (const b of btns) {
++    if (b.textContent.includes('Restart')) { b.click(); return true; }
++  }
++  return false;
++});
++console.log('Restart clicked:', restartBtn);
++await page.waitForTimeout(8000);
++
++// Drive a bit in the restarted race
++await page.keyboard.down('KeyW');
++await page.waitForTimeout(2000);
++await page.keyboard.up('KeyW');
++await page.screenshot({ path: '/home/daytona/workspace/perf_restarted.png' });
++
++// Pause and quit to menu
++console.log('Quitting to menu...');
++await page.keyboard.press('Escape');
++await page.waitForTimeout(500);
++const quitBtn = await page.evaluate(() => {
++  const btns = document.querySelectorAll('.pause-btn');
++  for (const b of btns) {
++    if (b.textContent.includes('Quit')) { b.click(); return true; }
++  }
++  return false;
++});
++console.log('Quit clicked:', quitBtn);
++await page.waitForTimeout(1000);
++await page.screenshot({ path: '/home/daytona/workspace/perf_menu.png' });
++
++// Start a new race on a DIFFERENT track to test cleanup
++await page.keyboard.press('Enter');
++await page.waitForTimeout(800);
++const cards = await page.$$('.card');
++if (cards[2]) await cards[2].click();
++await page.waitForTimeout(300);
++const nextBtn2 = await page.$('#ts-next');
++if (nextBtn2) await nextBtn2.click();
++await page.waitForTimeout(500);
++const csNext2 = await page.$('#cs-next');
++if (csNext2) await csNext2.click();
++await page.waitForTimeout(300);
++const startBtn2 = await page.$('#ds-start');
++if (startBtn2) await startBtn2.click();
++await page.waitForTimeout(8000);
++
++await page.keyboard.down('KeyW');
++await page.waitForTimeout(2000);
++await page.keyboard.up('KeyW');
++await page.screenshot({ path: '/home/daytona/workspace/perf_new_track.png' });
++
++if (errors.length > 0) {
++  console.log('ERRORS found:');
++  for (const e of errors) console.log('  ', e);
++} else {
++  console.log('No errors during restart/quit/new track cycle!');
++}
++
++await browser.close();
++console.log('Cleanup test complete!');
+diff --git a/test_perf.js b/test_perf.js
+new file mode 100644
+index 0000000..219f065
+--- /dev/null
++++ b/test_perf.js
+@@ -0,0 +1,130 @@
++// Performance verification test
++import { chromium } from 'playwright';
++
++const browser = await chromium.launch({ headless: true });
++const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
++const page = await context.newPage();
++
++// Collect console logs
++const logs = [];
++const errors = [];
++page.on('console', msg => {
++  logs.push(`[${msg.type()}] ${msg.text()}`);
++  if (msg.type() === 'error') errors.push(msg.text());
++});
++page.on('pageerror', err => errors.push(err.message));
++
++console.log('Loading game...');
++await page.goto('http://localhost:4567/', { waitUntil: 'networkidle', timeout: 30000 });
++await page.waitForTimeout(2000);
++
++// Take screenshot of title screen
++await page.screenshot({ path: '/home/daytona/workspace/perf_title.png' });
++console.log('Title screen loaded');
++
++// Press Enter to start
++await page.keyboard.press('Enter');
++await page.waitForTimeout(1000);
++
++// Select track (click first card)
++const trackCard = await page.$('.card');
++if (trackCard) await trackCard.click();
++await page.waitForTimeout(500);
++
++// Click Next
++const nextBtn = await page.$('#ts-next');
++if (nextBtn) await nextBtn.click();
++await page.waitForTimeout(500);
++
++// Select character
++const charCard = await page.$('.card');
++if (charCard) await charCard.click();
++await page.waitForTimeout(500);
++
++// Click Next
++const csNext = await page.$('#cs-next');
++if (csNext) await csNext.click();
++await page.waitForTimeout(500);
++
++// Click Start Race
++const startBtn = await page.$('#ds-start');
++if (startBtn) await startBtn.click();
++await page.waitForTimeout(2000);
++
++// Screenshot during countdown
++await page.screenshot({ path: '/home/daytona/workspace/perf_countdown.png' });
++console.log('Countdown screenshot taken');
++
++// Wait for race to start
++await page.waitForTimeout(6000);
++await page.screenshot({ path: '/home/daytona/workspace/perf_racing.png' });
++console.log('Racing screenshot taken');
++
++// Now measure frame times during active racing
++const frameMetrics = await page.evaluate(() => {
++  return new Promise(resolve => {
++    const frameTimes = [];
++    let lastTime = performance.now();
++    let count = 0;
++    
++    function measure() {
++      const now = performance.now();
++      frameTimes.push(now - lastTime);
++      lastTime = now;
++      count++;
++      if (count < 120) {
++        requestAnimationFrame(measure);
++      } else {
++        // Compute stats
++        frameTimes.sort((a, b) => a - b);
++        const avg = frameTimes.reduce((s, v) => s + v, 0) / frameTimes.length;
++        const p99 = frameTimes[Math.floor(frameTimes.length * 0.99)];
++        const p95 = frameTimes[Math.floor(frameTimes.length * 0.95)];
++        const min = frameTimes[0];
++        const max = frameTimes[frameTimes.length - 1];
++        resolve({ avg: avg.toFixed(2), p95: p95.toFixed(2), p99: p99.toFixed(2), min: min.toFixed(2), max: max.toFixed(2), count });
++      }
++    }
++    requestAnimationFrame(measure);
++  });
++});
++
++console.log('Frame time metrics (ms):', JSON.stringify(frameMetrics));
++
++// Hold accelerate for a bit and measure objects in scene
++await page.keyboard.down('KeyW');
++await page.waitForTimeout(3000);
++await page.keyboard.up('KeyW');
++
++const sceneStats = await page.evaluate(() => {
++  const renderer = document.querySelector('canvas')?.__renderer;
++  // Count objects in scene by traversing
++  let meshCount = 0;
++  let groupCount = 0;
++  let totalGeometries = 0;
++  
++  // Check Three.js renderer info if accessible 
++  return {
++    note: 'Scene object counts need renderer.info',
++  };
++});
++
++await page.screenshot({ path: '/home/daytona/workspace/perf_driving.png' });
++console.log('After driving screenshot taken');
++
++// Check for errors
++if (errors.length > 0) {
++  console.log('ERRORS found:');
++  for (const e of errors) console.log('  ERROR:', e);
++} else {
++  console.log('No errors found!');
++}
++
++// Print relevant console logs
++const relevantLogs = logs.filter(l => l.includes('error') || l.includes('Error') || l.includes('warn'));
++if (relevantLogs.length > 0) {
++  console.log('Relevant logs:', relevantLogs.slice(0, 10));
++}
++
++await browser.close();
++console.log('Test complete!');
