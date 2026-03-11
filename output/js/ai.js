@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { clamp, lerp, randomRange } from './utils.js';
 import { findNearestSplinePoint } from './track.js';
+import { respawnKart } from './kart.js';
 
 // ── Difficulty presets ─────────────────────────────────────────────────────────
 
@@ -50,6 +51,9 @@ const REVERSE_DURATION    = 0.8;                // seconds of reverse
 const MAX_CONSECUTIVE_STUCKS = 3;               // escalation threshold
 const ESCALATED_REVERSE_DURATION = 1.5;         // longer reverse after repeated stucks
 const RECOVERY_BIAS_DURATION = 0.5;             // seconds of post-reverse homing to spline
+const EMERGENCY_STUCK_STUCKS = 4;         // after this many consecutive stucks, respawn
+const CHECKPOINT_STALL_TIME   = 15;       // seconds with no new checkpoint → respawn
+const RACE_START_GRACE        = 1.5;      // seconds to just accelerate straight at race start
 const ITEM_USE_DELAY_MIN  = 1.0;
 const ITEM_USE_DELAY_MAX  = 3.0;
 const FIZZBOMB_RANGE      = 50;
@@ -59,6 +63,9 @@ const MIN_DRIFT_SPEED_RATIO = 0.4;
 // Reusable temporaries
 const _targetPt  = new THREE.Vector3();
 const _toTarget  = new THREE.Vector3();
+const _curvePt1  = new THREE.Vector3();
+const _curvePt2  = new THREE.Vector3();
+const _curvePt3  = new THREE.Vector3();
 
 // ── Global difficulty ──────────────────────────────────────────────────────────
 
@@ -107,6 +114,13 @@ export function initAI(kart, trackData, difficulty = globalDifficulty) {
     recoveryBiasTimer: 0,         // post-reverse spline-homing period
     _trackData: trackData,        // reference for reverse steering calc
 
+    // Checkpoint stall detection
+    lastCheckpointSeen: -1,       // last observed checkpoint index
+    checkpointStallTimer: 0,      // time since last checkpoint change
+
+    // Race start grace period — just accelerate straight, no steering logic
+    raceStartGraceTimer: RACE_START_GRACE,
+
     // Drift
     driftTimer: 0,
     wantsDriftStart: false,       // "justPressed" edge for one AI tick
@@ -153,6 +167,20 @@ export function updateAI(kart, trackData, allKarts, dt) {
 
   // ── Always-run: stuck detection & reverse timer (every frame) ────────────
   updateStuckDetection(kart, dt);
+
+  // ── Race start grace period: just accelerate straight ───────────────────
+  if (ai.raceStartGraceTimer > 0) {
+    ai.raceStartGraceTimer -= dt;
+    ai.wantsAccel = true;
+    ai.wantsBrake = false;
+    ai.wantsSteerLeft = false;
+    ai.wantsSteerRight = false;
+    ai.wantsDrift = false;
+    ai.wantsUseItem = false;
+    // Skip all 30Hz logic during grace period
+    kart.topSpeed = kart._baseTopSpeed * ai.speedFactor;
+    return;
+  }
 
   // ── 30 Hz gating ────────────────────────────────────────────────────────
   ai.updateCounter += dt;
@@ -264,6 +292,13 @@ function updateSteering(kart, trackData) {
     lookAhead = ai.baseLookAhead * 0.5;
   }
 
+  // Off-road recovery: shorten look-ahead and suppress steering error
+  // to steer more directly back toward the road center
+  const isCurrentlyOffRoad = kart.surfaceType === 'offroad';
+  if (isCurrentlyOffRoad) {
+    lookAhead = Math.min(lookAhead, ai.baseLookAhead * 0.6);
+  }
+
   // 3. Convert look-ahead distance to a spline-parameter offset
   const splineLength = ai.spline.getLength();
   const tOffset = lookAhead / splineLength;
@@ -280,7 +315,7 @@ function updateSteering(kart, trackData) {
     0,
     _targetPt.z - kart.position.z,
   );
-  const errorScale = ai.recoveryBiasTimer > 0 ? 0 : 1;
+  const errorScale = (ai.recoveryBiasTimer > 0 || isCurrentlyOffRoad) ? 0 : 1;
   const desiredHeading = Math.atan2(_toTarget.x, _toTarget.z) + ai.steeringErrorRad * errorScale;
 
   // 6. Heading error (wrapped to -PI..PI)
@@ -297,13 +332,67 @@ function updateSteering(kart, trackData) {
   ai.wantsAccel = true;
   ai.wantsBrake = false;
 
+  // 8a. Pre-corner braking: sample curvature ahead on the spline.
+  //     If upcoming section is very curvy, slow down proactively rather
+  //     than waiting for heading error to grow large.
+  const curvature = sampleUpcomingCurvature(ai.spline, nearest.t, splineLength, kart.speed);
+  if (curvature > 0.015 && kart.speed > 30) {
+    // High curvature ahead — modulate throttle
+    const brakeFactor = clamp((curvature - 0.015) / 0.025, 0, 1);
+    if (brakeFactor > 0.5) {
+      ai.wantsAccel = false;
+      ai.wantsBrake = kart.speed > 40;
+    } else if (brakeFactor > 0.1) {
+      // Just coast — don't accelerate into the corner
+      ai.wantsAccel = false;
+    }
+  }
+
+  // 8b. Off-road recovery: when off-road, shorten look-ahead and suppress
+  //     steering error to home back onto the road more aggressively
+  const isOffRoad = kart.surfaceType === 'offroad';
+
   // Ease off throttle if heading error is very large (bad line, recovering)
   // But NOT if we're off-road — keep driving to get back on track
-  const isOffRoad = kart.surfaceType === 'offroad';
   if (Math.abs(headingError) > 1.2 && !isOffRoad && !ai.recoveryBiasTimer) {
     ai.wantsAccel = false;
     ai.wantsBrake = kart.speed > 30;
   }
+}
+
+// ── Curvature sampling ─────────────────────────────────────────────────────────
+
+/**
+ * Sample curvature of the spline ahead of the current position.
+ * Returns a curvature value (higher = sharper turn ahead).
+ * Uses 3 sample points ahead to estimate direction change per unit distance.
+ */
+function sampleUpcomingCurvature(spline, currentT, splineLength, speed) {
+  // Sample 3 points ahead at distances proportional to speed
+  const dist1 = clamp(speed * 0.3, 8, 40);  // near-ahead
+  const dist2 = clamp(speed * 0.6, 16, 80); // mid-ahead
+
+  const t1 = (currentT + dist1 / splineLength) % 1;
+  const t2 = (currentT + dist2 / splineLength) % 1;
+
+  spline.getPointAt(currentT, _curvePt1);
+  spline.getPointAt(t1, _curvePt2);
+  spline.getPointAt(t2, _curvePt3);
+
+  // Direction from p1→p2 and p2→p3
+  const dx1 = _curvePt2.x - _curvePt1.x;
+  const dz1 = _curvePt2.z - _curvePt1.z;
+  const dx2 = _curvePt3.x - _curvePt2.x;
+  const dz2 = _curvePt3.z - _curvePt2.z;
+
+  const len1 = Math.sqrt(dx1 * dx1 + dz1 * dz1);
+  const len2 = Math.sqrt(dx2 * dx2 + dz2 * dz2);
+  if (len1 < 0.01 || len2 < 0.01) return 0;
+
+  // Cross product gives sin of angle between segments
+  const cross = (dx1 * dz2 - dz1 * dx2) / (len1 * len2);
+  // Curvature = angle change / arc length
+  return Math.abs(cross) / ((len1 + len2) * 0.5);
 }
 
 // ── Drift decision ─────────────────────────────────────────────────────────────
@@ -526,6 +615,29 @@ function updateRubberBand(kart, allKarts) {
   ai.speedFactor = clamp(ai.baseSpeedFactor + bandOffset, 0.75, 1.10);
 }
 
+// ── Smart respawn ──────────────────────────────────────────────────────────────
+
+/**
+ * Respawn an AI kart. If the kart has never reached any checkpoint, teleport
+ * it to the first checkpoint instead of its (potentially off-road) start position.
+ */
+function smartRespawn(kart) {
+  const ai = kart.ai;
+  const trackData = ai._trackData;
+
+  if (kart.lastCheckpoint === -1 && trackData && trackData.checkpoints && trackData.checkpoints.length > 0) {
+    const cp = trackData.checkpoints[0];
+    if (cp && cp.position) {
+      kart.lastCheckpointPos.set(cp.position.x, cp.position.y || 0, cp.position.z);
+      if (cp.forward) {
+        kart.lastCheckpointRot = Math.atan2(cp.forward.x, cp.forward.z);
+      }
+    }
+  }
+
+  respawnKart(kart);
+}
+
 // ── Stuck detection & reverse ──────────────────────────────────────────────────
 
 function updateStuckDetection(kart, dt) {
@@ -534,6 +646,24 @@ function updateStuckDetection(kart, dt) {
   // Tick recovery bias (post-reverse spline-homing)
   if (ai.recoveryBiasTimer > 0) {
     ai.recoveryBiasTimer -= dt;
+  }
+
+  // ── Checkpoint stall detection ────────────────────────────────────────────
+  // If the AI hasn't reached a new checkpoint in a long time, it's probably
+  // circling or stuck in a way that speed-based detection can't catch.
+  if (kart.lastCheckpoint !== ai.lastCheckpointSeen) {
+    ai.lastCheckpointSeen = kart.lastCheckpoint;
+    ai.checkpointStallTimer = 0;
+  } else {
+    ai.checkpointStallTimer += dt;
+    if (ai.checkpointStallTimer >= CHECKPOINT_STALL_TIME) {
+      ai.checkpointStallTimer = 0;
+      ai.consecutiveStucks = 0;
+      ai.stuckTimer = 0;
+      ai.reverseTimer = 0;
+      smartRespawn(kart);
+      return;
+    }
   }
 
   if (ai.reverseTimer > 0) {
@@ -562,6 +692,16 @@ function updateStuckDetection(kart, dt) {
         ai.consecutiveStucks = 1;
       }
       ai.lastStuckTime = now;
+
+      // Emergency respawn: if too many consecutive stucks, give up on reversing
+      // and respawn at the last checkpoint
+      if (ai.consecutiveStucks >= EMERGENCY_STUCK_STUCKS) {
+        ai.consecutiveStucks = 0;
+        ai.stuckTimer = 0;
+        ai.reverseTimer = 0;
+        smartRespawn(kart);
+        return;
+      }
 
       // Escalate reverse duration for repeated stucks
       const escalated = ai.consecutiveStucks >= MAX_CONSECUTIVE_STUCKS;

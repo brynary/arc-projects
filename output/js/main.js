@@ -543,12 +543,19 @@ async function startRace() {
 
   initItemBoxes(trackData, scene);
 
-  /* start rotation */
+  /* start rotation — sample two points along the spline near the start to get
+     the forward direction. Using the tangent at t≈0 on a closed CatmullRom is
+     unreliable because it blends with the return-leg direction. */
   let startRot = 0;
   if (trackData.startPositions.length > 0) {
     const sp = trackData.startPositions[0];
     const n = findNearestSplinePoint(trackData.centerCurve, sp.x, sp.z, 100);
-    startRot = Math.atan2(n.tangent.x, n.tangent.z);
+    // Sample a point slightly ahead on the spline (~3% forward)
+    const aheadT = (n.t + 0.03) % 1;
+    const aheadPt = trackData.centerCurve.getPointAt(aheadT);
+    const dx = aheadPt.x - n.point.x;
+    const dz = aheadPt.z - n.point.z;
+    startRot = Math.atan2(dx, dz);
   }
 
   /* player kart */
@@ -583,6 +590,11 @@ async function startRace() {
   gameState = 'COUNTDOWN';
   accumulator = 0;
   resetCamera(camera, playerKart);
+
+  // Expose for debug / testing
+  window.__allKarts = allKarts;
+  window.__trackData = trackData;
+  window.__raceState = raceState;
 }
 
 function restartRace() {
