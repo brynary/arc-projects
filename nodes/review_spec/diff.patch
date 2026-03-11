@@ -1,0 +1,264 @@
+diff --git a/.workflow/spec-review.md b/.workflow/spec-review.md
+new file mode 100644
+index 0000000..40c3251
+--- /dev/null
++++ b/.workflow/spec-review.md
+@@ -0,0 +1,113 @@
++# Spec Review — Fabro Racer Mini
++
++## 1. Internal Consistency Issues
++
++### 1.1 Speed Formula vs Baseline Mismatch
++**Location:** §4.1 vs §4.5  
++**Issue:** §4.1 states baseline max speed is 45 units/s. §4.5 defines max speed = 40 + (stat × 2), giving 46 for stat 3 (the "middle" value). The all-rounder character Chunk (Speed 3) should match the baseline, but the formula yields 46, not 45.  
++**Fix:** Change the formula to `41 + (stat × 2)` → range 43–51, center = 47. Or simpler: change baseline in §4.1 to say "~46 units/s at stat 3" and keep the formula. Chosen fix: change baseline to match the formula so the formula is the source of truth, and update all derived values (off-road, reverse, etc.) to be expressed as percentages rather than absolute numbers.
++
++### 1.2 Off-Road and Reverse Speeds Are Absolute Instead of Relative
++**Location:** §4.1, §4.4  
++**Issue:** Off-road max is given as the absolute "27 units/s" and reverse as "15 units/s", but these should scale with each character's actual max speed (which varies from 42–50). A character with Speed 5 (max 50) capped at 27 off-road loses 46% of their speed, while Speed 2 (max 44) loses only 39%. This silently penalizes fast characters more.  
++**Fix:** Express off-road cap, reverse max, and boost off-road cap as percentages of the character's computed max speed.
++
++### 1.3 Character Stat Totals Are Unbalanced
++**Location:** §6  
++**Issue:** Stat totals: Brix 13, Zippy 12, Chunk 13, Pixel 14. Pixel has 2 more total points than Zippy. While perfect balance isn't required (weight is a mixed blessing), Zippy looks underpowered on paper with the lowest total and the worst collision matchups.  
++**Fix:** This is intentional and acceptable — Weight is a mixed stat (good for collisions, bad for drift threshold). Note this design rationale explicitly in §6 so implementers don't "fix" it.
++
++## 2. Missing Edge Cases
++
++### 2.1 Race Finish Ties
++**Location:** §9.4  
++**Issue:** No tiebreaker rule if two racers cross the finish line on the same frame, or if two racers have the same lap/checkpoint/distance.  
++**Fix:** Add tiebreaker: if two racers are on the same lap and checkpoint with equal distance to the next checkpoint, the one with higher speed is ranked higher. If still tied, use earlier finish timestamp (sub-frame interpolation). For practical purposes, declare the one processed first in the update loop as ahead.
++
++### 2.2 Item Usage During Countdown and Invincibility
++**Location:** §7, §9.2, §18.3  
++**Issue:** Can players use items during the countdown? During post-respawn invincibility? The spec doesn't say.  
++**Fix:** Items cannot be used during countdown (inputs locked). Items CAN be used during invincibility. Invincibility only prevents receiving damage, not using items.
++
++### 2.3 Hit Stacking — Multiple Simultaneous Status Effects
++**Location:** §7.2, §7.3  
++**Issue:** What happens if a kart is already spinning from a Spark Bomb and gets hit by another Spark Bomb or drives over a Slick Puddle? Do timers reset, stack, or ignore the second hit?  
++**Fix:** A kart that is currently in a stun/spin state (from any source) is immune to additional stun effects until the current one expires. The subsequent hit is wasted. This prevents chain-locking a racer.
++
++### 2.4 Kart Collision During Spin/Stun
++**Location:** §4.2, §7.2  
++**Issue:** When a kart is spinning from a Spark Bomb hit, can other karts collide with it? Is the spinning kart solid or ghosted?  
++**Fix:** Spinning/stunned karts remain solid for kart-to-kart collisions. They can still be pushed. This creates a "roadblock" effect that adds tactical depth.
++
++### 2.5 Slick Puddle Maximum Active Count
++**Location:** §7.3  
++**Issue:** No cap on simultaneous puddles. If all 4 racers drop puddles frequently, the track could be covered. Item boxes respawn (see §2.6), so puddles could accumulate.  
++**Fix:** Maximum 8 active Slick Puddles on the track at once (globally across all racers). If a new puddle is dropped when 8 exist, the oldest one is removed immediately.
++
++### 2.6 Item Box Respawn — Individual vs Cluster
++**Location:** §7 (implied but never stated)  
++**Issue:** The spec mentions item box clusters but never says how or whether item boxes respawn after being collected.  
++**Fix:** Each item box respawns individually 10 seconds after being collected. Visual: box fades back in over 0.5 seconds.
++
++### 2.7 Item Box Collection Hitbox
++**Location:** §7  
++**Issue:** No specification for the collision detection shape/size for item box pickup.  
++**Fix:** Item boxes use sphere collision with radius 2 units centered on the box. Kart center point must enter this sphere to collect.
++
++### 2.8 Bridge Respawn Point (Crystal Caverns)
++**Location:** §18.2, §5.2  
++**Issue:** If a kart falls off the Rickety Bridge and hasn't reached a checkpoint on/past the bridge, where do they respawn? If the last checkpoint was before the bridge, they'd need to cross the bridge again.  
++**Fix:** Place a checkpoint at the start of the bridge specifically so falling off always respawns at the bridge entrance. This is correct behavior — the player should retry the bridge.
++
++### 2.9 Off-Road Boundary Definition for Non-Walled Sections
++**Location:** §4.4, §17.4  
++**Issue:** The spec says surfaces "outside the road mesh" are off-road, but doesn't define how this is detected. Some areas have no walls (beach shortcut, mushroom grove). How does the game know a kart is off-road vs on-road?  
++**Fix:** Use a track surface material/flag system. Each ground polygon (or road segment) is tagged as "road" or "off-road". Karts sample the surface type at their position via a 2D point-in-polygon test against road segments projected to the XZ plane.
++
++### 2.10 What Happens When Player Finishes Last
++**Location:** §9.2  
++**Issue:** The spec says "Remaining CPUs finish on fast-forward (2× speed) or after 15 seconds." But if the player finishes 4th (last), there are no remaining CPUs.  
++**Fix:** If the player finishes last, skip directly to the results screen after the finish overlay (no need to wait for anyone).
++
++### 2.11 Allow Clones — CPU-to-CPU Duplication
++**Location:** §10.5  
++**Issue:** The "Allow Clones" toggle says CPUs can be "any character including the player's choice," but doesn't clarify whether CPUs can duplicate each other (e.g., 3 Brix opponents).  
++**Fix:** When Allow Clones is ON, each CPU independently picks from all 4 characters (duplicates between CPUs are allowed). When OFF, all 4 racers must be unique characters.
++
++### 2.12 advanceTime Stepping Behavior
++**Location:** §3.5  
++**Issue:** `advanceTime(ms)` is mentioned but its behavior is underspecified. Should it run one physics step of `ms` milliseconds, or multiple 16.67ms steps?  
++**Fix:** `advanceTime(ms)` runs the game loop repeatedly in 16.67ms increments until the total elapsed time reaches `ms`. Each step calls the same update logic as the normal game loop. This ensures physics stability matches normal gameplay.
++
++## 3. Testability Gaps
++
++### 3.1 Lap Time Targets Are Unverifiable at Spec Time
++**Location:** §5.1, §5.2  
++**Issue:** Lap time targets (38s skilled, 45s average for Sunset Circuit) assume specific track geometry that doesn't exist yet. These will need tuning during implementation.  
++**Recommendation:** Keep the targets as aspirational guidelines. After initial implementation, validate by playing and adjust track length/curvature to hit targets. Mark as "tuning required" rather than hard requirements.
++
++### 3.2 "Noticeably Affect Gameplay" Is Subjective
++**Location:** §21, acceptance criterion 3  
++**Issue:** "Stats that noticeably affect gameplay" — no measurable threshold.  
++**Fix:** Add concrete checks: Brix (Speed 5) should have a top speed at least 15% higher than Zippy (Speed 2). Pixel (Handling 5) should have at least 40% tighter turning radius than Brix (Handling 2). These can be verified via render_game_to_text.
++
++### 3.3 Checkpoint Plane Detection Mechanism
++**Location:** §18.1  
++**Issue:** "Invisible trigger planes" — no specification of orientation, size, or detection method.  
++**Fix:** Checkpoints are rectangular trigger planes oriented perpendicular to the track direction at their placement point, spanning the full track width + 2 unit margin on each side, and 10 units tall. Detection: test whether the kart's center point crossed from the front side to the back side of the plane between the previous and current frame (sign change of dot product with plane normal).
++
++## 4. Minor Clarifications Needed
++
++### 4.1 Spark Bomb Self-Damage Proximity
++The spec correctly states the thrower can be caught in the blast. No change needed, but implementation should note the 5-unit blast radius means throwing at a wall within ~5 units will self-zap.
++
++### 4.2 Mirror Mode and AI
++When mirror mode negates X-coordinates of track splines, AI racing splines, drift zones, and hazard positions must all be mirrored identically. This is implied but worth calling out explicitly.
++
++### 4.3 Slick Puddle Duration Discrepancy Check  
++§7.3 says puddles persist for "10 seconds, then fades out over 1 second" — effective lifetime is 11 seconds. Confirm this is intentional (10s active + 1s fade during which it still affects karts, or 10s total including fade). 
++**Fix:** 10 seconds total. Puddle is fully active for 9 seconds, then fades over the final 1 second. During the fade, it still affects karts (reduced effectiveness would be over-complicated).
++
++### 4.4 Weight Effect on Drift Initiation Threshold
++§4.5 says "Drift initiation requires slightly more speed at high weight" but doesn't quantify.  
++**Fix:** Drift speed threshold = 60% + (weight - 3) × 3% of max speed. Weight 1: 54%, Weight 5: 66%.
+diff --git a/.workflow/spec.md b/.workflow/spec.md
+index 8fd2774..a29110e 100644
+--- a/.workflow/spec.md
++++ b/.workflow/spec.md
+@@ -140,7 +140,7 @@ Expose `window.render_game_to_text()` returning a JSON string with:
+ - `track`: name of current track
+ - Coordinate system note: Y-up, Z-forward from start line
+ 
+-Expose `window.advanceTime(ms)` to step the game loop deterministically for Playwright-based automated testing.
++Expose `window.advanceTime(ms)` to step the game loop deterministically for Playwright-based automated testing. Implementation: runs the game loop repeatedly in 16.67ms increments until the total elapsed time reaches `ms`. Each step calls the same update logic as the normal game loop. Returns the final `render_game_to_text()` output.
+ 
+ ---
+ 
+@@ -150,14 +150,14 @@ Expose `window.advanceTime(ms)` to step the game loop deterministically for Play
+ 
+ | Parameter | Value |
+ |---|---|
+-| Max speed (road) | 45 units/s |
+-| Max speed (off-road) | 27 units/s (60% of road) |
+-| Off-road penalty during boost | 50% of normal penalty (so ~36 units/s floor) |
+-| Acceleration (0 to max) | ~2.5 seconds |
++| Max speed (road) | 40 + (Speed stat × 2) units/s (range: 42–50; stat 3 = 46) |
++| Max speed (off-road) | 60% of character max speed |
++| Off-road penalty during boost | 50% of normal penalty (off-road cap = 80% of max) |
++| Acceleration (0 to max) | ~2.5s at stat 3 (see §4.5 for per-character values) |
+ | Braking deceleration | 2× acceleration rate |
+-| Reverse max speed | 15 units/s |
+-| Turn rate at max speed | 2.0 rad/s |
+-| Turn rate at low speed | 3.5 rad/s |
++| Reverse max speed | 33% of character max speed |
++| Turn rate at max speed | 2.0 rad/s (modified by Handling stat) |
++| Turn rate at low speed | 3.5 rad/s (modified by Handling stat) |
+ 
+ Turn rate interpolates linearly between low-speed and max-speed values. Steering is responsive with no input lag — the kart's facing changes the frame the key is pressed.
+ 
+@@ -208,10 +208,11 @@ Drifting is the core skill mechanic. It is initiated by holding a drift key whil
+ ### 4.4 Off-Road
+ 
+ - Grass, dirt, sand — any surface outside the road mesh counts as off-road
+-- Speed is capped at 60% of max (27 units/s baseline)
+-- During active boost: off-road penalty is 50% (cap is 80% of max = 36 units/s)
++- Speed is capped at 60% of character's max speed (e.g., 27.6 units/s for stat 3)
++- During active boost: off-road penalty is halved (cap is 80% of character max)
+ - Visual: kart kicks up dust particles, engine pitch drops
+ - Acceleration is also reduced by 40% off-road
++- Off-road detection: each ground surface is tagged as "road" or "off-road". The kart samples surface type at its XZ position via point-in-polygon test against road segments.
+ 
+ ### 4.5 Kart Stats Influence
+ 
+@@ -222,7 +223,9 @@ Character stats modify the base parameters:
+ | Speed (1-5) | Max speed: 40 + (stat × 2) = 42-50 units/s |
+ | Acceleration (1-5) | Time to max: 3.2s at 1, 1.8s at 5 |
+ | Handling (1-5) | Turn rate bonus: ±15% per point from center (3) |
+-| Weight (1-5) | Collision push resistance: heavy karts push light karts. Drift initiation requires slightly more speed at high weight |
++| Weight (1-5) | Collision push resistance: heavy karts push light karts. Drift initiation threshold: 60% + (weight - 3) × 3% of max speed (Weight 1 = 54%, Weight 5 = 66%) |
++
++**Note on stat totals:** Character stat totals are intentionally unequal (Brix 13, Zippy 12, Chunk 13, Pixel 14). Weight is a mixed stat — beneficial for collisions but detrimental for drift initiation threshold — so raw totals do not indicate balance. Zippy's low weight and high handling make drift-chaining viable, compensating for the lower total.
+ 
+ ---
+ 
+@@ -465,6 +468,15 @@ Item distribution depends on the racer's current position:
+ 
+ Leaders get more defensive items (Slick Puddle to protect their lead). Trailers get more offensive items (Spark Bomb to disrupt leaders). Turbo Cell is equally distributed — everyone likes speed.
+ 
++### 7.1.1 Item General Rules
++
++- Items cannot be used during countdown (inputs locked until "GO!").
++- Items CAN be used during post-respawn invincibility; invincibility only prevents receiving damage.
++- A kart currently in a stun/spin state (from any source) is immune to additional stun effects until the current one expires. Subsequent hits are wasted. This prevents chain-locking.
++- Spinning/stunned karts remain solid for kart-to-kart collisions (can act as roadblocks).
++- Item box collision: sphere with radius 2 units centered on the box. Kart center must enter to collect.
++- Item boxes respawn individually 10 seconds after collection (visual: fade in over 0.5 seconds).
++
+ ### 7.2 Item 1: Spark Bomb
+ 
+ **Visual Appearance:** A small glowing yellow cube with electric arcs crackling around it, trailing golden sparks when thrown.
+@@ -498,8 +510,9 @@ Leaders get more defensive items (Slick Puddle to protect their lead). Trailers
+   - Steering effectiveness reduced to 25% during slide
+   - Speed maintained (no speed loss — it's a slide, not a stop)
+   - Does NOT cancel active drift (you can drift through a puddle, though the slide makes it harder)
+-- Puddle persists for 10 seconds, then fades out over 1 second
++- Puddle persists for 10 seconds total (fully active for 9 seconds, fades over final 1 second; still affects karts during fade)
+ - Puddle can affect multiple racers
++- Maximum 8 active Slick Puddles on the track at once (globally across all racers). If a new puddle is dropped when 8 exist, the oldest is removed immediately.
+ - Visual: green ripple effect on affected kart, slight trail of green particles
+ - Audio: wet squelch on deploy, slippery slide sound on contact
+ 
+@@ -601,7 +614,7 @@ MENU → COUNTDOWN → RACING → FINISHED → RESULTS → MENU
+ 2. **COUNTDOWN**: Camera sweeps from above, "3... 2... 1... GO!" over 3.5 seconds. Karts visible on the starting grid. Inputs locked until "GO!".
+ 3. **RACING**: Active gameplay. Physics, AI, items all running.
+ 4. **PAUSED**: Overlay with resume/restart/quit. Physics frozen. Timer frozen.
+-5. **FINISHED**: Player crosses the finish line on lap 3. Camera pulls back to show finish. Remaining CPUs finish on fast-forward (2× speed) or after 15 seconds, whichever comes first.
++5. **FINISHED**: Player crosses the finish line on lap 3. Camera pulls back to show finish. Remaining CPUs finish on fast-forward (2× speed) or after 15 seconds, whichever comes first. If the player finishes last (4th), skip directly to the results screen after the finish overlay.
+ 6. **RESULTS**: Final standings, times, return to menu.
+ 
+ ### 9.3 Lap Tracking
+@@ -617,9 +630,12 @@ Position (1st-4th) is determined by:
+ 1. Number of laps completed (more = higher position)
+ 2. Number of checkpoints passed in current lap (more = higher position)
+ 3. Distance to next checkpoint (closer = higher position)
++4. **Tiebreaker**: If two racers are equal on all above, the one with higher current speed is ranked higher. If still tied, the one processed first in the update loop is ahead.
+ 
+ This provides smooth, continuous position updates rather than jerky position changes only at checkpoints.
+ 
++**Finished racers:** Once a racer crosses the finish line on lap 3, their final position is locked based on finish order. If two racers finish on the same frame, the one closer to the finish line (by sub-frame interpolation) is ranked higher.
++
+ ### 9.5 Starting Grid
+ 
+ Karts start in a 2×2 grid formation:
+@@ -668,8 +684,8 @@ Default selection: Standard.
+ 
+ ### 10.5 Options (Below Difficulty)
+ 
+-- **Mirror Mode**: Toggle ON/OFF (default OFF). When on, the track is horizontally mirrored — all left turns become right turns and vice versa. Implemented by negating the X-component of all track spline points and geometry.
+-- **Allow Clones**: Toggle ON/OFF (default ON). When ON, CPU opponents can be any character including the player's choice. When OFF, each character appears only once.
++- **Mirror Mode**: Toggle ON/OFF (default OFF). When on, the track is horizontally mirrored — all left turns become right turns and vice versa. Implemented by negating the X-component of all track spline points, geometry, AI racing splines, drift zones, and hazard positions.
++- **Allow Clones**: Toggle ON/OFF (default ON). When ON, each CPU independently picks from all 4 characters (duplicates between CPUs and with the player are allowed — e.g., 3 Brix opponents is possible). When OFF, all 4 racers must be unique characters.
+ 
+ ### 10.6 Start Race
+ 
+@@ -982,6 +998,8 @@ This approach keeps the codebase self-contained with no external 3D model files.
+ - Checkpoints are numbered sequentially around the track.
+ - A racer must pass through checkpoints in order; skipping one means the lap won't count.
+ - The finish line is checkpoint 0 (also the final checkpoint for lap completion).
++- **Detection**: Each checkpoint is a rectangular plane perpendicular to the track direction at its placement point, spanning the full track width + 2 units margin on each side, 10 units tall. Crossing is detected by testing whether the kart's center point changed from the front side to the back side of the plane between the previous and current frame (sign change of dot product with plane normal).
++- **Crystal Caverns bridge checkpoint**: A checkpoint is placed at the start of the Rickety Bridge so that falling off always respawns at the bridge entrance.
+ 
+ ### 18.2 Respawn Conditions
+ 
+@@ -1081,7 +1099,7 @@ The implementation is complete when:
+ 
+ 1. **Playable Race**: A player can select a track, character, and difficulty, then race 3 laps against 3 CPU opponents and see results.
+ 2. **Two Tracks**: Both Sunset Circuit and Crystal Caverns are fully playable with correct layouts, hazards, and visual themes.
+-3. **Four Characters**: All four characters are selectable with visually distinct voxel kart models and stats that noticeably affect gameplay.
++3. **Four Characters**: All four characters are selectable with visually distinct voxel kart models and stats that noticeably affect gameplay. Verifiable: Brix (Speed 4, max 48) must have at least 8% higher top speed than Zippy (Speed 2, max 44). Pixel (Handling 5) must have at least 40% tighter turn radius than Brix (Handling 2) at the same speed.
+ 4. **Three Items**: Spark Bomb, Slick Puddle, and Turbo Cell all function as specified with position-weighted distribution.
+ 5. **Drifting**: Drift-charge boost system works with all 3 tiers at the specified durations.
+ 6. **AI**: CPU opponents follow racing splines, use items, drift, and respond to difficulty settings.
+@@ -1101,4 +1119,4 @@ The implementation is complete when:
+ - Time trial mode with ghosts
+ - Unlockable cosmetics
+ - Weather effects
+-- More item types
++- More item types
+\ No newline at end of file
