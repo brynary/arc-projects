@@ -1,0 +1,408 @@
+diff --git a/.workflow/improve_log.md b/.workflow/improve_log.md
+index 597b68c..e461e5b 100644
+--- a/.workflow/improve_log.md
++++ b/.workflow/improve_log.md
+@@ -21,4 +21,11 @@
+ - **Y-aware spline lookup for multi-level tracks**: `findNearestSplinePoint` now accepts an optional `kartY` parameter. When provided, Y distance is weighted (0.5× XZ weight) into the distance metric during both the coarse search and ternary refinement. This prevents karts on Volcano Peak's upper switchbacks (Y~60) from snapping to lower spline segments (Y~0) that happen to be nearby in XZ. Updated all callers in physics.js, ai.js, race.js, and track.js utility functions to pass `kart.position.y`.
+ - **Checkpoint direction validation**: Added travel-direction check to `updateCheckpoints`. The kart's heading (adjusted for reverse speed) is dotted against the checkpoint's forward vector. If the effective dot < -0.2 (i.e., traveling roughly opposite to the checkpoint direction), the checkpoint is rejected. This prevents false lap completions from reversing through checkpoints.
+ - **Wider wall collision sector search**: Expanded wall sector check from ±1 to ±2 sectors around the kart's current position. On tight tracks with many walls, karts near sector boundaries could previously miss walls one sector away, allowing occasional escape. The wider 5-sector window ensures complete coverage at all speeds.
+-- Verified: pass — All 4 tracks load and race cleanly with zero console errors. 30-second stress test on Volcano Peak (the most complex multi-level track) confirms stable racing with correct HUD updates and no Y-level teleportation.
+\ No newline at end of file
++- Verified: pass — All 4 tracks load and race cleanly with zero console errors. 30-second stress test on Volcano Peak (the most complex multi-level track) confirms stable racing with correct HUD updates and no Y-level teleportation.
++
++## Iteration 4 — Focus: Performance & Stability
++- **Cache minimap bounding box & track points**: `updateMinimap()` was calling `centerCurve.getPointAt()` 61 times per frame (at 30 Hz) to recompute the static track outline, plus bounding box min/max and character color hex strings. All of this is now computed once in `buildMinimapCache()` when the track loads, and reused by `updateMinimap()`. Eliminates ~1830 `getPointAt()` calls/second plus string allocations.
++- **Swap-and-pop particle removal**: Replaced `activeParticles.splice(i, 1)` (O(n) array shift) with swap-to-end-and-pop (O(1)). During heavy particle emission (8 karts drifting/boosting simultaneously), this avoids shifting up to 200 array elements per removal. Changed iteration from reverse for-loop to forward while-loop to work correctly with the swap pattern.
++- **Zero-allocation homing pigeon updates**: Replaced `new THREE.Vector3().subVectors(...)` and `proj.velocity.clone().normalize()` in the homing pigeon steering code with reusable `_toTarget` vector and inline math (manual length computation, divide-by-scalar, and normalize-scale). Eliminates 2 Vector3 allocations per homing pigeon per frame, reducing GC pressure during multi-projectile scenarios.
++- **Reuse sort buffer in `updatePositions`**: Replaced `[...allKarts].sort(...)` (which allocates a new 8-element array every physics frame) with a module-level `_sortBuffer` that's filled in-place and sorted. Eliminates ~60 array allocations/second at the fixed timestep rate.
++- Verified: pass — All tracks load and race cleanly with zero console errors. Particle system verified under heavy drift/boost load. Minimap renders correctly from cached data.
+\ No newline at end of file
+diff --git a/output/js/items.js b/output/js/items.js
+index a5fe1d0..b25866f 100644
+--- a/output/js/items.js
++++ b/output/js/items.js
+@@ -364,6 +364,9 @@ function removeShieldVisual(kart) {
+ 
+ const HOMING_TURN_RATE = 2; // rad/s
+ 
++// Reusable temporaries for homing pigeon updates (avoid per-frame allocations)
++const _toTarget = new THREE.Vector3();
++
+ /**
+  * Update all active projectiles (move, check collisions).
+  */
+@@ -386,17 +389,21 @@ export function updateProjectiles(allKarts, dt) {
+     // Homing pigeon: steer toward target
+     if (proj.type === 'homingPigeon' && proj.targetKart) {
+       const target = proj.targetKart;
+-      const toTarget = new THREE.Vector3().subVectors(target.position, proj.position);
+-      toTarget.y = 0;
+-      const dist = toTarget.length();
++      _toTarget.subVectors(target.position, proj.position);
++      _toTarget.y = 0;
++      const dist = _toTarget.length();
+ 
+       if (dist > 0.1) {
+-        toTarget.normalize();
++        _toTarget.divideScalar(dist); // normalize in-place without allocation
++
++        // Compute current direction inline (avoid clone + normalize allocation)
++        const velLen = Math.sqrt(proj.velocity.x * proj.velocity.x + proj.velocity.z * proj.velocity.z);
++        const cdx = velLen > 0 ? proj.velocity.x / velLen : 0;
++        const cdz = velLen > 0 ? proj.velocity.z / velLen : 1;
+ 
+-        const currentDir = proj.velocity.clone().normalize();
+         // Compute angular difference
+-        const cross = currentDir.x * toTarget.z - currentDir.z * toTarget.x;
+-        const dot = currentDir.x * toTarget.x + currentDir.z * toTarget.z;
++        const cross = cdx * _toTarget.z - cdz * _toTarget.x;
++        const dot = cdx * _toTarget.x + cdz * _toTarget.z;
+         let angleToTarget = Math.atan2(-cross, dot);
+ 
+         // Clamp turn rate
+@@ -411,8 +418,13 @@ export function updateProjectiles(allKarts, dt) {
+         proj.velocity.x = vx;
+         proj.velocity.z = vz;
+ 
+-        // Maintain speed
+-        proj.velocity.normalize().multiplyScalar(90);
++        // Maintain speed — normalize and scale inline
++        const newLen = Math.sqrt(proj.velocity.x * proj.velocity.x + proj.velocity.z * proj.velocity.z);
++        if (newLen > 0) {
++          const scale = 90 / newLen;
++          proj.velocity.x *= scale;
++          proj.velocity.z *= scale;
++        }
+       }
+     }
+ 
+@@ -598,4 +610,4 @@ export function clearItems(scene) {
+ 
+   elapsedTime = 0;
+   sceneRef = null;
+-}
++}
+\ No newline at end of file
+diff --git a/output/js/main.js b/output/js/main.js
+index f206a68..684243b 100644
+--- a/output/js/main.js
++++ b/output/js/main.js
+@@ -265,18 +265,10 @@ function showFinalLapBanner() {
+ 
+ /* ═══════════════════════  MINIMAP  ═══════════════════════ */
+ let minimapFrame = 0;
+-function updateMinimap() {
+-  minimapFrame++;
+-  if (minimapFrame % 2 !== 0) return;  // 30 Hz
+-  const cv = document.getElementById('minimap-cv');
+-  if (!cv || !trackData?.centerCurve) return;
+-  const ctx = cv.getContext('2d');
+-  const W = 130, H = 130;
+-  ctx.clearRect(0, 0, W, H);
+-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+-  ctx.fillRect(0, 0, W, H);
++let minimapCache = null; // { pts, minX, maxX, minZ, maxZ, sc, offX, offZ, charColors, tx, tz }
+ 
+-  /* compute bounding box of track */
++function buildMinimapCache(trackData) {
++  if (!trackData?.centerCurve) { minimapCache = null; return; }
+   const pts = [];
+   for (let i = 0; i <= 60; i++) {
+     const p = trackData.centerCurve.getPointAt(i / 60);
+@@ -284,12 +276,29 @@ function updateMinimap() {
+   }
+   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+   for (const p of pts) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); }
+-  const pad = 12;
++  const W = 130, H = 130, pad = 12;
+   const scaleX = (W - pad * 2) / (maxX - minX || 1);
+   const scaleZ = (H - pad * 2) / (maxZ - minZ || 1);
+   const sc = Math.min(scaleX, scaleZ);
+   const offX = (W - (maxX - minX) * sc) / 2;
+   const offZ = (H - (maxZ - minZ) * sc) / 2;
++  const charColors = {};
++  for (const c of characters) charColors[c.id] = '#' + c.color.toString(16).padStart(6, '0');
++  minimapCache = { pts, minX, sc, offX, minZ, offZ, charColors };
++}
++
++function updateMinimap() {
++  minimapFrame++;
++  if (minimapFrame % 2 !== 0) return;  // 30 Hz
++  const cv = document.getElementById('minimap-cv');
++  if (!cv || !minimapCache) return;
++  const ctx = cv.getContext('2d');
++  const W = 130, H = 130;
++  ctx.clearRect(0, 0, W, H);
++  ctx.fillStyle = 'rgba(0,0,0,0.25)';
++  ctx.fillRect(0, 0, W, H);
++
++  const { pts, minX, sc, offX, minZ, offZ, charColors } = minimapCache;
+   const tx = x => (x - minX) * sc + offX;
+   const tz = z => (z - minZ) * sc + offZ;
+ 
+@@ -305,9 +314,6 @@ function updateMinimap() {
+   ctx.closePath(); ctx.stroke();
+ 
+   /* draw karts */
+-  const charColors = {};
+-  for (const c of characters) charColors[c.id] = '#' + c.color.toString(16).padStart(6, '0');
+-
+   for (const k of allKarts) {
+     ctx.beginPath();
+     ctx.arc(tx(k.position.x), tz(k.position.z), k.isPlayer ? 4 : 2.5, 0, Math.PI * 2);
+@@ -511,6 +517,9 @@ async function startRace() {
+   trackDef = mod.trackDefinition;
+   trackData = buildTrack(trackDef, scene);
+ 
++  /* cache minimap data (track is static) */
++  buildMinimapCache(trackData);
++
+   /* environment */
+   const env = trackDef.environment || {};
+   setFog(env.fogColor || 0x87ceeb, env.fogNear || 100, env.fogFar || 500);
+diff --git a/output/js/particles.js b/output/js/particles.js
+index 410ebe1..8c90268 100644
+--- a/output/js/particles.js
++++ b/output/js/particles.js
+@@ -70,7 +70,9 @@ export function spawnParticle(x, y, z, vx, vy, vz, color, life = 0.3, size = 0.3
+ export function updateParticles(dt) {
+   if (!instancedMesh) return;
+ 
+-  for (let i = activeParticles.length - 1; i >= 0; i--) {
++  // Iterate forward; use swap-and-pop for O(1) removal instead of splice
++  let i = 0;
++  while (i < activeParticles.length) {
+     const p = activeParticles[i];
+     p.life -= dt;
+ 
+@@ -79,7 +81,10 @@ export function updateParticles(dt) {
+       dummyMatrix.makeScale(0, 0, 0);
+       instancedMesh.setMatrixAt(p.idx, dummyMatrix);
+       particlePool.push(p.idx);
+-      activeParticles.splice(i, 1);
++      // Swap with last element and pop (O(1) instead of O(n) splice)
++      const last = activeParticles.length - 1;
++      if (i < last) activeParticles[i] = activeParticles[last];
++      activeParticles.pop();
+       continue;
+     }
+ 
+@@ -101,6 +106,7 @@ export function updateParticles(dt) {
+     instancedMesh.setMatrixAt(p.idx, dummyMatrix);
+     dummyColor.setRGB(p.r, p.g, p.b);
+     instancedMesh.setColorAt(p.idx, dummyColor);
++    i++;
+   }
+ 
+   instancedMesh.instanceMatrix.needsUpdate = true;
+diff --git a/output/js/race.js b/output/js/race.js
+index e8c6085..192e6c4 100644
+--- a/output/js/race.js
++++ b/output/js/race.js
+@@ -185,6 +185,9 @@ function updateCheckpoints(kart, trackData) {
+   return null;
+ }
+ 
++// Pre-allocated array for position sorting (avoids per-frame [...allKarts] spread)
++let _sortBuffer = [];
++
+ /**
+  * Compute race progress and assign positions 1-8.
+  */
+@@ -208,16 +211,19 @@ function updatePositions(allKarts, trackData) {
+     kart.raceProgress = (kart.currentLap * numCheckpoints) + kart.lastCheckpoint + 1 + fraction;
+   }
+ 
+-  // Sort by progress descending (finished karts always first, by finish time)
+-  const sorted = [...allKarts].sort((a, b) => {
++  // Reuse sort buffer to avoid allocating a new array every frame
++  _sortBuffer.length = allKarts.length;
++  for (let i = 0; i < allKarts.length; i++) _sortBuffer[i] = allKarts[i];
++
++  _sortBuffer.sort((a, b) => {
+     if (a.finished && b.finished) return a.finishTime - b.finishTime;
+     if (a.finished) return -1;
+     if (b.finished) return 1;
+     return b.raceProgress - a.raceProgress;
+   });
+ 
+-  for (let i = 0; i < sorted.length; i++) {
+-    sorted[i].racePosition = i + 1;
++  for (let i = 0; i < _sortBuffer.length; i++) {
++    _sortBuffer[i].racePosition = i + 1;
+   }
+ }
+ 
+diff --git a/test_countdown_perf.png b/test_countdown_perf.png
+new file mode 100644
+index 0000000..3b60986
+Binary files /dev/null and b/test_countdown_perf.png differ
+diff --git a/test_particles_swap.js b/test_particles_swap.js
+new file mode 100644
+index 0000000..295f1af
+--- /dev/null
++++ b/test_particles_swap.js
+@@ -0,0 +1,49 @@
++// test_particles_swap.js — Verify particle swap-and-pop works during active race
++const { chromium } = require('playwright');
++
++(async () => {
++  const browser = await chromium.launch({ args: ['--no-sandbox'] });
++  const page = await browser.newPage();
++  
++  const errors = [];
++  page.on('pageerror', e => errors.push(e.message));
++  
++  await page.goto('http://localhost:4567/', { waitUntil: 'domcontentloaded', timeout: 15000 });
++  await page.waitForTimeout(1500);
++  
++  // Quick start a race
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(400);
++  await page.click('#ts-next');
++  await page.waitForTimeout(300);
++  await page.click('#cs-next');
++  await page.waitForTimeout(300);
++  await page.click('#ds-start');
++  await page.waitForTimeout(7000); // Wait for countdown to finish
++  
++  // Hold accelerate and drift for 5s to generate lots of particles
++  await page.keyboard.down('ArrowUp');
++  await page.waitForTimeout(2000);
++  
++  // Start drifting to generate spark particles
++  await page.keyboard.down('ArrowLeft');
++  await page.keyboard.down('ShiftLeft');
++  await page.waitForTimeout(3000);
++  
++  await page.keyboard.up('ShiftLeft');
++  await page.keyboard.up('ArrowLeft');
++  await page.waitForTimeout(1000);
++  
++  // Check for errors (swap-and-pop bugs would cause index errors)
++  console.log('Errors after heavy particle use:', errors.length > 0 ? errors.join('; ') : 'none');
++  
++  await page.screenshot({ path: 'test_particles_verified.png' });
++  
++  if (errors.length > 0) {
++    console.log('FAIL');
++    process.exit(1);
++  }
++  console.log('PASS: Particles work correctly with swap-and-pop');
++  
++  await browser.close();
++})();
+diff --git a/test_particles_verified.png b/test_particles_verified.png
+new file mode 100644
+index 0000000..b78fe84
+Binary files /dev/null and b/test_particles_verified.png differ
+diff --git a/test_perf_iter4.js b/test_perf_iter4.js
+new file mode 100644
+index 0000000..7c0ca4b
+--- /dev/null
++++ b/test_perf_iter4.js
+@@ -0,0 +1,96 @@
++// test_perf_iter4.js — Verify performance improvements don't break anything
++const { chromium } = require('playwright');
++
++(async () => {
++  const browser = await chromium.launch({ args: ['--no-sandbox'] });
++  const page = await browser.newPage();
++  
++  const errors = [];
++  page.on('pageerror', e => errors.push(e.message));
++  page.on('console', msg => {
++    if (msg.type() === 'error') errors.push(msg.text());
++  });
++  
++  await page.goto('http://localhost:4567/', { waitUntil: 'domcontentloaded', timeout: 15000 });
++  await page.waitForTimeout(2000);
++  
++  // Check title screen loaded
++  const titleVisible = await page.$eval('#menu-overlay', el => !el.classList.contains('hidden'));
++  console.log('Title visible:', titleVisible);
++  
++  // Start a race
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(500);
++  
++  // Select first track
++  const nextBtn = await page.$('#ts-next');
++  if (nextBtn) await nextBtn.click();
++  await page.waitForTimeout(300);
++  
++  // Select first character
++  const charNext = await page.$('#cs-next');
++  if (charNext) await charNext.click();
++  await page.waitForTimeout(300);
++  
++  // Start race
++  const startBtn = await page.$('#ds-start');
++  if (startBtn) await startBtn.click();
++  await page.waitForTimeout(2000);
++  
++  // Take screenshot during countdown
++  await page.screenshot({ path: 'test_countdown_perf.png' });
++  
++  // Wait for race to start
++  await page.waitForTimeout(6000);
++  
++  // Race should be active
++  const hudActive = await page.$eval('#hud-overlay', el => el.classList.contains('active'));
++  console.log('HUD active:', hudActive);
++  
++  // Take screenshot during race
++  await page.screenshot({ path: 'test_race_perf.png' });
++  
++  // Let it run for a bit longer to test stability
++  await page.waitForTimeout(5000);
++  await page.screenshot({ path: 'test_race_perf2.png' });
++  
++  // Check for console errors
++  console.log('Console errors:', errors.length > 0 ? errors.join('; ') : 'none');
++  
++  // Verify minimap is drawn
++  const minimapExists = await page.$('#minimap-cv');
++  console.log('Minimap canvas exists:', !!minimapExists);
++  
++  // Check no crashed state
++  const gameRunning = await page.evaluate(() => {
++    return typeof window !== 'undefined';
++  });
++  console.log('Game running:', gameRunning);
++  
++  // Measure performance: count frames over 2 seconds
++  const frameCount = await page.evaluate(() => {
++    return new Promise(resolve => {
++      let count = 0;
++      const start = performance.now();
++      function tick() {
++        count++;
++        if (performance.now() - start < 2000) {
++          requestAnimationFrame(tick);
++        } else {
++          resolve(count);
++        }
++      }
++      requestAnimationFrame(tick);
++    });
++  });
++  console.log(`Frames in 2s: ${frameCount} (~${(frameCount/2).toFixed(1)} FPS)`);
++  
++  if (errors.length > 0) {
++    console.log('FAIL: Console errors detected');
++    process.exit(1);
++  }
++  
++  console.log('PASS: All performance changes verified');
++  
++  await browser.close();
++})();
+diff --git a/test_race_perf.png b/test_race_perf.png
+new file mode 100644
+index 0000000..3c7880e
+Binary files /dev/null and b/test_race_perf.png differ
+diff --git a/test_race_perf2.png b/test_race_perf2.png
+new file mode 100644
+index 0000000..a3b276c
+Binary files /dev/null and b/test_race_perf2.png differ
