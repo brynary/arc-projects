@@ -241,7 +241,7 @@ function spawnOilSlick(kart) {
     position: pos,
     velocity: vel,
     mesh,
-    lifetime: 15,
+    lifetime: 12,
     sourceKart: kart,
     collisionRadius: 4,
   });
@@ -253,7 +253,7 @@ function activateShield(kart) {
     removeShieldVisual(kart);
   }
   kart.shieldActive = true;
-  kart.shieldTimer = 8;
+  kart.shieldTimer = 4;  // spec: 4s or 1 block
 
   // Create translucent shield visual
   const geo = new THREE.SphereGeometry(3.5, 16, 12);
@@ -326,9 +326,17 @@ function spawnHomingPigeon(kart, allKarts) {
 }
 
 function activateStar(kart) {
+  // Spec: "For 3s, the kart ignores off-road slowdown completely and gains
+  // a 10% speed boost." Not invincibility — just off-road immunity + speed.
   kart.starActive = true;
-  kart.starTimer = 6;
-  kart.invincibleTimer = 6;
+  kart.starTimer = 3;
+  // The 10% speed boost is applied as a Tier-1-equivalent boost
+  // so it stacks/conflicts using the standard boost rule.
+  kart.boostActive = true;
+  kart.boostMultiplier = 1.10;
+  kart.boostInitialMultiplier = 1.10;
+  kart.boostDuration = 3;
+  kart.boostTimer = 3;
 }
 
 // ── Shield Timer & Star Timer Decay ─────────────────────────────────────────
@@ -343,6 +351,9 @@ function updateKartTimers(karts, dt) {
       if (kart.shieldTimer <= 0) {
         removeShieldVisual(kart);
         kart.shieldActive = false;
+        // Shield expired — pop particles + audio flag
+        emitHitParticles(kart, 0x33CCFF);
+        kart._shieldPopFrame = true;
       }
     }
 
@@ -475,31 +486,8 @@ export function updateProjectiles(allKarts, dt) {
 }
 
 function checkStarCollisions(allKarts) {
-  // Short-circuit: skip the O(n²) loop when no kart has a star active.
-  // Stars are rare, so this early-out fires on the vast majority of frames.
-  let anyStarActive = false;
-  for (let i = 0; i < allKarts.length; i++) {
-    if (allKarts[i].starActive) { anyStarActive = true; break; }
-  }
-  if (!anyStarActive) return;
-
-  for (let i = 0; i < allKarts.length; i++) {
-    const kartA = allKarts[i];
-    if (!kartA.starActive) continue;
-
-    for (let j = 0; j < allKarts.length; j++) {
-      if (i === j) continue;
-      const kartB = allKarts[j];
-
-      const dx = kartA.position.x - kartB.position.x;
-      const dz = kartA.position.z - kartB.position.z;
-      const distSq = dx * dx + dz * dz;
-
-      if (distSq < 16) { // 4 unit radius
-        applyItemHit(kartB, 'starKnock');
-      }
-    }
-  }
+  // Star per spec is off-road immunity + speed boost, NOT a contact weapon.
+  // No kart-to-kart collision effect from star. (Kept as no-op for caller compat.)
 }
 
 function removeProjectile(index) {
@@ -518,22 +506,21 @@ function removeProjectile(index) {
  * Apply item hit effect to a kart.
  */
 export function applyItemHit(kart, itemType) {
-  // Skip if invincible (but not from star itself being active)
-  if (kart.invincibleTimer > 0 && itemType !== 'starKnock') return;
+  // Skip if invincible
+  if (kart.invincibleTimer > 0) return;
 
   // Shield blocks one hit
-  if (kart.shieldActive && itemType !== 'starKnock') {
+  if (kart.shieldActive) {
     kart.shieldActive = false;
     kart.shieldTimer = 0;
     removeShieldVisual(kart);
 
     // Shield pop particles
     emitHitParticles(kart, 0x33CCFF);
+    // Flag for audio (shield pop sound)
+    kart._shieldPopFrame = true;
     return;
   }
-
-  // Star kart is immune
-  if (kart.starActive) return;
 
   // Apply effect based on type
   switch (itemType) {
@@ -546,11 +533,14 @@ export function applyItemHit(kart, itemType) {
       break;
     case 'homingPigeon':
       kart.stunTimer = Math.min(1.0, 1.2);
-      break;
-    case 'starKnock':
-      kart.stunTimer = Math.min(0.5, 1.2);
+      // Spec: target bounces upward slightly (1.5 voxels)
+      kart.verticalVelocity = 8;
+      kart.onGround = false;
       break;
   }
+
+  // Flag for audio (player hit sound)
+  kart._itemHitFrame = true;
 
   // Emit hit particles (white burst)
   emitHitParticles(kart, 0xFFFFFF);

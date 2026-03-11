@@ -265,6 +265,28 @@ export function playKartBump() {
   playTone('sine', 300, 0.08, 0.25);
 }
 
+export function playItemHit() {
+  if (!ctx) return;
+  // Descending tone + noise = impact feel
+  const t = ctx.currentTime;
+  const osc = createOsc('square', 600);
+  osc.frequency.setValueAtTime(600, t);
+  osc.frequency.linearRampToValueAtTime(150, t + 0.25);
+  const g = createEnvelopedGain(t, 0.25, t + 0.01, t + 0.25);
+  osc.connect(g);
+  g.connect(sfxGain);
+  osc.start(t);
+  osc.stop(t + 0.25);
+  playNoiseBurst(0.12, 'lowpass', 600, 200, 0.2);
+}
+
+export function playShieldPop() {
+  if (!ctx) return;
+  // Quick bright pop: rising tone + noise burst
+  playTone('sine', 1200, 0.08, 0.2);
+  playNoiseBurst(0.1, 'highpass', 5000, 5000, 0.25);
+}
+
 // ─── Countdown SFX ──────────────────────────────────────────────────────────
 
 export function playCountdownBeep() {

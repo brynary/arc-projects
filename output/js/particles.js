@@ -180,3 +180,28 @@ export function emitDust(kart, count = 2) {
     spawnParticle(rx, ry, rz, vx, vy, vz, 0xBB9966, 0.4, 0.3);
   }
 }
+
+/**
+ * Emit golden star trail behind kart.
+ * Bright golden/yellow particles that scatter from the kart when star is active.
+ */
+export function emitStarTrail(kart, count = 3) {
+  const sinH = Math.sin(kart.rotation);
+  const cosH = Math.cos(kart.rotation);
+
+  for (let i = 0; i < count; i++) {
+    // Scatter from sides and rear of kart
+    const side = (Math.random() - 0.5) * 4;
+    const rx = kart.position.x - sinH * 2 + cosH * side;
+    const ry = kart.position.y + 0.8 + Math.random() * 1.5;
+    const rz = kart.position.z - cosH * 2 - sinH * side;
+
+    const vx = (Math.random() - 0.5) * 5;
+    const vy = Math.random() * 4 + 1;
+    const vz = (Math.random() - 0.5) * 5;
+
+    // Gold/yellow color variation
+    const color = Math.random() > 0.4 ? 0xFFDD00 : 0xFFAA00;
+    spawnParticle(rx, ry, rz, vx, vy, vz, color, 0.55, 0.4);
+  }
+}

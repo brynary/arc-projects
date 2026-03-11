@@ -10,7 +10,7 @@ import { updateDrift, getDriftSparkColor, getDriftProgress, applyBoost } from '.
 import { updateCamera, resetCamera, cameraState, setCameraTrackData } from './camera.js';
 import { buildTrack, findNearestSplinePoint } from './track.js';
 import { characters } from './characters.js';
-import { initParticles, updateParticles, emitDriftSparks, emitBoostFlame, emitDust } from './particles.js';
+import { initParticles, updateParticles, emitDriftSparks, emitBoostFlame, emitDust, emitStarTrail } from './particles.js';
 import { initItemBoxes, updateItemBoxes, checkItemPickups, useItem, updateProjectiles, clearItems } from './items.js';
 import { initAI, updateAI, getAIInput, setDifficulty } from './ai.js';
 import { initRace, updateRace, raceState, formatTime, getRaceResults } from './race.js';
@@ -43,7 +43,7 @@ let accumulator = 0, lastTime = 0;
 let selectedTrackIdx = 0, selectedCharIdx = 0;
 let currentDifficulty = 'standard', mirrorMode = false, allowClones = false;
 let pausedFrom = '';
-let sparkT = 0, boostT = 0, dustT = 0;
+let sparkT = 0, boostT = 0, dustT = 0, starT = 0;
 let prevPlayerLap = 0;
 let raceEpoch = 0;         // incremented on every race start / quit — guards stale setTimeouts
 let autoFinishTimer = 0;   // countdown after player finishes to auto-DNF remaining AI
@@ -270,6 +270,16 @@ function fixedUpdate(dt) {
       getAudio().then(a => a.playKartBump());
       playerKart._kartBumpFrame = false;
     }
+    // Item hit (player was struck by an item)
+    if (playerKart._itemHitFrame) {
+      getAudio().then(a => a.playItemHit());
+      playerKart._itemHitFrame = false;
+    }
+    // Shield pop (shield blocked a hit or expired)
+    if (playerKart._shieldPopFrame) {
+      getAudio().then(a => a.playShieldPop());
+      playerKart._shieldPopFrame = false;
+    }
   }
 }
 
@@ -298,8 +308,10 @@ function visualUpdate(dt) {
     if (k.isDrifting && k.driftTier > 0) { sparkT += dt; if (sparkT > 0.05) { sparkT = 0; const c = getDriftSparkColor(k); if (c) emitDriftSparks(k, c, 2); } }
     if (k.boostActive) { boostT += dt; if (boostT > 0.06) { boostT = 0; emitBoostFlame(k, 3); } }
     if (k.surfaceType === 'offroad' && Math.abs(k.speed) > 10) { dustT += dt; if (dustT > 0.15) { dustT = 0; emitDust(k, 1); } }
+    // Star golden trail: bright golden particles behind the kart
+    if (k.starActive) { starT += dt; if (starT > 0.04) { starT = 0; emitStarTrail(k); } }
   }
-  if (sparkT > 1) sparkT = 0; if (boostT > 1) boostT = 0; if (dustT > 1) dustT = 0;
+  if (sparkT > 1) sparkT = 0; if (boostT > 1) boostT = 0; if (dustT > 1) dustT = 0; if (starT > 1) starT = 0;
   updateMinimap();
 }
 
@@ -706,7 +718,7 @@ async function startRace() {
   accumulator = 0;
   raceEpoch++;
   autoFinishTimer = 0;
-  sparkT = 0; boostT = 0; dustT = 0;
+  sparkT = 0; boostT = 0; dustT = 0; starT = 0;
   prevPlayerLap = 0;
   // Reset start boost tracking on player
   if (playerKart) {
@@ -756,6 +768,6 @@ function quitToMenu() {
   hudEl.classList.remove('active');
   resultsEl?.classList.add('hidden');
   cameraState.mode = 'chase';
-  sparkT = 0; boostT = 0; dustT = 0;
+  sparkT = 0; boostT = 0; dustT = 0; starT = 0;
   showTitle();
 }
