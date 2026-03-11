@@ -14,9 +14,10 @@ export function updatePhysics(karts, trackData, dt) {
     if (kart.frozenTimer > 0) continue;
 
     // Compute nearest spline point ONCE per kart per frame
+    // Pass kartY to prevent snapping to wrong level on multi-level tracks
     if (trackData && trackData.centerCurve) {
       kart._cachedNearest = findNearestSplinePoint(
-        trackData.centerCurve, kart.position.x, kart.position.z, 50
+        trackData.centerCurve, kart.position.x, kart.position.z, 50, kart.position.y
       );
     }
 
@@ -78,9 +79,9 @@ function checkWallCollisions(kart, trackData) {
   if (!nearest) return;
   const sectorIdx = Math.floor(nearest.t * trackData.sectors.length);
 
-  // Check current sector ± 1
+  // Check current sector ± 2 (wider to catch walls at sector boundaries)
   const sectorsToCheck = [];
-  for (let s = sectorIdx - 1; s <= sectorIdx + 1; s++) {
+  for (let s = sectorIdx - 2; s <= sectorIdx + 2; s++) {
     const idx = ((s % trackData.sectors.length) + trackData.sectors.length) % trackData.sectors.length;
     sectorsToCheck.push(trackData.sectors[idx]);
   }

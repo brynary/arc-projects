@@ -443,9 +443,17 @@ function buildAISplines(trackDef) {
 
 /**
  * Find the nearest point on the center spline to a given XZ position.
+ * When kartY is supplied (non-null), Y distance is factored in to prevent
+ * snapping to wrong track levels on multi-level tracks (e.g. Volcano Peak).
  * Returns { t, point, distance, tangent }
  */
-export function findNearestSplinePoint(centerCurve, x, z, numTestPoints = 100) {
+export function findNearestSplinePoint(centerCurve, x, z, numTestPoints = 100, kartY = null) {
+  // Y weight: penalise large Y differences when kart Y is known.
+  // This prevents a kart at Y=60 from snapping to a spline segment at Y=0
+  // that happens to be nearby in XZ (switchbacks, spirals, overlapping paths).
+  const useY = kartY !== null && kartY !== undefined;
+  const yWeight = 0.5; // tune: how much Y matters vs XZ
+
   let bestT = 0;
   let bestDist = Infinity;
 
@@ -454,14 +462,18 @@ export function findNearestSplinePoint(centerCurve, x, z, numTestPoints = 100) {
     const pt = centerCurve.getPointAt(t);
     const dx = pt.x - x;
     const dz = pt.z - z;
-    const dist = dx * dx + dz * dz;
+    let dist = dx * dx + dz * dz;
+    if (useY) {
+      const dy = pt.y - kartY;
+      dist += dy * dy * yWeight;
+    }
     if (dist < bestDist) {
       bestDist = dist;
       bestT = t;
     }
   }
 
-  // Refine with binary-style search
+  // Refine with ternary search
   const step = 1 / numTestPoints;
   let lo = bestT - step;
   let hi = bestT + step;
@@ -470,8 +482,12 @@ export function findNearestSplinePoint(centerCurve, x, z, numTestPoints = 100) {
     const mid2 = hi - (hi - lo) / 3;
     const p1 = centerCurve.getPointAt(Math.max(0, Math.min(1, mid1)));
     const p2 = centerCurve.getPointAt(Math.max(0, Math.min(1, mid2)));
-    const d1 = (p1.x - x) ** 2 + (p1.z - z) ** 2;
-    const d2 = (p2.x - x) ** 2 + (p2.z - z) ** 2;
+    let d1 = (p1.x - x) ** 2 + (p1.z - z) ** 2;
+    let d2 = (p2.x - x) ** 2 + (p2.z - z) ** 2;
+    if (useY) {
+      d1 += (p1.y - kartY) ** 2 * yWeight;
+      d2 += (p2.y - kartY) ** 2 * yWeight;
+    }
     if (d1 < d2) hi = mid2; else lo = mid1;
   }
 
@@ -508,8 +524,8 @@ export function getRoadInfoAt(trackData, t) {
 /**
  * Check if a position is on the road surface.
  */
-export function isOnRoad(trackData, x, z) {
-  const nearest = findNearestSplinePoint(trackData.centerCurve, x, z);
+export function isOnRoad(trackData, x, z, y = null) {
+  const nearest = findNearestSplinePoint(trackData.centerCurve, x, z, 100, y);
 
   // Get width at this spline point
   const idx = nearest.t * (trackData.samples.length - 1);
@@ -524,7 +540,7 @@ export function isOnRoad(trackData, x, z) {
 /**
  * Get the road surface Y height at a given XZ position.
  */
-export function getRoadY(trackData, x, z) {
-  const nearest = findNearestSplinePoint(trackData.centerCurve, x, z);
+export function getRoadY(trackData, x, z, y = null) {
+  const nearest = findNearestSplinePoint(trackData.centerCurve, x, z, 100, y);
   return nearest.point.y;
 }

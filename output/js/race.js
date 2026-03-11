@@ -149,23 +149,36 @@ function updateCheckpoints(kart, trackData) {
   const checkWidth = cp.width || 28;
   if (dist < checkWidth * 0.6) {
     const forward = cp.forward || { x: 0, z: 1 };
-    const dot = dx * forward.x + dz * forward.z;
 
-    if (Math.abs(dot) < 15) {
-      kart.lastCheckpoint = nextCP;
-      kart.lastCheckpointPos.set(cp.position.x, cp.position.y || 0, cp.position.z);
-      if (cp.forward) {
-        kart.lastCheckpointRot = Math.atan2(cp.forward.x, cp.forward.z);
-      }
+    // Position-based gate: kart must be within the checkpoint's width band
+    const posDot = dx * forward.x + dz * forward.z;
+    if (Math.abs(posDot) > 15) return null;
 
-      // Lap completion
-      if (nextCP === 0 && kart.currentLap >= 0) {
-        const lapTime = raceState.raceTime - (kart.lapTimes.length > 0 ?
-          kart.lapTimes.reduce((a, b) => a + b, 0) : 0);
-        kart.lapTimes.push(lapTime);
-        kart.currentLap++;
-        return 'lap';
-      }
+    // Direction validation: kart's travel direction must roughly agree with
+    // checkpoint's forward vector (dot > 0 means same general direction).
+    // This prevents triggering checkpoints while driving in reverse.
+    const kartDirX = Math.sin(kart.rotation);
+    const kartDirZ = Math.cos(kart.rotation);
+    const dirDot = kartDirX * forward.x + kartDirZ * forward.z;
+
+    // Allow a wide cone: dirDot > -0.2 (roughly ±100° from forward)
+    // Negative speed inverts the effective direction
+    const effectiveDirDot = kart.speed >= 0 ? dirDot : -dirDot;
+    if (effectiveDirDot < -0.2) return null;
+
+    kart.lastCheckpoint = nextCP;
+    kart.lastCheckpointPos.set(cp.position.x, cp.position.y || 0, cp.position.z);
+    if (cp.forward) {
+      kart.lastCheckpointRot = Math.atan2(cp.forward.x, cp.forward.z);
+    }
+
+    // Lap completion
+    if (nextCP === 0 && kart.currentLap >= 0) {
+      const lapTime = raceState.raceTime - (kart.lapTimes.length > 0 ?
+        kart.lapTimes.reduce((a, b) => a + b, 0) : 0);
+      kart.lapTimes.push(lapTime);
+      kart.currentLap++;
+      return 'lap';
     }
   }
 
@@ -187,7 +200,7 @@ function updatePositions(allKarts, trackData) {
       if (kart._cachedNearest) {
         fraction = kart._cachedNearest.t;
       } else {
-        const nearest = findNearestSplinePoint(trackData.centerCurve, kart.position.x, kart.position.z, 50);
+        const nearest = findNearestSplinePoint(trackData.centerCurve, kart.position.x, kart.position.z, 50, kart.position.y);
         fraction = nearest.t;
       }
     }

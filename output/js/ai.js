@@ -237,12 +237,13 @@ const _nullInput = {
 function updateSteering(kart, trackData) {
   const ai = kart.ai;
 
-  // 1. Find where we are on the center curve
+  // 1. Find where we are on the center curve (Y-aware for multi-level tracks)
   const nearest = findNearestSplinePoint(
     trackData.centerCurve,
     kart.position.x,
     kart.position.z,
     80,
+    kart.position.y,
   );
   ai.targetT = nearest.t;
 
