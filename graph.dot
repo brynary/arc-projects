@@ -1,0 +1,305 @@
+digraph FabroRacer {
+    graph [
+        goal="Build Fabro Racer — a 3D voxel kart racer using Three.js with \
+4 tracks, 8 characters, items, drifting, and CPU opponents. Output is static \
+HTML + JS files (no Node.js, no React, no build step) served directly from disk.",
+        rankdir=LR,
+        default_max_retry=3,
+        retry_target="implement_core",
+        fallback_retry_target="plan_fanout",
+        model_stylesheet="
+            *         { llm_model: claude-opus-4-6;  llm_provider: anthropic; }
+            .gpt      { llm_model: gpt-5.4;         llm_provider: openai;    }
+            .review-b { llm_model: gpt-5.4;         llm_provider: openai;    }
+        "
+    ]
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare,  label="Exit"]
+
+    // =========================================================================
+    // Phase 1: Spec Expansion
+    // =========================================================================
+
+    subgraph cluster_spec {
+        label="Spec Expansion"
+
+        expand_spec [
+            label="Expand Spec",
+            reasoning_effort="high",
+            prompt="@prompts/expand-spec.md"
+        ]
+
+        review_spec [
+            label="Review Spec",
+            prompt="Read .workflow/spec.md critically. Check for:\n\
+- Completeness: all 4 tracks, 8 characters, 6 items, drift system, \
+AI behavior, HUD, and audio are specified\n\
+- Internal consistency: no contradictions in physics/timing values\n\
+- Testability: every requirement can be verified by playing the game\n\
+- Missing edge cases: what happens at track boundaries, item collisions, \
+race finish ties\n\n\
+Write specific improvements to .workflow/spec-review.md.\n\
+Then apply the improvements by updating .workflow/spec.md directly."
+        ]
+    }
+
+    // =========================================================================
+    // Phase 2: Planning Fanout (cross-model debate)
+    // =========================================================================
+
+    subgraph cluster_planning {
+        label="Planning"
+
+        plan_fanout [shape=component, label="Plan Fan-Out"]
+
+        plan_opus [
+            label="Plan (Opus)",
+            reasoning_effort="high",
+            prompt="@prompts/plan.md"
+        ]
+
+        plan_gpt [
+            label="Plan (GPT)",
+            class="gpt",
+            prompt="@prompts/plan.md"
+        ]
+
+        debate [
+            label="Debate & Consolidate",
+            reasoning_effort="high",
+            prompt="Synthesize two implementation plans into a single best-of-breed \
+final plan.\n\n\
+Read branch outputs via parallel_results.json. If missing, fall back to \
+.workflow/plan_opus.md and .workflow/plan_gpt.md.\n\n\
+If .workflow/postmortem_latest.md exists, read it FIRST and adjust the plan \
+to address every issue identified.\n\n\
+Read .workflow/spec.md for context. Resolve conflicts between plans. Pick \
+the most detailed approach for each module. Ensure dependency order is correct.\n\n\
+The final plan must produce a work queue of bounded implementation phases:\n\
+1. Project scaffold + Three.js scene\n\
+2. Track geometry + rendering\n\
+3. Kart physics + driving model\n\
+4. Drift/boost system\n\
+5. Items + pickups\n\
+6. AI opponents\n\
+7. HUD + menus + audio\n\
+8. Polish + textures (imagegen)\n\n\
+Write to .workflow/plan_final.md."
+        ]
+    }
+
+    // =========================================================================
+    // Phase 3: Implementation (phased, not monolithic)
+    // =========================================================================
+
+    subgraph cluster_implement {
+        label="Implement"
+
+        implement_core [
+            label="Core Engine",
+            class="gpt",
+            thread_id="impl",
+            fidelity="full",
+            prompt="@prompts/implement-core.md"
+        ]
+
+        verify_core [
+            label="Verify Core",
+            thread_id="impl",
+            prompt="Read .workflow/spec.md and review the implementation so far.\n\n\
+Verify:\n\
+1. output/index.html exists and is valid HTML\n\
+2. Three.js scene renders (use Playwright to open index.html, screenshot, \
+confirm not blank)\n\
+3. At least one track loads with visible geometry\n\
+4. Kart is visible and responds to keyboard input\n\n\
+Start a static file server: npx serve output -p 4567 &\n\
+Use Playwright to open http://localhost:4567/, take a screenshot, verify rendering.\n\
+Kill the server when done.\n\
+Write results to .workflow/verify-core.md.\n\n\
+If any check fails, include:\n\
+{\"context_updates\": {\"core_ok\": \"false\"}}\n\
+If all pass:\n\
+{\"context_updates\": {\"core_ok\": \"true\"}}"
+        ]
+
+        gate_core [shape=diamond, label="Core OK?"]
+
+        implement_gameplay [
+            label="Gameplay Systems",
+            class="gpt",
+            thread_id="impl",
+            fidelity="full",
+            prompt="@prompts/implement-gameplay.md"
+        ]
+
+        verify_gameplay [
+            label="Verify Gameplay",
+            thread_id="impl",
+            prompt="Read .workflow/spec.md and review the gameplay implementation.\n\n\
+Verify:\n\
+1. output/index.html loads without JS errors (check browser console)\n\
+2. Drift-boost system works (hold drift key, release for boost)\n\
+3. Items can be collected and used\n\
+4. AI karts race and navigate the track\n\
+5. Lap counting works correctly\n\
+6. Race finishes after 3 laps with results\n\n\
+Start server: npx serve output -p 4567 &\n\
+Use Playwright to start a race, take screenshots at key moments.\n\
+Kill the server when done.\n\
+Write results to .workflow/verify-gameplay.md.\n\n\
+If any check fails, include:\n\
+{\"context_updates\": {\"gameplay_ok\": \"false\"}}\n\
+If all pass:\n\
+{\"context_updates\": {\"gameplay_ok\": \"true\"}}"
+        ]
+
+        gate_gameplay [shape=diamond, label="Gameplay OK?"]
+
+        implement_polish [
+            label="Polish & Assets",
+            class="gpt",
+            thread_id="impl",
+            fidelity="full",
+            prompt="@prompts/implement-polish.md"
+        ]
+    }
+
+    // =========================================================================
+    // Phase 4: Verify Chain
+    // =========================================================================
+
+    subgraph cluster_verify {
+        label="Verify"
+
+        verify_build [
+            shape=parallelogram,
+            label="File Check",
+            max_retries=0,
+            script="test -f output/index.html && echo 'index.html exists' \
+&& grep -q 'three' output/index.html output/js/*.js 2>/dev/null \
+&& echo 'Three.js references found' \
+&& echo 'OK'"
+        ]
+        gate_build [shape=diamond, label="Build OK?"]
+
+        verify_playtest [
+            label="Playtest",
+            class="gpt",
+            prompt="@prompts/playtest.md"
+        ]
+        gate_playtest [shape=diamond, label="Playtest OK?"]
+    }
+
+    // =========================================================================
+    // Phase 5: Review Fanout (cross-model)
+    // =========================================================================
+
+    subgraph cluster_review {
+        label="Review"
+
+        review_fanout [shape=component, label="Review Fan-Out"]
+
+        review_opus [
+            label="Review (Opus)",
+            prompt="@prompts/review.md"
+        ]
+
+        review_gpt [
+            label="Review (GPT)",
+            class="review-b",
+            prompt="@prompts/review.md"
+        ]
+
+        review_consensus [
+            label="Review Consensus",
+            goal_gate=true,
+            retry_target="postmortem",
+            prompt="Synthesize the two reviews into a consensus verdict.\n\n\
+Read branch outputs via parallel_results.json. If missing, fall back to \
+.workflow/review_opus.md and .workflow/review_gpt.md.\n\n\
+Read .workflow/spec.md for acceptance criteria.\n\n\
+Consensus rules:\n\
+- Both APPROVED: pass\n\
+- Any critical gap from either reviewer: rejected with specifics\n\
+- Mixed verdicts: rejected with gaps enumerated\n\n\
+Write to .workflow/review_consensus.md.\n\n\
+If approved: {\"preferred_next_label\": \"approved\"}\n\
+If rejected: {\"preferred_next_label\": \"rejected\"}"
+        ]
+    }
+
+    // =========================================================================
+    // Phase 6: Postmortem
+    // =========================================================================
+
+    postmortem [
+        label="Postmortem",
+        prompt="Analyze the failure and guide the next iteration.\n\n\
+Read (if they exist):\n\
+- .workflow/review_consensus.md\n\
+- .workflow/verify-core.md, .workflow/verify-gameplay.md\n\
+- .workflow/playtest-report.md\n\
+- Branch review outputs via parallel_results.json\n\n\
+Write to .workflow/postmortem_latest.md (overwrite):\n\
+- Root causes of failure\n\
+- What works and must be preserved\n\
+- What failed and must be fixed\n\
+- Concrete next changes (specific files, specific fixes)\n\
+- Do NOT direct from-scratch restart\n\n\
+Respond with:\n\
+{\"preferred_next_label\": \"replan\"}"
+    ]
+
+    // =========================================================================
+    // Edges
+    // =========================================================================
+
+    // Spec expansion
+    start -> expand_spec -> review_spec -> plan_fanout
+
+    // Planning fanout
+    plan_fanout -> plan_opus
+    plan_fanout -> plan_gpt
+    plan_opus -> debate
+    plan_gpt -> debate
+
+    // Implementation phases
+    debate -> implement_core -> verify_core -> gate_core
+
+    gate_core -> implement_gameplay [condition="context.core_ok=true"]
+    gate_core -> implement_core     [condition="context.core_ok=false", label="Fix"]
+    gate_core -> implement_core
+
+    implement_gameplay -> verify_gameplay -> gate_gameplay
+
+    gate_gameplay -> implement_polish [condition="context.gameplay_ok=true"]
+    gate_gameplay -> implement_gameplay [condition="context.gameplay_ok=false", label="Fix"]
+    gate_gameplay -> implement_gameplay
+
+    // Verify chain
+    implement_polish -> verify_build -> gate_build
+
+    gate_build -> verify_playtest [condition="outcome=success"]
+    gate_build -> implement_polish [condition="outcome=fail", label="Fix Build"]
+    gate_build -> implement_polish
+
+    verify_playtest -> gate_playtest
+
+    gate_playtest -> review_fanout [condition="context.playtest_pass=true"]
+    gate_playtest -> implement_gameplay [condition="context.playtest_pass=false", label="Fix"]
+    gate_playtest -> implement_gameplay
+
+    // Review fanout
+    review_fanout -> review_opus
+    review_fanout -> review_gpt
+    review_opus -> review_consensus
+    review_gpt -> review_consensus
+
+    review_consensus -> exit       [label="Approved", condition="preferred_label=approved"]
+    review_consensus -> postmortem [label="Rejected"]
+
+    // Postmortem recovery
+    postmortem -> plan_fanout [label="Replan"]
+}
