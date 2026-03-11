@@ -1,0 +1,1856 @@
+diff --git a/.workflow/implementation-polish.md b/.workflow/implementation-polish.md
+new file mode 100644
+index 0000000..790b264
+--- /dev/null
++++ b/.workflow/implementation-polish.md
+@@ -0,0 +1,98 @@
++# Implementation Log — UI, Audio & Polish (Phases 7–8)
++
++## Status: ✅ Complete
++
++## Phase 7: Menus & HUD
++
++### Menu System (integrated into `output/js/main.js`)
++- [x] **Title Screen** — "FABRO RACER" with gradient text, "Press ENTER to Start" pulsing prompt
++- [x] **Track Selection** — 4 track cards (Sunset Bay ★, Mossy Canyon ★★, Neon Grid ★★★, Volcano Peak ★★★★) with click selection and Next button
++- [x] **Character Selection** — 8 character cards with color swatches, stat pip bars (Speed/Accel/Handling/Weight out of 5), click selection
++- [x] **Difficulty Selection** — Chill 😌 / Standard 🏁 / Mean 😈 buttons, mirror mode toggle, allow clones toggle, Start Race button
++- [x] **Dynamic track loading** — `import()` loads selected track module on demand
++- [x] **CPU character selection** — respects Allow Clones toggle (unique vs random duplicates)
++
++### In-Race HUD
++- [x] **Position indicator** — 1st-8th with ordinal suffix, color-coded (gold/silver/bronze/white)
++- [x] **Lap counter** — "Lap 1/3", "Lap 2/3", "Lap 3/3"
++- [x] **Race timer** — M:SS.s format, monospace font
++- [x] **Lap split display** — shows split time on lap completion, fades after 3s
++- [x] **FINAL LAP banner** — "🏁 FINAL LAP 🏁" slide-in animation on lap 3
++- [x] **Item slot** — 68×68px box with emoji icons for each item type, "[E] use" hint
++- [x] **Boost/drift bar** — fills during drift (color changes per tier: blue→orange→pink), depletes during boost
++- [x] **Minimap** — 130×130px canvas in bottom-left, draws track outline + colored dots for all 8 racers, player dot larger with gold border, updates at 30Hz
++- [x] **Countdown overlay** — large centered numbers (3, 2, 1, GO!) with scale pop animation
++
++### Pause Menu
++- [x] **ESC toggles pause** during COUNTDOWN/RACING states
++- [x] Semi-transparent dark overlay with panel
++- [x] **Resume** — returns to previous game state
++- [x] **Restart Race** — re-initializes with same settings
++- [x] **Quit to Menu** — cleans up scene, returns to title screen
++- [x] **Volume sliders** — SFX and Music (0-100 range sliders)
++
++### Results Screen
++- [x] Standings table with position, character name, finish time (M:SS.sss)
++- [x] Player row highlighted, positions color-coded
++- [x] "Race Again" and "Main Menu" buttons
++
++### CSS (`output/css/style.css`)
++- [x] Complete rewrite with ~220 lines of styling
++- [x] HUD positioning, animations, transitions
++- [x] Menu panel, card, stat-bar, difficulty-button, toggle styles
++- [x] Pause overlay, results panel, volume slider styles
++- [x] Countdown pop animation, final lap slide-in
++
++## Phase 8: Audio & Visual Polish
++
++### Audio System (`output/js/audio.js` — 543 lines)
++- [x] **Web Audio API** — AudioContext with master/sfx/music gain branches
++- [x] **Engine sound** — Persistent sawtooth oscillator, frequency varies with speed (80-200Hz), gain with throttle
++- [x] **Drift sounds** — Start screech (noise burst 0.15s), tier-up chimes (sine sweeps per tier)
++- [x] **Boost fire** — Descending bandpass noise burst 0.3s
++- [x] **Item sounds** — Pickup chime (C5-E5-G5 arpeggio), 6 item-specific use sounds
++- [x] **Collision** — Wall hit thud (lowpass noise), kart bump (sine 300Hz)
++- [x] **Race events** — Countdown beeps (440Hz), GO (880Hz), lap complete fanfare, final lap jingle, race finish extended fanfare
++- [x] **Menu sounds** — Navigate click, confirm tone
++- [x] **Music system** — Step sequencer with 4 per-track loops:
++  - Sunset Bay: Major key, square+triangle, tropical
++  - Mossy Canyon: Minor key, sine pads, ambient
++  - Neon Grid: Sawtooth arpeggios, driving beat
++  - Volcano Peak: Heavy bass, intense minor
++- [x] **Tempo control** — `setMusicTempo(1.15)` for final lap speed-up
++- [x] **Volume control** — Separate SFX/Music volume (0-100), connected to pause menu sliders
++
++### Visual Polish
++- [x] Particles for all karts (drift sparks, boost flames, dust)
++- [x] Item pickup particle burst (10 golden particles)
++- [x] Item hit particle burst (20 white particles)
++- [x] Shield visual bubble (translucent sphere)
++- [x] Per-track sky gradients and fog
++- [x] Per-track ground textures (15+ textures via imagegen)
++- [x] Voxel scenery props (palm trees, pine trees, boulders, mushrooms, neon skyscrapers, stone huts, lava lanterns, market stalls)
++
++### Additional Texture
++- [x] `output/textures/menu-bg.png` — Menu background texture via imagegen
++
++## Verification Results
++| Test | Result |
++|------|--------|
++| Page loads without JS errors | ✅ |
++| Title screen shows "FABRO RACER" | ✅ |
++| Track selection (4 tracks with difficulty ratings) | ✅ |
++| Character selection (8 chars with stat bars) | ✅ |
++| Difficulty selection with mirror/clones toggles | ✅ |
++| Race starts after menu flow | ✅ |
++| HUD active with all elements | ✅ (position, lap, timer, item, minimap, boost bar, countdown) |
++| Minimap renders track and kart dots | ✅ |
++| Race timer runs during gameplay | ✅ |
++| AI karts race (position changes observed) | ✅ |
++| Pause menu (ESC) with Resume/Restart/Quit | ✅ |
++| Volume sliders in pause menu | ✅ |
++| Quit to menu returns to title | ✅ |
++
++## File Summary
++- 1 HTML file, 1 CSS file (220 lines), 17 JS modules, 18 texture PNGs
++- 5,891 total lines of JavaScript
++- Complete game flow: Title → Track Select → Character Select → Difficulty → Race → Results
++- Purely static — no npm, no build step, no Node.js runtime needed
+diff --git a/output/css/style.css b/output/css/style.css
+index d90141d..9056bad 100644
+--- a/output/css/style.css
++++ b/output/css/style.css
+@@ -1,37 +1,259 @@
+-* {
+-  margin: 0;
+-  padding: 0;
+-  box-sizing: border-box;
+-}
++* { margin: 0; padding: 0; box-sizing: border-box; }
+ 
+ body {
+   overflow: hidden;
+   background: #000;
+   font-family: 'Segoe UI', Arial, sans-serif;
+   color: #fff;
++  user-select: none;
+ }
+ 
+ #game-canvas {
+-  position: fixed;
+-  inset: 0;
+-  width: 100%;
+-  height: 100%;
+-  z-index: 0;
+-  display: block;
++  position: fixed; inset: 0;
++  width: 100%; height: 100%;
++  z-index: 0; display: block;
+ }
+ 
++/* ── HUD Overlay ─────────────────────────────────────────── */
+ #hud-overlay {
+-  position: fixed;
+-  inset: 0;
++  position: fixed; inset: 0;
++  pointer-events: none; z-index: 10;
++  display: none;
++}
++#hud-overlay.active { display: block; }
++
++.hud-position {
++  position: absolute; top: 18px; left: 22px;
++  font-size: 56px; font-weight: 900;
++  text-shadow: 2px 3px 6px rgba(0,0,0,0.8);
++  line-height: 1; transition: transform 0.2s;
++}
++.hud-position.pulse { transform: scale(1.25); }
++.hud-position .sub { font-size: 22px; color: #aaa; font-weight: 400; }
++
++.hud-lap {
++  position: absolute; top: 18px; right: 22px;
++  font-size: 26px; font-weight: 700;
++  text-shadow: 1px 2px 3px rgba(0,0,0,0.7);
++  text-align: right;
++}
++
++.hud-timer {
++  position: absolute; top: 50px; right: 22px;
++  font-size: 22px; font-family: 'Courier New', monospace;
++  text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
++  text-align: right;
++}
++.hud-split {
++  font-size: 14px; color: #aaa; margin-top: 2px;
++  transition: opacity 0.5s;
++}
++
++.hud-item {
++  position: absolute; bottom: 28px; right: 28px;
++  width: 68px; height: 68px;
++  border: 2px solid rgba(255,255,255,0.45);
++  border-radius: 10px;
++  display: flex; align-items: center; justify-content: center;
++  font-size: 30px;
++  background: rgba(0,0,0,0.45);
++}
++.hud-item-hint {
++  position: absolute; bottom: 10px; right: 36px;
++  font-size: 11px; color: rgba(255,255,255,0.4);
++}
++
++.hud-boost-bar {
++  position: absolute; bottom: 100px; right: 30px;
++  width: 64px; height: 6px;
++  background: rgba(0,0,0,0.3); border-radius: 3px;
++  overflow: hidden;
++}
++.hud-boost-fill {
++  height: 100%; width: 0%;
++  border-radius: 3px; transition: background 0.15s;
++}
++
++.hud-minimap {
++  position: absolute; bottom: 20px; left: 20px;
++  width: 130px; height: 130px;
++  background: rgba(0,0,0,0.45); border-radius: 8px;
++  overflow: hidden;
++}
++.hud-minimap canvas { width: 100%; height: 100%; }
++
++.hud-countdown {
++  position: absolute; top: 50%; left: 50%;
++  transform: translate(-50%,-50%) scale(1);
++  font-size: 100px; font-weight: 900;
++  text-shadow: 3px 4px 8px rgba(0,0,0,0.8);
++  transition: transform 0.25s ease-out, opacity 0.25s;
++  opacity: 0; pointer-events: none;
++}
++.hud-countdown.show { opacity: 1; transform: translate(-50%,-50%) scale(1); }
++.hud-countdown.pop  { transform: translate(-50%,-50%) scale(1.5); }
++
++.hud-final-lap {
++  position: absolute; top: 80px; left: 50%;
++  transform: translateX(-50%) translateY(-60px);
++  font-size: 32px; font-weight: 900;
++  color: #FFD700; text-shadow: 2px 2px 6px #000;
++  opacity: 0; transition: all 0.4s ease-out;
+   pointer-events: none;
+-  z-index: 10;
++}
++.hud-final-lap.show {
++  opacity: 1; transform: translateX(-50%) translateY(0);
+ }
+ 
++/* ── Menu Overlay ────────────────────────────────────────── */
+ #menu-overlay {
+-  position: fixed;
+-  inset: 0;
+-  z-index: 20;
+-  display: flex;
+-  align-items: center;
+-  justify-content: center;
++  position: fixed; inset: 0; z-index: 20;
++  display: flex; align-items: center; justify-content: center;
++  background: rgba(0,0,0,0.7);
++}
++#menu-overlay.hidden { display: none; }
++
++.menu-title {
++  font-size: 72px; font-weight: 900;
++  text-align: center;
++  text-shadow: 4px 4px 0 #222, 0 0 30px rgba(255,180,0,0.4);
++  letter-spacing: 4px;
++  background: linear-gradient(180deg, #FFD700 0%, #FF6600 100%);
++  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
++  background-clip: text;
++  margin-bottom: 20px;
++}
++.menu-subtitle {
++  text-align: center; font-size: 20px; color: #aaa;
++  animation: pulse 1.8s ease-in-out infinite;
++  margin-bottom: 30px;
++}
++@keyframes pulse {
++  0%,100%{ opacity:.5; } 50%{ opacity:1; }
++}
++
++.menu-panel {
++  background: rgba(10,10,20,0.92);
++  border: 1px solid rgba(255,255,255,0.1);
++  border-radius: 16px; padding: 30px 40px;
++  max-width: 700px; width: 90%;
++  max-height: 85vh; overflow-y: auto;
++}
++
++/* Track / Character cards */
++.card-row {
++  display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
++  margin: 16px 0;
++}
++.card {
++  background: rgba(255,255,255,0.06);
++  border: 2px solid rgba(255,255,255,0.15);
++  border-radius: 10px; padding: 14px 16px;
++  cursor: pointer; transition: all 0.15s;
++  text-align: center; min-width: 120px;
++}
++.card:hover, .card.selected {
++  border-color: #FFD700; background: rgba(255,200,0,0.12);
++  transform: scale(1.05);
++}
++.card .card-name { font-weight: 700; font-size: 16px; margin-bottom: 6px; }
++.card .card-detail { font-size: 12px; color: #aaa; }
++
++.stat-bar { display: flex; gap: 2px; justify-content: center; margin: 3px 0; }
++.stat-pip {
++  width: 10px; height: 10px; border-radius: 2px;
++  background: rgba(255,255,255,0.15);
++}
++.stat-pip.filled { background: #FFD700; }
++
++.card .color-swatch {
++  width: 20px; height: 20px; border-radius: 50%;
++  display: inline-block; margin-bottom: 4px;
++  border: 1px solid rgba(255,255,255,0.3);
++}
++
++/* Difficulty */
++.diff-row { display: flex; gap: 12px; justify-content: center; margin: 16px 0; }
++.diff-btn {
++  padding: 12px 24px; border-radius: 8px; font-size: 18px; font-weight: 700;
++  background: rgba(255,255,255,0.08);
++  border: 2px solid rgba(255,255,255,0.15);
++  color: #fff; cursor: pointer; transition: all 0.15s;
++}
++.diff-btn:hover, .diff-btn.selected {
++  border-color: #FFD700; background: rgba(255,200,0,0.15);
++}
++
++.toggle-row {
++  display: flex; gap: 20px; justify-content: center; margin: 12px 0;
++  font-size: 14px; color: #aaa;
++}
++.toggle-row label { cursor: pointer; display: flex; align-items: center; gap: 6px; }
++.toggle-row input[type="checkbox"] { accent-color: #FFD700; width: 16px; height: 16px; }
++
++.menu-btn {
++  display: block; margin: 16px auto 0;
++  padding: 14px 40px; font-size: 20px; font-weight: 700;
++  border: none; border-radius: 10px; cursor: pointer;
++  background: linear-gradient(135deg, #FFD700, #FF8800);
++  color: #222; transition: transform 0.15s;
++}
++.menu-btn:hover { transform: scale(1.06); }
++
++.menu-section-title {
++  font-size: 18px; font-weight: 700; text-align: center;
++  margin: 18px 0 8px; color: #FFD700;
++}
++
++/* Pause overlay */
++.pause-overlay {
++  position: fixed; inset: 0; z-index: 25;
++  background: rgba(0,0,0,0.7);
++  display: flex; align-items: center; justify-content: center;
++}
++.pause-overlay.hidden { display: none; }
++.pause-panel {
++  background: rgba(10,10,20,0.95);
++  border: 1px solid rgba(255,255,255,0.12);
++  border-radius: 14px; padding: 30px 50px;
++  text-align: center;
++}
++.pause-panel h2 { font-size: 32px; margin-bottom: 20px; }
++.pause-btn {
++  display: block; width: 200px; margin: 10px auto;
++  padding: 12px; font-size: 18px; font-weight: 600;
++  border: 2px solid rgba(255,255,255,0.2); border-radius: 8px;
++  background: rgba(255,255,255,0.06); color: #fff;
++  cursor: pointer; transition: all 0.12s;
++}
++.pause-btn:hover, .pause-btn.focused {
++  border-color: #FFD700; background: rgba(255,200,0,0.12);
++}
++
++/* Results */
++.results-panel {
++  position: fixed; top: 50%; left: 50%;
++  transform: translate(-50%,-50%);
++  background: rgba(10,10,20,0.94);
++  border: 1px solid rgba(255,255,255,0.12);
++  border-radius: 16px; padding: 30px 50px;
++  min-width: 440px; z-index: 22;
++}
++.results-panel.hidden { display: none; }
++.results-panel h2 { text-align: center; font-size: 28px; margin-bottom: 16px; }
++.results-table { width: 100%; border-collapse: collapse; font-size: 17px; }
++.results-table th { padding: 8px; text-align: left; border-bottom: 1px solid #444; }
++.results-table td { padding: 6px 8px; border-bottom: 1px solid #222; }
++.results-table .player-row { background: rgba(255,255,255,0.08); }
++.results-table .pos-gold { color: #FFD700; }
++.results-table .pos-silver { color: #C0C0C0; }
++.results-table .pos-bronze { color: #CD7F32; }
++
++/* Volume sliders */
++.vol-row {
++  display: flex; align-items: center; gap: 10px;
++  margin: 8px 0; font-size: 14px; color: #ccc;
++}
++.vol-row input[type="range"] {
++  flex: 1; accent-color: #FFD700; height: 6px;
+ }
+diff --git a/output/js/audio.js b/output/js/audio.js
+new file mode 100644
+index 0000000..63f5820
+--- /dev/null
++++ b/output/js/audio.js
+@@ -0,0 +1,543 @@
++// js/audio.js — Web Audio API: procedural SFX, per-track music loops, volume control
++
++let ctx = null;
++let masterGain = null;
++let sfxGain = null;
++let musicGain = null;
++let noiseBuffer = null;
++
++// Engine state (persistent oscillator)
++let engineOsc = null;
++let engineGainNode = null;
++let engineRunning = false;
++
++// Music state
++let musicPlaying = false;
++let musicTrack = null;
++let musicTimerId = null;
++let musicNodes = [];
++let musicTempo = 1.0;
++
++// Default volumes
++let sfxVol = 0.8;
++let musicVol = 0.6;
++
++// ─── Setup ───────────────────────────────────────────────────────────────────
++
++export function initAudio() {
++  if (ctx) return;
++  ctx = new (window.AudioContext || window.webkitAudioContext)();
++
++  masterGain = ctx.createGain();
++  masterGain.gain.value = 1.0;
++  masterGain.connect(ctx.destination);
++
++  sfxGain = ctx.createGain();
++  sfxGain.gain.value = sfxVol;
++  sfxGain.connect(masterGain);
++
++  musicGain = ctx.createGain();
++  musicGain.gain.value = musicVol;
++  musicGain.connect(masterGain);
++
++  // Pre-generate 1s white noise buffer
++  const sampleRate = ctx.sampleRate;
++  noiseBuffer = ctx.createBuffer(1, sampleRate, sampleRate);
++  const data = noiseBuffer.getChannelData(0);
++  for (let i = 0; i < sampleRate; i++) {
++    data[i] = Math.random() * 2 - 1;
++  }
++}
++
++// ─── Utility helpers ─────────────────────────────────────────────────────────
++
++function createNoiseSource(duration) {
++  const src = ctx.createBufferSource();
++  src.buffer = noiseBuffer;
++  src.loop = false;
++  return src;
++}
++
++function createOsc(type, freq) {
++  const osc = ctx.createOscillator();
++  osc.type = type;
++  osc.frequency.value = freq;
++  return osc;
++}
++
++function createEnvelopedGain(startTime, peakVal, attackEnd, decayEnd) {
++  const g = ctx.createGain();
++  g.gain.setValueAtTime(0.0001, startTime);
++  g.gain.linearRampToValueAtTime(peakVal, attackEnd);
++  g.gain.linearRampToValueAtTime(0.0001, decayEnd);
++  return g;
++}
++
++function playTone(type, freq, duration, volume = 0.3, startDelay = 0) {
++  if (!ctx) return;
++  const t = ctx.currentTime + startDelay;
++  const osc = createOsc(type, freq);
++  const g = createEnvelopedGain(t, volume, t + 0.005, t + duration);
++  osc.connect(g);
++  g.connect(sfxGain);
++  osc.start(t);
++  osc.stop(t + duration);
++}
++
++function playNoiseBurst(duration, filterType, filterFreq, filterFreqEnd, volume = 0.3, startDelay = 0) {
++  if (!ctx) return;
++  const t = ctx.currentTime + startDelay;
++  const src = createNoiseSource(duration);
++  const filter = ctx.createBiquadFilter();
++  filter.type = filterType;
++  filter.frequency.setValueAtTime(filterFreq, t);
++  if (filterFreqEnd !== undefined && filterFreqEnd !== filterFreq) {
++    filter.frequency.linearRampToValueAtTime(filterFreqEnd, t + duration);
++  }
++  filter.Q.value = 1.0;
++  const g = createEnvelopedGain(t, volume, t + 0.005, t + duration);
++  src.connect(filter);
++  filter.connect(g);
++  g.connect(sfxGain);
++  src.start(t);
++  src.stop(t + duration + 0.01);
++}
++
++// ─── Engine Sound ────────────────────────────────────────────────────────────
++
++export function playEngine(speed, topSpeed, throttle) {
++  if (!ctx) return;
++
++  const freq = 80 + (speed / topSpeed) * 120;
++  const gain = 0.12 * throttle;
++
++  if (!engineRunning) {
++    engineOsc = createOsc('sawtooth', freq);
++    engineGainNode = ctx.createGain();
++    engineGainNode.gain.value = gain;
++    engineOsc.connect(engineGainNode);
++    engineGainNode.connect(sfxGain);
++    engineOsc.start(ctx.currentTime);
++    engineRunning = true;
++  } else {
++    engineOsc.frequency.setTargetAtTime(freq, ctx.currentTime, 0.03);
++    engineGainNode.gain.setTargetAtTime(gain, ctx.currentTime, 0.03);
++  }
++}
++
++export function stopEngine() {
++  if (!ctx || !engineRunning) return;
++  engineOsc.stop(ctx.currentTime);
++  engineOsc.disconnect();
++  engineGainNode.disconnect();
++  engineOsc = null;
++  engineGainNode = null;
++  engineRunning = false;
++}
++
++// ─── Drift SFX ───────────────────────────────────────────────────────────────
++
++export function playDriftStart() {
++  if (!ctx) return;
++  playNoiseBurst(0.15, 'bandpass', 2000, 2000, 0.25);
++}
++
++export function playDriftTierUp(tier) {
++  if (!ctx) return;
++  const t = ctx.currentTime;
++  const endFreqs = { 1: 800, 2: 1200, 3: 1600 };
++  const endFreq = endFreqs[tier] || 800;
++  const osc = createOsc('sine', 400);
++  osc.frequency.setValueAtTime(400, t);
++  osc.frequency.linearRampToValueAtTime(endFreq, t + 0.1);
++  const g = createEnvelopedGain(t, 0.3, t + 0.005, t + 0.1);
++  osc.connect(g);
++  g.connect(sfxGain);
++  osc.start(t);
++  osc.stop(t + 0.1);
++}
++
++// ─── Boost SFX ───────────────────────────────────────────────────────────────
++
++export function playBoostFire() {
++  if (!ctx) return;
++  playNoiseBurst(0.3, 'bandpass', 3000, 500, 0.35);
++}
++
++// ─── Item SFX ────────────────────────────────────────────────────────────────
++
++export function playItemPickup() {
++  if (!ctx) return;
++  // C5=523.25, E5=659.25, G5=783.99
++  playTone('sine', 523.25, 0.05, 0.25, 0);
++  playTone('sine', 659.25, 0.05, 0.25, 0.05);
++  playTone('sine', 783.99, 0.05, 0.25, 0.07);
++}
++
++export function playItemUse(itemType) {
++  if (!ctx) return;
++  const t = ctx.currentTime;
++
++  switch (itemType) {
++    case 'fizzBomb': {
++      const osc = createOsc('sine', 800);
++      osc.frequency.setValueAtTime(800, t);
++      osc.frequency.linearRampToValueAtTime(200, t + 0.15);
++      const g = createEnvelopedGain(t, 0.3, t + 0.005, t + 0.15);
++      osc.connect(g);
++      g.connect(sfxGain);
++      osc.start(t);
++      osc.stop(t + 0.15);
++      break;
++    }
++    case 'oilSlick': {
++      playNoiseBurst(0.1, 'lowpass', 800, 800, 0.25);
++      break;
++    }
++    case 'shield': {
++      playNoiseBurst(0.2, 'highpass', 4000, 4000, 0.2);
++      break;
++    }
++    case 'turboPepper': {
++      // Noise crackle: rapid gated noise bursts
++      for (let i = 0; i < 6; i++) {
++        playNoiseBurst(0.04, 'bandpass', 1500 + i * 300, 1500 + i * 300, 0.3, i * 0.05);
++      }
++      break;
++    }
++    case 'homingPigeon': {
++      // Two alternating "coo" sines
++      playTone('sine', 600, 0.08, 0.2, 0);
++      playTone('sine', 500, 0.08, 0.2, 0.1);
++      break;
++    }
++    case 'star': {
++      // Arpeggiated high notes
++      const notes = [1046.5, 1318.5, 1568, 1046.5, 1318.5, 1568];
++      for (let i = 0; i < notes.length; i++) {
++        playTone('sine', notes[i], 0.04, 0.2, i * 0.05);
++      }
++      break;
++    }
++    default:
++      playTone('sine', 440, 0.1, 0.2);
++      break;
++  }
++}
++
++// ─── Collision SFX ───────────────────────────────────────────────────────────
++
++export function playWallHit() {
++  if (!ctx) return;
++  playNoiseBurst(0.1, 'lowpass', 400, 400, 0.35);
++}
++
++export function playKartBump() {
++  if (!ctx) return;
++  playTone('sine', 300, 0.08, 0.25);
++}
++
++// ─── Countdown SFX ──────────────────────────────────────────────────────────
++
++export function playCountdownBeep() {
++  if (!ctx) return;
++  playTone('sine', 440, 0.15, 0.3);
++}
++
++export function playCountdownGo() {
++  if (!ctx) return;
++  playTone('sine', 880, 0.3, 0.35);
++}
++
++// ─── Race Progress SFX ──────────────────────────────────────────────────────
++
++export function playLapComplete() {
++  if (!ctx) return;
++  // C4=261.63, E4=329.63, G4=392
++  playTone('sine', 261.63, 0.1, 0.25, 0);
++  playTone('sine', 329.63, 0.1, 0.25, 0.1);
++  playTone('sine', 392.00, 0.15, 0.25, 0.2);
++}
++
++export function playFinalLap() {
++  if (!ctx) return;
++  // Five-note ascending scale C4-D4-E4-G4-C5
++  const notes = [261.63, 293.66, 329.63, 392.00, 523.25];
++  for (let i = 0; i < notes.length; i++) {
++    playTone('sine', notes[i], 0.1, 0.3, i * 0.1);
++  }
++}
++
++export function playRaceFinish() {
++  if (!ctx) return;
++  // Extended fanfare ~1s: C4-E4-G4-C5 (long) with harmony
++  const melody = [
++    { freq: 261.63, start: 0, dur: 0.12 },
++    { freq: 329.63, start: 0.12, dur: 0.12 },
++    { freq: 392.00, start: 0.24, dur: 0.12 },
++    { freq: 523.25, start: 0.36, dur: 0.3 },
++    { freq: 659.25, start: 0.66, dur: 0.34 },
++  ];
++  for (const n of melody) {
++    playTone('square', n.freq, n.dur, 0.15, n.start);
++    // Harmony a fifth above for richness
++    playTone('triangle', n.freq * 1.5, n.dur, 0.1, n.start);
++  }
++}
++
++// ─── Menu SFX ────────────────────────────────────────────────────────────────
++
++export function playMenuNav() {
++  if (!ctx) return;
++  playNoiseBurst(0.02, 'highpass', 3000, 3000, 0.15);
++}
++
++export function playMenuConfirm() {
++  if (!ctx) return;
++  playTone('sine', 200, 0.05, 0.25);
++}
++
++// ─── Volume Control ──────────────────────────────────────────────────────────
++
++export function setSFXVolume(v) {
++  sfxVol = Math.max(0, Math.min(1, v / 100));
++  if (sfxGain) sfxGain.gain.setTargetAtTime(sfxVol, ctx.currentTime, 0.02);
++}
++
++export function setMusicVolume(v) {
++  musicVol = Math.max(0, Math.min(1, v / 100));
++  if (musicGain) musicGain.gain.setTargetAtTime(musicVol, ctx.currentTime, 0.02);
++}
++
++// ─── Music System ────────────────────────────────────────────────────────────
++
++// Note frequencies
++const NOTE = {
++  C3: 130.81, D3: 146.83, E3: 164.81, F3: 174.61, G3: 196.00, A3: 220.00, B3: 246.94,
++  C4: 261.63, D4: 293.66, E4: 329.63, F4: 349.23, G4: 392.00, A4: 440.00, B4: 493.88,
++  C5: 523.25, D5: 587.33, E5: 659.25, F5: 698.46, G5: 783.99, A5: 880.00, B5: 987.77,
++  Bb3: 233.08, Eb4: 311.13, Ab3: 207.65, Bb4: 466.16, Eb5: 622.25,
++  R: 0, // rest
++};
++
++// Track definitions: each has lead melody, bass line, wave types
++const TRACKS = {
++  'Sunset Bay': {
++    bpm: 120,
++    leadWave: 'square',
++    bassWave: 'triangle',
++    leadVol: 0.12,
++    bassVol: 0.10,
++    // 8 bars × 4 beats = 32 beat slots; each entry is [note, beats]
++    lead: [
++      [NOTE.C5, 1], [NOTE.E5, 1], [NOTE.G5, 1], [NOTE.E5, 1],
++      [NOTE.C5, 1], [NOTE.G4, 1], [NOTE.E4, 2],
++      [NOTE.D5, 1], [NOTE.E5, 1], [NOTE.G5, 1], [NOTE.C5, 1],
++      [NOTE.E5, 2], [NOTE.C5, 2],
++      [NOTE.G5, 1], [NOTE.E5, 1], [NOTE.C5, 1], [NOTE.G4, 1],
++      [NOTE.C5, 1], [NOTE.E5, 1], [NOTE.G5, 2],
++      [NOTE.E5, 1], [NOTE.D5, 1], [NOTE.C5, 2],
++      [NOTE.R, 0.5], [NOTE.C5, 0.5], [NOTE.E5, 1], [NOTE.G5, 1],
++    ],
++    bass: [
++      [NOTE.C3, 2], [NOTE.G3, 2],
++      [NOTE.C3, 2], [NOTE.E3, 2],
++      [NOTE.F3, 2], [NOTE.G3, 2],
++      [NOTE.C3, 4],
++      [NOTE.C3, 2], [NOTE.G3, 2],
++      [NOTE.A3, 2], [NOTE.E3, 2],
++      [NOTE.F3, 2], [NOTE.G3, 2],
++      [NOTE.C3, 4],
++    ],
++  },
++  'Mossy Canyon': {
++    bpm: 100,
++    leadWave: 'sine',
++    bassWave: 'triangle',
++    leadVol: 0.10,
++    bassVol: 0.10,
++    lead: [
++      [NOTE.A4, 2], [NOTE.C5, 2],
++      [NOTE.E5, 2], [NOTE.C5, 2],
++      [NOTE.A4, 2], [NOTE.E4, 2],
++      [NOTE.A4, 4],
++      [NOTE.C5, 2], [NOTE.E5, 2],
++      [NOTE.A4, 2], [NOTE.G4, 2],
++      [NOTE.E4, 2], [NOTE.A4, 2],
++      [NOTE.R, 2], [NOTE.A4, 2],
++    ],
++    bass: [
++      [NOTE.A3, 4], [NOTE.C3, 4],
++      [NOTE.E3, 4], [NOTE.A3, 4],
++      [NOTE.A3, 4], [NOTE.G3, 4],
++      [NOTE.E3, 4], [NOTE.A3, 4],
++    ],
++  },
++  'Neon Grid': {
++    bpm: 140,
++    leadWave: 'sawtooth',
++    bassWave: 'square',
++    leadVol: 0.08,
++    bassVol: 0.08,
++    lead: [
++      [NOTE.C5, 0.5], [NOTE.E5, 0.5], [NOTE.G5, 0.5], [NOTE.C5, 0.5],
++      [NOTE.E5, 0.5], [NOTE.G5, 0.5], [NOTE.C5, 0.5], [NOTE.E5, 0.5],
++      [NOTE.D5, 0.5], [NOTE.F5, 0.5], [NOTE.A5, 0.5], [NOTE.D5, 0.5],
++      [NOTE.F5, 0.5], [NOTE.A5, 0.5], [NOTE.D5, 0.5], [NOTE.F5, 0.5],
++      [NOTE.E5, 0.5], [NOTE.G5, 0.5], [NOTE.B5, 0.5], [NOTE.E5, 0.5],
++      [NOTE.G5, 0.5], [NOTE.B5, 0.5], [NOTE.E5, 0.5], [NOTE.G5, 0.5],
++      [NOTE.C5, 0.5], [NOTE.E5, 0.5], [NOTE.G5, 0.5], [NOTE.B4, 0.5],
++      [NOTE.C5, 0.5], [NOTE.D5, 0.5], [NOTE.E5, 0.5], [NOTE.G5, 0.5],
++      [NOTE.C5, 0.5], [NOTE.E5, 0.5], [NOTE.G5, 0.5], [NOTE.C5, 0.5],
++      [NOTE.E5, 0.5], [NOTE.G5, 0.5], [NOTE.C5, 0.5], [NOTE.E5, 0.5],
++      [NOTE.A4, 0.5], [NOTE.C5, 0.5], [NOTE.E5, 0.5], [NOTE.A4, 0.5],
++      [NOTE.C5, 0.5], [NOTE.E5, 0.5], [NOTE.A4, 0.5], [NOTE.C5, 0.5],
++      [NOTE.F4, 0.5], [NOTE.A4, 0.5], [NOTE.C5, 0.5], [NOTE.F4, 0.5],
++      [NOTE.G4, 0.5], [NOTE.B4, 0.5], [NOTE.D5, 0.5], [NOTE.G4, 0.5],
++      [NOTE.C5, 1], [NOTE.E5, 1], [NOTE.G5, 1], [NOTE.C5, 1],
++    ],
++    bass: [
++      [NOTE.C3, 2], [NOTE.C3, 2],
++      [NOTE.D3, 2], [NOTE.D3, 2],
++      [NOTE.E3, 2], [NOTE.E3, 2],
++      [NOTE.C3, 2], [NOTE.G3, 2],
++      [NOTE.C3, 2], [NOTE.C3, 2],
++      [NOTE.A3, 2], [NOTE.A3, 2],
++      [NOTE.F3, 2], [NOTE.G3, 2],
++      [NOTE.C3, 4],
++    ],
++  },
++  'Volcano Peak': {
++    bpm: 130,
++    leadWave: 'sawtooth',
++    bassWave: 'square',
++    leadVol: 0.10,
++    bassVol: 0.12,
++    lead: [
++      [NOTE.A4, 1], [NOTE.C5, 1], [NOTE.A4, 1], [NOTE.E4, 1],
++      [NOTE.A4, 1], [NOTE.Bb4, 1], [NOTE.A4, 2],
++      [NOTE.E5, 1], [NOTE.C5, 1], [NOTE.A4, 1], [NOTE.E4, 1],
++      [NOTE.A4, 1], [NOTE.G4, 1], [NOTE.E4, 2],
++      [NOTE.A4, 1], [NOTE.C5, 1], [NOTE.E5, 1], [NOTE.C5, 1],
++      [NOTE.Bb4, 1], [NOTE.A4, 1], [NOTE.G4, 2],
++      [NOTE.A4, 1], [NOTE.E5, 1], [NOTE.C5, 1], [NOTE.A4, 1],
++      [NOTE.E4, 2], [NOTE.A4, 2],
++    ],
++    bass: [
++      [NOTE.A3, 2], [NOTE.A3, 2],
++      [NOTE.E3, 2], [NOTE.A3, 2],
++      [NOTE.A3, 2], [NOTE.C3, 2],
++      [NOTE.E3, 2], [NOTE.A3, 2],
++      [NOTE.A3, 2], [NOTE.A3, 2],
++      [NOTE.Bb3, 2], [NOTE.A3, 2],
++      [NOTE.E3, 2], [NOTE.G3, 2],
++      [NOTE.A3, 4],
++    ],
++  },
++};
++
++function scheduleLoop(trackName, startTime) {
++  const track = TRACKS[trackName];
++  if (!track || !musicPlaying) return;
++
++  const beatDur = (60 / track.bpm) / musicTempo;
++
++  // Schedule lead melody
++  let leadTime = startTime;
++  for (const [freq, beats] of track.lead) {
++    const dur = beats * beatDur;
++    if (freq > 0) {
++      const osc = createOsc(track.leadWave, freq);
++      const g = ctx.createGain();
++      g.gain.setValueAtTime(0.0001, leadTime);
++      g.gain.linearRampToValueAtTime(track.leadVol, leadTime + 0.01);
++      g.gain.setValueAtTime(track.leadVol, leadTime + dur - 0.02);
++      g.gain.linearRampToValueAtTime(0.0001, leadTime + dur);
++      osc.connect(g);
++      g.connect(musicGain);
++      osc.start(leadTime);
++      osc.stop(leadTime + dur);
++      musicNodes.push(osc);
++    }
++    leadTime += dur;
++  }
++
++  // Schedule bass line
++  let bassTime = startTime;
++  for (const [freq, beats] of track.bass) {
++    const dur = beats * beatDur;
++    if (freq > 0) {
++      const osc = createOsc(track.bassWave, freq);
++      const g = ctx.createGain();
++      g.gain.setValueAtTime(0.0001, bassTime);
++      g.gain.linearRampToValueAtTime(track.bassVol, bassTime + 0.01);
++      g.gain.setValueAtTime(track.bassVol, bassTime + dur - 0.02);
++      g.gain.linearRampToValueAtTime(0.0001, bassTime + dur);
++      osc.connect(g);
++      g.connect(musicGain);
++      osc.start(bassTime);
++      osc.stop(bassTime + dur);
++      musicNodes.push(osc);
++    }
++    bassTime += dur;
++  }
++
++  // Total loop duration: 8 bars × 4 beats
++  const loopDuration = 32 * beatDur;
++  const nextStart = startTime + loopDuration;
++  const msUntilNext = (nextStart - ctx.currentTime - 0.1) * 1000;
++
++  musicTimerId = setTimeout(() => {
++    // Clean up old nodes
++    musicNodes = musicNodes.filter(n => {
++      try { n.disconnect(); } catch (_) {}
++      return false;
++    });
++    if (musicPlaying) {
++      scheduleLoop(trackName, nextStart);
++    }
++  }, Math.max(0, msUntilNext));
++}
++
++export function startMusic(trackName) {
++  if (!ctx) return;
++  stopMusic();
++
++  // Normalize track name to find a match
++  const key = Object.keys(TRACKS).find(
++    k => k.toLowerCase().replace(/\s/g, '') === trackName.toLowerCase().replace(/\s/g, '')
++  ) || Object.keys(TRACKS)[0];
++
++  musicPlaying = true;
++  musicTrack = key;
++  musicTempo = 1.0;
++  scheduleLoop(key, ctx.currentTime + 0.05);
++}
++
++export function stopMusic() {
++  if (!ctx) return;
++  musicPlaying = false;
++  musicTrack = null;
++  if (musicTimerId !== null) {
++    clearTimeout(musicTimerId);
++    musicTimerId = null;
++  }
++  for (const node of musicNodes) {
++    try { node.stop(0); } catch (_) {}
++    try { node.disconnect(); } catch (_) {}
++  }
++  musicNodes = [];
++}
++
++export function setMusicTempo(multiplier) {
++  musicTempo = multiplier;
++  // If music is currently playing, restart with new tempo
++  if (musicPlaying && musicTrack) {
++    const track = musicTrack;
++    stopMusic();
++    musicPlaying = true;
++    musicTrack = track;
++    musicTempo = multiplier;
++    scheduleLoop(track, ctx.currentTime + 0.05);
++  }
++}
+diff --git a/output/js/main.js b/output/js/main.js
+index f3251d5..f7142be 100644
+--- a/output/js/main.js
++++ b/output/js/main.js
+@@ -1,4 +1,4 @@
+-// js/main.js — Entry point: game loop, state machine, initialization
++// js/main.js — Entry point: full game flow with menus, HUD, audio, pause
+ 
+ import * as THREE from 'three';
+ import { renderer, scene, camera, ambientLight, directionalLight, setFog } from './scene.js';
+@@ -6,163 +6,75 @@ import { input } from './input.js';
+ import { FIXED_DT } from './utils.js';
+ import { createKart, updateKart, placeKart } from './kart.js';
+ import { updatePhysics } from './physics.js';
+-import { updateDrift, getDriftSparkColor } from './drift.js';
++import { updateDrift, getDriftSparkColor, getDriftProgress } from './drift.js';
+ import { updateCamera, resetCamera, cameraState } from './camera.js';
+ import { buildTrack, findNearestSplinePoint } from './track.js';
+-import { characters, getCharacterById } from './characters.js';
++import { characters } from './characters.js';
+ import { initParticles, updateParticles, emitDriftSparks, emitBoostFlame, emitDust } from './particles.js';
+ import { initItemBoxes, updateItemBoxes, checkItemPickups, useItem, updateProjectiles, clearItems } from './items.js';
+ import { initAI, updateAI, getAIInput, setDifficulty } from './ai.js';
+ import { initRace, updateRace, raceState, formatTime, getRaceResults } from './race.js';
+ 
+-// Game state
+-let gameState = 'LOADING';
+-let trackData = null;
+-let playerKart = null;
+-let allKarts = [];
+-let accumulator = 0;
+-let lastTime = 0;
+-
+-// Particle emission timers
+-let sparkTimer = 0;
+-let boostFlameTimer = 0;
+-let dustTimer = 0;
+-
+-// HUD elements
+-let hudEl = null;
+-let positionEl = null;
+-let lapEl = null;
+-let timerEl = null;
+-let itemEl = null;
+-let countdownEl = null;
+-let resultsEl = null;
+-
+-// Difficulty
+-let currentDifficulty = 'standard';
+-
+-async function init() {
+-  console.log('Fabro Racer — Initializing...');
+-
+-  // Setup HUD
+-  setupHUD();
+-
+-  // Initialize particle system
+-  initParticles(scene);
+-
+-  // Load default track (Sunset Bay)
+-  const trackModule = await import('./tracks/sunsetBay.js');
+-  const trackDef = trackModule.trackDefinition;
+-
+-  trackData = buildTrack(trackDef, scene);
+-
+-  // Set environment
+-  if (trackDef.environment) {
+-    const env = trackDef.environment;
+-    setFog(env.fogColor, env.fogNear, env.fogFar);
+-    ambientLight.color.setHex(env.ambientColor || 0xffffff);
+-    ambientLight.intensity = env.ambientIntensity || 0.4;
+-    directionalLight.color.setHex(env.sunColor || 0xffffff);
+-    directionalLight.intensity = env.sunIntensity || 0.8;
+-    if (env.sunDirection) {
+-      directionalLight.position.set(
+-        env.sunDirection.x * 80,
+-        env.sunDirection.y * 80,
+-        env.sunDirection.z * 80
+-      );
+-    }
+-  }
+-
+-  // Initialize item boxes
+-  initItemBoxes(trackData, scene);
+-
+-  // Compute starting rotation from spline tangent at first start position
+-  let startRot = 0;
+-  if (trackData.startPositions.length > 0) {
+-    const sp = trackData.startPositions[0];
+-    const nearest = findNearestSplinePoint(trackData.centerCurve, sp.x, sp.z, 100);
+-    startRot = Math.atan2(nearest.tangent.x, nearest.tangent.z);
+-  }
+-
+-  // Create player kart (position 0)
+-  const playerChar = characters[0]; // Bolt
+-  playerKart = createKart(playerChar, true, 0);
+-  if (trackData.startPositions.length > 0) {
+-    placeKart(playerKart, trackData.startPositions[0], startRot);
+-  } else {
+-    placeKart(playerKart, { x: 0, y: 1, z: 0 }, 0);
+-  }
+-  scene.add(playerKart.mesh);
+-  allKarts.push(playerKart);
+-
+-  // Create 7 CPU karts
+-  const cpuChars = characters.filter(c => c.id !== playerChar.id);
+-  // Shuffle CPU characters
+-  for (let i = cpuChars.length - 1; i > 0; i--) {
+-    const j = Math.floor(Math.random() * (i + 1));
+-    [cpuChars[i], cpuChars[j]] = [cpuChars[j], cpuChars[i]];
+-  }
+-
+-  for (let i = 0; i < 7; i++) {
+-    const char = cpuChars[i % cpuChars.length];
+-    const kart = createKart(char, false, i + 1);
+-
+-    if (trackData.startPositions.length > i + 1) {
+-      placeKart(kart, trackData.startPositions[i + 1], startRot);
+-    } else {
+-      placeKart(kart, { x: (i + 1) * 5, y: 1, z: -10 - i * 8 }, startRot);
+-    }
+-
+-    scene.add(kart.mesh);
+-    allKarts.push(kart);
+-
+-    // Initialize AI
+-    initAI(kart, trackData, currentDifficulty);
+-  }
+-
+-  // Initialize race
+-  setDifficulty(currentDifficulty);
+-  initRace(allKarts, trackData);
+-
+-  // Set game state
+-  gameState = 'COUNTDOWN';
+-  console.log('Game ready! Race starting...');
+-
+-  // Reset camera
+-  resetCamera(camera, playerKart);
+-
+-  // Start game loop
+-  lastTime = performance.now();
+-  requestAnimationFrame(gameLoop);
++/* ═══════════════════════  STATE  ═══════════════════════ */
++let gameState = 'TITLE';          // TITLE | TRACK_SELECT | CHAR_SELECT | DIFF_SELECT | COUNTDOWN | RACING | PAUSED | RACE_FINISH | RESULTS
++let trackData = null, trackDef = null;
++let playerKart = null, allKarts = [];
++let accumulator = 0, lastTime = 0;
++let selectedTrackIdx = 0, selectedCharIdx = 0;
++let currentDifficulty = 'standard', mirrorMode = false, allowClones = false;
++let pausedFrom = '';
++let sparkT = 0, boostT = 0, dustT = 0;
++let prevPlayerLap = 0;
++
++const TRACK_FILES = ['sunsetBay','mossyCanyon','neonGrid','volcanoPeak'];
++const TRACK_META = [
++  { name:'Sunset Bay',   diff:'★',     desc:'Tropical coastal oval' },
++  { name:'Mossy Canyon',  diff:'★★',    desc:'Winding forest canyon' },
++  { name:'Neon Grid',     diff:'★★★',   desc:'Angular cyber circuit' },
++  { name:'Volcano Peak',  diff:'★★★★',  desc:'Volcanic spiral ascent' },
++];
++
++const ITEM_ICONS = {
++  fizzBomb:'💣', oilSlick:'🟣', shield:'🛡️',
++  turboPepper:'🌶️', homingPigeon:'🐦', star:'⭐',
++};
++
++/* ═══════════════════════  DOM REFS  ═══════════════════════ */
++const menuEl   = document.getElementById('menu-overlay');
++const hudEl    = document.getElementById('hud-overlay');
++let pauseEl, resultsEl;
++
++/* audio module — lazily imported */
++let audio = null;
++async function getAudio() {
++  if (!audio) audio = await import('./audio.js');
++  return audio;
+ }
+ 
+-function setupHUD() {
+-  hudEl = document.getElementById('hud-overlay');
+-  hudEl.innerHTML = `
+-    <div id="hud-position" style="position:absolute;top:20px;left:20px;font-size:48px;font-weight:bold;text-shadow:2px 2px 4px #000;"></div>
+-    <div id="hud-lap" style="position:absolute;top:20px;right:20px;font-size:24px;text-shadow:1px 1px 2px #000;text-align:right;"></div>
+-    <div id="hud-timer" style="position:absolute;top:50px;right:20px;font-size:20px;text-shadow:1px 1px 2px #000;text-align:right;font-family:monospace;"></div>
+-    <div id="hud-item" style="position:absolute;bottom:30px;right:30px;width:64px;height:64px;border:2px solid rgba(255,255,255,0.5);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:28px;background:rgba(0,0,0,0.4);"></div>
+-    <div id="hud-item-hint" style="position:absolute;bottom:12px;right:40px;font-size:12px;color:rgba(255,255,255,0.5);">[E] use</div>
+-    <div id="hud-countdown" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:96px;font-weight:bold;text-shadow:3px 3px 6px #000;display:none;"></div>
+-    <div id="hud-results" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.85);padding:30px 50px;border-radius:16px;display:none;min-width:400px;"></div>
+-  `;
+-  positionEl = document.getElementById('hud-position');
+-  lapEl = document.getElementById('hud-lap');
+-  timerEl = document.getElementById('hud-timer');
+-  itemEl = document.getElementById('hud-item');
+-  countdownEl = document.getElementById('hud-countdown');
+-  resultsEl = document.getElementById('hud-results');
+-}
+-
+-function gameLoop(now) {
+-  requestAnimationFrame(gameLoop);
++/* ═══════════════════════  BOOT  ═══════════════════════ */
++(async function boot() {
++  initParticles(scene);
++  buildPauseOverlay();
++  buildResultsOverlay();
++  showTitle();
++  lastTime = performance.now();
++  requestAnimationFrame(loop);
++})();
+ 
++/* ═══════════════════════  GAME LOOP  ═══════════════════════ */
++function loop(now) {
++  requestAnimationFrame(loop);
+   const rawDt = (now - lastTime) / 1000;
+   lastTime = now;
+   const dt = Math.min(Math.max(rawDt, 0.001), 0.1);
+ 
++  /* pause check */
++  if (input.justPressed('pause')) {
++    if (gameState === 'RACING' || gameState === 'COUNTDOWN') { pauseGame(); }
++    else if (gameState === 'PAUSED') { resumeGame(); }
++  }
++
+   if (gameState === 'COUNTDOWN' || gameState === 'RACING' || gameState === 'RACE_FINISH') {
+-    // Fixed timestep physics
+     accumulator += dt;
+     let steps = 0;
+     while (accumulator >= FIXED_DT && steps < 3) {
+@@ -170,297 +82,474 @@ function gameLoop(now) {
+       accumulator -= FIXED_DT;
+       steps++;
+     }
+-
+-    // Visual updates at render rate
+     visualUpdate(dt);
+-
+-    // Update HUD
+-    updateHUD();
++    updateHUD(dt);
+   }
+ 
+-  // Render
+   renderer.render(scene, camera);
+-
+-  // Reset input edge detection
+   input.resetFrame();
+ }
+ 
++/* ═══════════════════════  FIXED UPDATE  ═══════════════════════ */
+ function fixedUpdate(dt) {
+-  // Update race state (countdown, lap tracking, positions)
+-  const raceEvents = updateRace(allKarts, trackData, dt);
++  const ev = updateRace(allKarts, trackData, dt);
+ 
+-  // Handle race events
+-  if (raceEvents.countdownTick > 0) {
+-    showCountdown(raceEvents.countdownTick);
+-  }
+-  if (raceEvents.countdownTick === 0 && raceEvents.raceStarted) {
+-    showCountdown(0); // "GO!"
++  if (ev.countdownTick > 0) showCountdownNum(ev.countdownTick);
++  if (ev.countdownTick === 0 && ev.raceStarted) {
++    showCountdownNum(0);
+     gameState = 'RACING';
+-    setTimeout(() => {
+-      if (countdownEl) countdownEl.style.display = 'none';
+-    }, 800);
++    getAudio().then(a => { a.playCountdownGo(); a.startMusic(trackDef.name); });
++    setTimeout(() => { const c = document.querySelector('.hud-countdown'); if(c) c.classList.remove('show'); }, 700);
+   }
+-  if (raceEvents.raceFinished && raceEvents.raceFinished.isPlayer) {
+-    gameState = 'RACE_FINISH';
+-    cameraState.mode = 'orbit';
+-    cameraState.orbitAngle = 0;
+-    cameraState.orbitTarget = playerKart.position;
+-    setTimeout(() => showResults(), 3000);
++  if (ev.countdownTick > 0) getAudio().then(a => a.playCountdownBeep());
++  if (ev.lapCompleted && ev.lapCompleted.kart === playerKart) {
++    getAudio().then(a => a.playLapComplete());
++    showLapSplit(ev.lapCompleted.lap);
++    if (ev.lapCompleted.lap === 2) {
++      showFinalLapBanner();
++      getAudio().then(a => { a.playFinalLap(); a.setMusicTempo(1.15); });
++    }
+   }
+-  // If all karts finished or player finished
+-  if (raceEvents.raceFinished && !raceEvents.raceFinished.isPlayer) {
+-    // CPU finished — keep racing
++  if (ev.raceFinished?.isPlayer) {
++    gameState = 'RACE_FINISH';
++    cameraState.mode = 'orbit'; cameraState.orbitAngle = 0; cameraState.orbitTarget = playerKart.position;
++    getAudio().then(a => { a.playRaceFinish(); a.stopEngine(); a.stopMusic(); });
++    setTimeout(showResults, 3000);
+   }
+ 
+-  if (raceState.status !== 'racing' && gameState === 'COUNTDOWN') {
+-    // During countdown, don't run game logic
+-    return;
+-  }
++  if (raceState.status !== 'racing' && gameState === 'COUNTDOWN') return;
+ 
+-  // Player input
++  /* player */
+   if (playerKart && !playerKart.finished) {
+     updateDrift(playerKart, input, dt);
+     updateKart(playerKart, input, dt);
+-
+-    // Player item use
+     if (input.justPressed('useItem') && playerKart.heldItem) {
++      const it = playerKart.heldItem;
+       useItem(playerKart, allKarts, trackData);
++      getAudio().then(a => a.playItemUse(it));
+     }
++    /* engine sound */
++    getAudio().then(a => a.playEngine(playerKart.speed, playerKart.topSpeed, input.isDown('accelerate') ? 1 : 0.3));
+   }
+ 
+-  // AI karts
+-  for (const kart of allKarts) {
+-    if (kart.isPlayer) continue;
+-    if (kart.finished) continue;
+-
+-    // Update AI decision-making
+-    updateAI(kart, trackData, allKarts, dt);
+-
+-    // Get AI virtual input
+-    const aiInput = getAIInput(kart);
+-
+-    // Run same drift and movement logic
+-    updateDrift(kart, aiInput, dt);
+-    updateKart(kart, aiInput, dt);
+-
+-    // AI item use
+-    if (aiInput.isDown('useItem') && kart.heldItem) {
+-      useItem(kart, allKarts, trackData);
+-    }
++  /* AI */
++  for (const k of allKarts) {
++    if (k.isPlayer || k.finished) continue;
++    updateAI(k, trackData, allKarts, dt);
++    const ai = getAIInput(k);
++    updateDrift(k, ai, dt);
++    updateKart(k, ai, dt);
++    if (ai.isDown('useItem') && k.heldItem) useItem(k, allKarts, trackData);
+   }
+ 
+-  // Physics (wall collisions, ground detection, kart-kart)
+   updatePhysics(allKarts, trackData, dt);
+-
+-  // Item system updates
+   updateItemBoxes(dt);
+   checkItemPickups(allKarts);
+   updateProjectiles(allKarts, dt);
++
++  /* check item pickup for player (for sound) */
++  if (playerKart && playerKart.heldItem && !playerKart._prevItem) {
++    getAudio().then(a => a.playItemPickup());
++  }
++  if (playerKart) playerKart._prevItem = playerKart.heldItem;
+ }
+ 
++/* ═══════════════════════  VISUAL UPDATE  ═══════════════════════ */
+ function visualUpdate(dt) {
+-  // Camera
+   updateCamera(camera, playerKart, input, dt);
+-
+-  // Particles
+   updateParticles(dt);
++  for (const k of allKarts) {
++    if (k.isDrifting && k.driftTier > 0) { sparkT += dt; if (sparkT > 0.05) { sparkT = 0; const c = getDriftSparkColor(k); if (c) emitDriftSparks(k, c, 2); } }
++    if (k.boostActive) { boostT += dt; if (boostT > 0.06) { boostT = 0; emitBoostFlame(k, 3); } }
++    if (k.surfaceType === 'offroad' && Math.abs(k.speed) > 10) { dustT += dt; if (dustT > 0.15) { dustT = 0; emitDust(k, 1); } }
++  }
++  if (sparkT > 1) sparkT = 0; if (boostT > 1) boostT = 0; if (dustT > 1) dustT = 0;
++  updateMinimap();
++}
+ 
+-  // Emit particles for ALL karts (player + AI)
+-  for (const kart of allKarts) {
+-    // Drift sparks
+-    if (kart.isDrifting && kart.driftTier > 0) {
+-      sparkTimer += dt;
+-      if (sparkTimer > 0.05) {
+-        sparkTimer = 0;
+-        const color = getDriftSparkColor(kart);
+-        if (color) emitDriftSparks(kart, color, 2);
+-      }
+-    }
+-
+-    // Boost flame
+-    if (kart.boostActive) {
+-      boostFlameTimer += dt;
+-      if (boostFlameTimer > 0.06) {
+-        boostFlameTimer = 0;
+-        emitBoostFlame(kart, 3);
+-      }
+-    }
++/* ═══════════════════════  HUD  ═══════════════════════ */
++function buildHUD() {
++  hudEl.innerHTML = `
++    <div class="hud-position" id="hp"></div>
++    <div class="hud-lap" id="hl"></div>
++    <div class="hud-timer" id="ht"><span id="ht-main"></span><div class="hud-split" id="ht-split"></div></div>
++    <div class="hud-item" id="hi">—</div>
++    <div class="hud-item-hint">[E] use</div>
++    <div class="hud-boost-bar"><div class="hud-boost-fill" id="hbf"></div></div>
++    <div class="hud-minimap"><canvas id="minimap-cv" width="130" height="130"></canvas></div>
++    <div class="hud-countdown" id="hcd"></div>
++    <div class="hud-final-lap" id="hfl">🏁 FINAL LAP 🏁</div>
++  `;
++  hudEl.classList.add('active');
++}
+ 
+-    // Dust when off-road
+-    if (kart.surfaceType === 'offroad' && Math.abs(kart.speed) > 10) {
+-      dustTimer += dt;
+-      if (dustTimer > 0.15) {
+-        dustTimer = 0;
+-        emitDust(kart, 1);
+-      }
+-    }
++function updateHUD() {
++  if (!playerKart) return;
++  const p = playerKart.racePosition;
++  const suf = p===1?'st':p===2?'nd':p===3?'rd':'th';
++  const pc = {1:'#FFD700',2:'#C0C0C0',3:'#CD7F32'};
++  const hp = document.getElementById('hp');
++  if (hp) { hp.innerHTML = `<span style="color:${pc[p]||'#fff'}">${p}${suf}</span><span class="sub"> /8</span>`; }
++
++  const hl = document.getElementById('hl');
++  if (hl) hl.textContent = `Lap ${Math.min(playerKart.currentLap+1,3)}/3`;
++
++  const htm = document.getElementById('ht-main');
++  if (htm) htm.textContent = raceState.status==='racing'||raceState.status==='finished' ? formatTime(raceState.raceTime,1) : '0:00.0';
++
++  const hi = document.getElementById('hi');
++  if (hi) hi.textContent = playerKart.heldItem ? (ITEM_ICONS[playerKart.heldItem]||'?') : '—';
++
++  /* boost bar */
++  const bf = document.getElementById('hbf');
++  if (bf) {
++    if (playerKart.isDrifting) {
++      const prog = getDriftProgress(playerKart);
++      bf.style.width = (prog * 100) + '%';
++      const tc = {0:'#666',1:'#4488FF',2:'#FF8800',3:'#FF44FF'};
++      bf.style.background = tc[playerKart.driftTier] || '#666';
++    } else if (playerKart.boostActive) {
++      bf.style.width = ((playerKart.boostTimer / playerKart.boostDuration) * 100) + '%';
++      bf.style.background = '#FF6600';
++    } else { bf.style.width = '0%'; }
+   }
++}
+ 
+-  // Reset emission timers periodically to avoid accumulation
+-  if (sparkTimer > 1) sparkTimer = 0;
+-  if (boostFlameTimer > 1) boostFlameTimer = 0;
+-  if (dustTimer > 1) dustTimer = 0;
++function showCountdownNum(n) {
++  const el = document.getElementById('hcd');
++  if (!el) return;
++  el.textContent = n > 0 ? n : 'GO!';
++  el.style.color = n > 0 ? '#fff' : '#0f0';
++  el.classList.remove('show','pop');
++  void el.offsetWidth;          // force reflow
++  el.classList.add('show','pop');
++  setTimeout(() => el.classList.remove('pop'), 60);
+ }
+ 
+-function showCountdown(num) {
+-  if (!countdownEl) return;
+-  countdownEl.style.display = 'block';
+-  if (num > 0) {
+-    countdownEl.textContent = num;
+-    countdownEl.style.color = '#FFF';
+-  } else {
+-    countdownEl.textContent = 'GO!';
+-    countdownEl.style.color = '#0F0';
+-  }
+-  // Animate
+-  countdownEl.style.transform = 'translate(-50%, -50%) scale(1.5)';
+-  countdownEl.style.transition = 'transform 0.3s ease-out, opacity 0.3s';
+-  countdownEl.style.opacity = '1';
+-  setTimeout(() => {
+-    countdownEl.style.transform = 'translate(-50%, -50%) scale(1)';
+-  }, 50);
++function showLapSplit(lap) {
++  const el = document.getElementById('ht-split');
++  if (!el || !playerKart.lapTimes.length) return;
++  const t = playerKart.lapTimes[playerKart.lapTimes.length - 1];
++  el.textContent = `Lap ${lap}: ${formatTime(t, 2)}`;
++  el.style.opacity = '1';
++  setTimeout(() => { el.style.opacity = '0'; }, 3000);
+ }
+ 
+-function updateHUD() {
+-  if (!playerKart) return;
++function showFinalLapBanner() {
++  const el = document.getElementById('hfl');
++  if (!el) return;
++  el.classList.add('show');
++  setTimeout(() => el.classList.remove('show'), 3000);
++}
+ 
+-  // Position
+-  const pos = playerKart.racePosition;
+-  const suffix = pos === 1 ? 'st' : pos === 2 ? 'nd' : pos === 3 ? 'rd' : 'th';
+-  const posColors = { 1: '#FFD700', 2: '#C0C0C0', 3: '#CD7F32' };
+-  positionEl.textContent = `${pos}${suffix}`;
+-  positionEl.style.color = posColors[pos] || '#FFF';
+-  positionEl.innerHTML += `<span style="font-size:20px;color:#AAA;"> /8</span>`;
+-
+-  // Lap
+-  const lap = Math.min(playerKart.currentLap + 1, 3);
+-  lapEl.textContent = `Lap ${lap}/3`;
+-
+-  // Timer
+-  if (raceState.status === 'racing' || raceState.status === 'finished') {
+-    timerEl.textContent = formatTime(raceState.raceTime, 1);
+-  } else {
+-    timerEl.textContent = '0:00.0';
++/* ═══════════════════════  MINIMAP  ═══════════════════════ */
++let minimapFrame = 0;
++function updateMinimap() {
++  minimapFrame++;
++  if (minimapFrame % 2 !== 0) return;  // 30 Hz
++  const cv = document.getElementById('minimap-cv');
++  if (!cv || !trackData?.centerCurve) return;
++  const ctx = cv.getContext('2d');
++  const W = 130, H = 130;
++  ctx.clearRect(0, 0, W, H);
++  ctx.fillStyle = 'rgba(0,0,0,0.25)';
++  ctx.fillRect(0, 0, W, H);
++
++  /* compute bounding box of track */
++  const pts = [];
++  for (let i = 0; i <= 60; i++) {
++    const p = trackData.centerCurve.getPointAt(i / 60);
++    pts.push(p);
+   }
+-
+-  // Item
+-  const itemIcons = {
+-    fizzBomb: '💣', oilSlick: '🟣', shield: '🛡️',
+-    turboPepper: '🌶️', homingPigeon: '🐦', star: '⭐',
+-  };
+-  if (playerKart.heldItem) {
+-    itemEl.textContent = itemIcons[playerKart.heldItem] || '?';
+-  } else {
+-    itemEl.textContent = '—';
++  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
++  for (const p of pts) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); }
++  const pad = 12;
++  const scaleX = (W - pad * 2) / (maxX - minX || 1);
++  const scaleZ = (H - pad * 2) / (maxZ - minZ || 1);
++  const sc = Math.min(scaleX, scaleZ);
++  const offX = (W - (maxX - minX) * sc) / 2;
++  const offZ = (H - (maxZ - minZ) * sc) / 2;
++  const tx = x => (x - minX) * sc + offX;
++  const tz = z => (z - minZ) * sc + offZ;
++
++  /* draw track */
++  ctx.strokeStyle = 'rgba(200,200,200,0.5)';
++  ctx.lineWidth = 3;
++  ctx.beginPath();
++  for (let i = 0; i <= 60; i++) {
++    const p = pts[i] || pts[0];
++    if (i === 0) ctx.moveTo(tx(p.x), tz(p.z));
++    else ctx.lineTo(tx(p.x), tz(p.z));
++  }
++  ctx.closePath(); ctx.stroke();
++
++  /* draw karts */
++  const charColors = {};
++  for (const c of characters) charColors[c.id] = '#' + c.color.toString(16).padStart(6, '0');
++
++  for (const k of allKarts) {
++    ctx.beginPath();
++    ctx.arc(tx(k.position.x), tz(k.position.z), k.isPlayer ? 4 : 2.5, 0, Math.PI * 2);
++    ctx.fillStyle = k.isPlayer ? '#fff' : (charColors[k.characterId] || '#888');
++    ctx.fill();
++    if (k.isPlayer) { ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 1.5; ctx.stroke(); }
+   }
+ }
+ 
++/* ═══════════════════════  PAUSE  ═══════════════════════ */
++function buildPauseOverlay() {
++  pauseEl = document.createElement('div');
++  pauseEl.className = 'pause-overlay hidden';
++  pauseEl.innerHTML = `<div class="pause-panel"><h2>⏸ PAUSED</h2>
++    <button class="pause-btn" data-act="resume">Resume</button>
++    <button class="pause-btn" data-act="restart">Restart Race</button>
++    <button class="pause-btn" data-act="quit">Quit to Menu</button>
++    <div style="margin-top:16px">
++      <div class="vol-row"><span>SFX</span><input type="range" min="0" max="100" value="80" id="vol-sfx"><span id="vol-sfx-v">80</span></div>
++      <div class="vol-row"><span>Music</span><input type="range" min="0" max="100" value="60" id="vol-mus"><span id="vol-mus-v">60</span></div>
++    </div>
++  </div>`;
++  document.body.appendChild(pauseEl);
++  pauseEl.addEventListener('click', e => {
++    const btn = e.target.closest('[data-act]');
++    if (!btn) return;
++    getAudio().then(a => a.playMenuConfirm());
++    if (btn.dataset.act === 'resume') resumeGame();
++    else if (btn.dataset.act === 'restart') { resumeGame(); restartRace(); }
++    else if (btn.dataset.act === 'quit') { resumeGame(); quitToMenu(); }
++  });
++  pauseEl.querySelector('#vol-sfx')?.addEventListener('input', e => {
++    const v = +e.target.value;
++    document.getElementById('vol-sfx-v').textContent = v;
++    getAudio().then(a => a.setSFXVolume(v));
++  });
++  pauseEl.querySelector('#vol-mus')?.addEventListener('input', e => {
++    const v = +e.target.value;
++    document.getElementById('vol-mus-v').textContent = v;
++    getAudio().then(a => a.setMusicVolume(v));
++  });
++}
++
++function pauseGame() {
++  pausedFrom = gameState;
++  gameState = 'PAUSED';
++  pauseEl.classList.remove('hidden');
++  getAudio().then(a => a.stopEngine());
++}
++function resumeGame() {
++  gameState = pausedFrom || 'RACING';
++  pauseEl.classList.add('hidden');
++}
++
++/* ═══════════════════════  RESULTS  ═══════════════════════ */
++function buildResultsOverlay() {
++  resultsEl = document.createElement('div');
++  resultsEl.className = 'results-panel hidden';
++  resultsEl.id = 'results-panel';
++  document.body.appendChild(resultsEl);
++}
++
+ function showResults() {
+-  if (!resultsEl) return;
+   gameState = 'RESULTS';
+-
+-  const results = getRaceResults(allKarts);
+-
+-  let html = '<h2 style="text-align:center;margin-bottom:16px;font-size:28px;">🏁 Race Results 🏁</h2>';
+-  html += '<table style="width:100%;border-collapse:collapse;font-size:18px;">';
+-  html += '<tr style="border-bottom:1px solid #444;"><th style="padding:8px;text-align:left;">#</th><th style="text-align:left;">Racer</th><th style="text-align:right;">Time</th></tr>';
+-
+-  for (const r of results) {
+-    const posColors = { 1: '#FFD700', 2: '#C0C0C0', 3: '#CD7F32' };
+-    const color = posColors[r.position] || '#FFF';
+-    const bg = r.isPlayer ? 'rgba(255,255,255,0.1)' : 'transparent';
+-    const time = r.finishTime ? formatTime(r.finishTime, 3) : 'DNF';
+-    const suffix = r.position === 1 ? 'st' : r.position === 2 ? 'nd' : r.position === 3 ? 'rd' : 'th';
+-    html += `<tr style="background:${bg};border-bottom:1px solid #333;">`;
+-    html += `<td style="padding:6px 8px;color:${color};font-weight:bold;">${r.position}${suffix}</td>`;
+-    html += `<td style="padding:6px 8px;">${r.name}${r.isPlayer ? ' ★' : ''}</td>`;
+-    html += `<td style="padding:6px 8px;text-align:right;font-family:monospace;">${time}</td>`;
+-    html += '</tr>';
++  const res = getRaceResults(allKarts);
++  let html = '<h2>🏁 Race Results 🏁</h2><table class="results-table"><tr><th>#</th><th>Racer</th><th style="text-align:right">Time</th></tr>';
++  for (const r of res) {
++    const cls = r.isPlayer ? 'player-row' : '';
++    const pcls = r.position===1?'pos-gold':r.position===2?'pos-silver':r.position===3?'pos-bronze':'';
++    const suf = r.position===1?'st':r.position===2?'nd':r.position===3?'rd':'th';
++    const t = r.finishTime ? formatTime(r.finishTime, 3) : 'DNF';
++    html += `<tr class="${cls}"><td class="${pcls}" style="font-weight:700">${r.position}${suf}</td><td>${r.name}${r.isPlayer?' ★':''}</td><td style="text-align:right;font-family:monospace">${t}</td></tr>`;
+   }
+-  html += '</table>';
+-  html += '<p style="text-align:center;margin-top:16px;font-size:14px;color:#888;">Press Enter to restart</p>';
+-
++  html += '</table><div style="text-align:center;margin-top:16px"><button class="menu-btn" id="res-again">Race Again</button><button class="menu-btn" style="background:linear-gradient(135deg,#888,#555);margin-top:8px" id="res-menu">Main Menu</button></div>';
+   resultsEl.innerHTML = html;
+-  resultsEl.style.display = 'block';
++  resultsEl.classList.remove('hidden');
++  document.getElementById('res-again')?.addEventListener('click', () => { resultsEl.classList.add('hidden'); restartRace(); });
++  document.getElementById('res-menu')?.addEventListener('click', () => { resultsEl.classList.add('hidden'); quitToMenu(); });
++}
+ 
+-  // Listen for restart
+-  const restartHandler = (e) => {
++/* ═══════════════════════  MENUS  ═══════════════════════ */
++function showTitle() {
++  gameState = 'TITLE';
++  hudEl.classList.remove('active');
++  menuEl.classList.remove('hidden');
++  menuEl.innerHTML = `<div class="menu-panel" style="text-align:center">
++    <div class="menu-title">FABRO RACER</div>
++    <div class="menu-subtitle">Press ENTER to Start</div>
++  </div>`;
++  const handler = async (e) => {
+     if (e.code === 'Enter') {
+-      window.removeEventListener('keydown', restartHandler);
+-      restartRace();
++      window.removeEventListener('keydown', handler);
++      const a = await getAudio(); a.initAudio(); a.playMenuConfirm();
++      showTrackSelect();
+     }
+   };
+-  window.addEventListener('keydown', restartHandler);
++  window.addEventListener('keydown', handler);
+ }
+ 
+-function restartRace() {
+-  // Hide results
+-  resultsEl.style.display = 'none';
+-  countdownEl.style.display = 'none';
+-
+-  // Remove old karts from scene
+-  for (const kart of allKarts) {
+-    scene.remove(kart.mesh);
+-  }
++function showTrackSelect() {
++  gameState = 'TRACK_SELECT';
++  menuEl.innerHTML = `<div class="menu-panel">
++    <div class="menu-section-title">Select Track</div>
++    <div class="card-row" id="track-cards"></div>
++    <button class="menu-btn" id="ts-next">Next →</button>
++  </div>`;
++  const row = document.getElementById('track-cards');
++  TRACK_META.forEach((t, i) => {
++    const c = document.createElement('div');
++    c.className = 'card' + (i === selectedTrackIdx ? ' selected' : '');
++    c.innerHTML = `<div class="card-name">${t.name}</div><div class="card-detail">${t.diff}</div><div class="card-detail">${t.desc}</div>`;
++    c.addEventListener('click', () => {
++      selectedTrackIdx = i;
++      row.querySelectorAll('.card').forEach(cc => cc.classList.remove('selected'));
++      c.classList.add('selected');
++      getAudio().then(a => a.playMenuNav());
++    });
++    row.appendChild(c);
++  });
++  document.getElementById('ts-next').addEventListener('click', () => { getAudio().then(a => a.playMenuConfirm()); showCharSelect(); });
++}
+ 
+-  // Clear items
+-  clearItems(scene);
++function showCharSelect() {
++  gameState = 'CHAR_SELECT';
++  menuEl.innerHTML = `<div class="menu-panel">
++    <div class="menu-section-title">Select Character</div>
++    <div class="card-row" id="char-cards"></div>
++    <button class="menu-btn" id="cs-next">Next →</button>
++  </div>`;
++  const row = document.getElementById('char-cards');
++  characters.forEach((ch, i) => {
++    const hex = '#' + ch.color.toString(16).padStart(6, '0');
++    const c = document.createElement('div');
++    c.className = 'card' + (i === selectedCharIdx ? ' selected' : '');
++    c.innerHTML = `<div class="color-swatch" style="background:${hex}"></div><div class="card-name">${ch.name}</div>` +
++      statRow('Spd', ch.stats.speed) + statRow('Acc', ch.stats.accel) + statRow('Hnd', ch.stats.handling) + statRow('Wgt', ch.stats.weight);
++    c.addEventListener('click', () => {
++      selectedCharIdx = i;
++      row.querySelectorAll('.card').forEach(cc => cc.classList.remove('selected'));
++      c.classList.add('selected');
++      getAudio().then(a => a.playMenuNav());
++    });
++    row.appendChild(c);
++  });
++  document.getElementById('cs-next').addEventListener('click', () => { getAudio().then(a => a.playMenuConfirm()); showDiffSelect(); });
++}
+ 
+-  // Reset state
+-  allKarts = [];
+-  playerKart = null;
+-  accumulator = 0;
+-  gameState = 'LOADING';
+-  cameraState.mode = 'chase';
++function statRow(label, val) {
++  let pips = '';
++  for (let i = 1; i <= 5; i++) pips += `<div class="stat-pip${i<=val?' filled':''}"></div>`;
++  return `<div style="display:flex;align-items:center;gap:4px;font-size:11px;color:#aaa;justify-content:center"><span style="width:28px;text-align:right">${label}</span><div class="stat-bar">${pips}</div></div>`;
++}
+ 
+-  // Reinitialize
+-  reinit();
++function showDiffSelect() {
++  gameState = 'DIFF_SELECT';
++  menuEl.innerHTML = `<div class="menu-panel">
++    <div class="menu-section-title">Difficulty</div>
++    <div class="diff-row">
++      <button class="diff-btn${currentDifficulty==='chill'?' selected':''}" data-d="chill">Chill 😌</button>
++      <button class="diff-btn${currentDifficulty==='standard'?' selected':''}" data-d="standard">Standard 🏁</button>
++      <button class="diff-btn${currentDifficulty==='mean'?' selected':''}" data-d="mean">Mean 😈</button>
++    </div>
++    <div class="toggle-row">
++      <label><input type="checkbox" id="tog-mirror" ${mirrorMode?'checked':''}> Mirror Mode</label>
++      <label><input type="checkbox" id="tog-clones" ${allowClones?'checked':''}> Allow Clones</label>
++    </div>
++    <button class="menu-btn" id="ds-start">🏁 Start Race</button>
++  </div>`;
++  document.querySelectorAll('.diff-btn').forEach(b => b.addEventListener('click', () => {
++    currentDifficulty = b.dataset.d;
++    document.querySelectorAll('.diff-btn').forEach(bb => bb.classList.remove('selected'));
++    b.classList.add('selected');
++    getAudio().then(a => a.playMenuNav());
++  }));
++  document.getElementById('tog-mirror')?.addEventListener('change', e => { mirrorMode = e.target.checked; });
++  document.getElementById('tog-clones')?.addEventListener('change', e => { allowClones = e.target.checked; });
++  document.getElementById('ds-start').addEventListener('click', () => { getAudio().then(a => a.playMenuConfirm()); startRace(); });
+ }
+ 
+-async function reinit() {
+-  // Re-init item boxes
++/* ═══════════════════════  RACE SETUP  ═══════════════════════ */
++async function startRace() {
++  menuEl.classList.add('hidden');
++  buildHUD();
++
++  /* clean previous track */
++  if (trackData) {
++    clearItems(scene);
++    for (const k of allKarts) scene.remove(k.mesh);
++    if (trackData.group) scene.remove(trackData.group);
++    allKarts = []; playerKart = null; trackData = null;
++  }
++
++  /* load track */
++  const mod = await import(`./tracks/${TRACK_FILES[selectedTrackIdx]}.js`);
++  trackDef = mod.trackDefinition;
++  trackData = buildTrack(trackDef, scene);
++
++  /* environment */
++  const env = trackDef.environment || {};
++  setFog(env.fogColor || 0x87ceeb, env.fogNear || 100, env.fogFar || 500);
++  ambientLight.color.setHex(env.ambientColor || 0xffffff); ambientLight.intensity = env.ambientIntensity || 0.4;
++  directionalLight.color.setHex(env.sunColor || 0xffffff); directionalLight.intensity = env.sunIntensity || 0.8;
++  if (env.sunDirection) directionalLight.position.set(env.sunDirection.x*80, env.sunDirection.y*80, env.sunDirection.z*80);
++
+   initItemBoxes(trackData, scene);
+ 
++  /* start rotation */
+   let startRot = 0;
+   if (trackData.startPositions.length > 0) {
+     const sp = trackData.startPositions[0];
+-    const nearest = findNearestSplinePoint(trackData.centerCurve, sp.x, sp.z, 100);
+-    startRot = Math.atan2(nearest.tangent.x, nearest.tangent.z);
++    const n = findNearestSplinePoint(trackData.centerCurve, sp.x, sp.z, 100);
++    startRot = Math.atan2(n.tangent.x, n.tangent.z);
+   }
+ 
+-  // Create player kart
+-  const playerChar = characters[0];
+-  playerKart = createKart(playerChar, true, 0);
+-  if (trackData.startPositions.length > 0) {
+-    placeKart(playerKart, trackData.startPositions[0], startRot);
+-  }
++  /* player kart */
++  const pChar = characters[selectedCharIdx];
++  playerKart = createKart(pChar, true, 0);
++  placeKart(playerKart, trackData.startPositions[0] || {x:0,y:1,z:0}, startRot);
+   scene.add(playerKart.mesh);
+   allKarts.push(playerKart);
++  prevPlayerLap = 0;
+ 
+-  // Create 7 CPU karts
+-  const cpuChars = characters.filter(c => c.id !== playerChar.id);
+-  for (let i = cpuChars.length - 1; i > 0; i--) {
+-    const j = Math.floor(Math.random() * (i + 1));
+-    [cpuChars[i], cpuChars[j]] = [cpuChars[j], cpuChars[i]];
++  /* CPU karts */
++  let cpuPool;
++  if (allowClones) {
++    cpuPool = Array.from({length:7}, () => characters[Math.floor(Math.random()*characters.length)]);
++  } else {
++    cpuPool = characters.filter(c => c.id !== pChar.id);
++    for (let i = cpuPool.length - 1; i > 0; i--) { const j = Math.floor(Math.random()*(i+1)); [cpuPool[i],cpuPool[j]] = [cpuPool[j],cpuPool[i]]; }
++    cpuPool = cpuPool.slice(0, 7);
+   }
+ 
++  setDifficulty(currentDifficulty);
+   for (let i = 0; i < 7; i++) {
+-    const char = cpuChars[i % cpuChars.length];
+-    const kart = createKart(char, false, i + 1);
+-    if (trackData.startPositions.length > i + 1) {
+-      placeKart(kart, trackData.startPositions[i + 1], startRot);
+-    }
+-    scene.add(kart.mesh);
+-    allKarts.push(kart);
+-    initAI(kart, trackData, currentDifficulty);
++    const ch = cpuPool[i % cpuPool.length];
++    const k = createKart(ch, false, i + 1);
++    placeKart(k, trackData.startPositions[i+1] || {x:(i+1)*5,y:1,z:-10-i*8}, startRot);
++    scene.add(k.mesh);
++    allKarts.push(k);
++    initAI(k, trackData, currentDifficulty);
+   }
+ 
+   initRace(allKarts, trackData);
+   gameState = 'COUNTDOWN';
++  accumulator = 0;
+   resetCamera(camera, playerKart);
+ }
+ 
+-// Start the game
+-init().catch(err => {
+-  console.error('Failed to initialize:', err);
+-});
++function restartRace() {
++  getAudio().then(a => { a.stopEngine(); a.stopMusic(); });
++  startRace();
++}
++
++function quitToMenu() {
++  getAudio().then(a => { a.stopEngine(); a.stopMusic(); });
++  if (trackData) {
++    clearItems(scene);
++    for (const k of allKarts) scene.remove(k.mesh);
++    if (trackData.group) scene.remove(trackData.group);
++    allKarts = []; playerKart = null; trackData = null;
++  }
++  hudEl.classList.remove('active');
++  resultsEl?.classList.add('hidden');
++  cameraState.mode = 'chase';
++  showTitle();
++}
+diff --git a/output/textures/menu-bg.png b/output/textures/menu-bg.png
+new file mode 100644
+index 0000000..044350a
+Binary files /dev/null and b/output/textures/menu-bg.png differ
