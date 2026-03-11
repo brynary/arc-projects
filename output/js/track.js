@@ -148,6 +148,14 @@ function buildRoadRibbon(samples, trackDef) {
     const l = s.leftEdge;
     const r = s.rightEdge;
 
+    // Accumulate distance BEFORE computing UV so each segment gets a
+    // non-zero UV span. Previously vDist was updated AFTER the UV push,
+    // causing vertex 0 and vertex 1 to share vDist=0 (zero-width UV band
+    // at the start/finish line, producing a stretched/missing texture).
+    if (i > 0) {
+      vDist += samples[i].pos.distanceTo(samples[i - 1].pos);
+    }
+
     // Left vertex
     vertices.push(l.x, l.y + 0.01, l.z);
     // Right vertex
@@ -161,11 +169,6 @@ function buildRoadRibbon(samples, trackDef) {
     // Normal (roughly up)
     normals.push(0, 1, 0);
     normals.push(0, 1, 0);
-
-    if (i > 0) {
-      const nextDist = samples[i].pos.distanceTo(samples[i - 1].pos);
-      vDist += nextDist;
-    }
 
     // Indices
     if (i < samples.length - 1) {

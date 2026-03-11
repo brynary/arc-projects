@@ -163,9 +163,13 @@ function updateCheckpoints(kart, trackData) {
   if (dist < checkWidth * 0.6) {
     const forward = cp.forward || { x: 0, z: 1 };
 
-    // Position-based gate: kart must be within the checkpoint's width band
+    // Position-based gate: kart must be within the checkpoint's forward-depth band.
+    // Scale the forward depth threshold with checkpoint width to maintain a
+    // consistent detection aspect ratio. Narrow checkpoints (pier tunnel, ridge)
+    // use a smaller forward gate to prevent false triggers from the side.
     const posDot = dx * forward.x + dz * forward.z;
-    if (Math.abs(posDot) > 15) return null;
+    const forwardGate = checkWidth * 0.55;
+    if (Math.abs(posDot) > forwardGate) return null;
 
     // Direction validation: kart's travel direction must roughly agree with
     // checkpoint's forward vector (dot > 0 means same general direction).
