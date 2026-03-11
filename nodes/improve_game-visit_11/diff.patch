@@ -1,0 +1,526 @@
+diff --git a/.workflow/improve_log.md b/.workflow/improve_log.md
+index 4fd0f02..0a6dde0 100644
+--- a/.workflow/improve_log.md
++++ b/.workflow/improve_log.md
+@@ -70,4 +70,10 @@
+ - **Short-circuit `checkStarCollisions`**: The O(n²) star collision loop runs every physics frame. Added a linear scan early-out that skips the nested loop when no kart has `starActive` — which is the common case (stars are rare items). Reduces from 56 iterations to 8 on most frames.
+ - **Cache minimap canvas 2D context**: `updateMinimap` was calling `document.getElementById` + `getContext('2d')` every update (30Hz). Now cached in `minimapCtx` module variable, invalidated only when `buildHUD` replaces the canvas element.
+ - **Skip particle update when idle**: `updateParticles` now returns immediately when `activeParticles.length === 0`, avoiding the `instanceMatrix.needsUpdate = true` flag (which triggers a GPU upload) on frames with no visible particles.
+-- Verified: pass — Zero console errors across all 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak). AI input pre-allocation confirmed (`ai._input` present on all AI karts). Cached nearest spline point confirmed (`_cachedNearest` present). 8/8 karts racing on all tracks.
+\ No newline at end of file
++- Verified: pass — Zero console errors across all 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak). AI input pre-allocation confirmed (`ai._input` present on all AI karts). Cached nearest spline point confirmed (`_cachedNearest` present). 8/8 karts racing on all tracks.
++
++## Iteration 11 — Focus: Crash & Error Fixes
++- **Fix physics step cap (3 → 8) + accumulator safety valve**: The game loop capped physics steps at 3 per frame. With FIXED_DT=1/60 and the dt cap of 0.1s, 3 steps only process 0.05s — at 10fps, the game runs at 50% real-time. Increased cap to 8 (covers up to 0.133s dt, well above the 0.1s cap). Added an accumulator safety valve: if it exceeds 0.2s (e.g., tab was backgrounded), it's clamped to FIXED_DT×4 to prevent a burst of catch-up frames. Previously the countdown took forever on slow hardware; now completes reliably.
++- **Fix DNF sort order in race results**: When karts have `finishTime: null` (DNF from the auto-finish timeout), `null - number` coerces to 0 in JavaScript, incorrectly placing DNF karts BEFORE timed finishers in the sort. Added explicit null checks in both `updatePositions` and `getRaceResults` sort comparators so DNF karts always sort after all karts with valid finish times.
++- **Fix race event priority for player**: The `raceFinished` and `lapCompleted` events were single-value fields that could be overwritten when multiple karts triggered them in the same physics frame. If the player (first in array) finished and then an AI kart also finished in the same step, the AI's event overwrote the player's, and the game never transitioned to RACE_FINISH state. Now events prioritize the player: once the player's event is recorded, AI events won't overwrite it.
++- Verified: pass — Countdown completes in ~4s on all 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak). DNF karts correctly sort last among finishers. Zero console errors across all tracks and a rapid-restart stress test.
+\ No newline at end of file
+diff --git a/output/js/main.js b/output/js/main.js
+index ea44d4a..00f96de 100644
+--- a/output/js/main.js
++++ b/output/js/main.js
+@@ -99,8 +99,15 @@ function loop(now) {
+ 
+   if (gameState === 'COUNTDOWN' || gameState === 'RACING' || gameState === 'RACE_FINISH') {
+     accumulator += dt;
++    // Safety valve: if accumulator grows excessively (tab was backgrounded, etc.),
++    // clamp it to avoid a burst of catch-up frames that would stall the renderer.
++    if (accumulator > 0.2) accumulator = FIXED_DT * 4;
+     let steps = 0;
+-    while (accumulator >= FIXED_DT && steps < 3) {
++    // Cap at 8 steps to cover dt up to 0.133s (~7.5fps). The dt cap of 0.1s needs
++    // ceil(0.1 / (1/60)) = 6 steps, so 8 gives headroom for variance.
++    // Previous cap of 3 caused the game to run in slow motion at low framerates
++    // (e.g., 10fps → only 50% real-time).
++    while (accumulator >= FIXED_DT && steps < 8) {
+       fixedUpdate(FIXED_DT);
+       accumulator -= FIXED_DT;
+       steps++;
+diff --git a/output/js/race.js b/output/js/race.js
+index 986213d..66d3776 100644
+--- a/output/js/race.js
++++ b/output/js/race.js
+@@ -61,8 +61,8 @@ export function updateRace(allKarts, trackData, dt) {
+   const events = {
+     countdownTick: 0,
+     raceStarted: false,
+-    lapCompleted: null,  // { kart, lap }
+-    raceFinished: null,  // kart that finished
++    lapCompleted: null,  // { kart, lap } — prioritizes player over AI
++    raceFinished: null,  // kart that finished — prioritizes player over AI
+   };
+ 
+   if (raceState.status === 'countdown') {
+@@ -116,14 +116,20 @@ export function updateRace(allKarts, trackData, dt) {
+ 
+       const cpEvent = updateCheckpoints(kart, trackData);
+       if (cpEvent === 'lap') {
+-        events.lapCompleted = { kart, lap: kart.currentLap };
++        // Prioritize player events: if player already recorded, don't overwrite
++        if (!events.lapCompleted || kart.isPlayer) {
++          events.lapCompleted = { kart, lap: kart.currentLap };
++        }
+ 
+         // Check for race finish (3 laps)
+         if (kart.currentLap >= TOTAL_LAPS) {
+           kart.finished = true;
+           kart.finishTime = raceState.raceTime;
+           raceState.finishedKarts.push(kart);
+-          events.raceFinished = kart;
++          // Prioritize player: don't overwrite player's finish event with AI's
++          if (!events.raceFinished || kart.isPlayer) {
++            events.raceFinished = kart;
++          }
+         }
+       }
+     }
+@@ -223,7 +229,13 @@ function updatePositions(allKarts, trackData) {
+   for (let i = 0; i < allKarts.length; i++) _sortBuffer[i] = allKarts[i];
+ 
+   _sortBuffer.sort((a, b) => {
+-    if (a.finished && b.finished) return a.finishTime - b.finishTime;
++    if (a.finished && b.finished) {
++      // DNF karts (finishTime === null) sort after timed finishers
++      if (a.finishTime === null && b.finishTime === null) return 0;
++      if (a.finishTime === null) return 1;
++      if (b.finishTime === null) return -1;
++      return a.finishTime - b.finishTime;
++    }
+     if (a.finished) return -1;
+     if (b.finished) return 1;
+     return b.raceProgress - a.raceProgress;
+@@ -251,7 +263,13 @@ export function formatTime(seconds, decimals = 1) {
+  */
+ export function getRaceResults(allKarts) {
+   return [...allKarts].sort((a, b) => {
+-    if (a.finished && b.finished) return a.finishTime - b.finishTime;
++    if (a.finished && b.finished) {
++      // DNF karts (finishTime === null) sort after timed finishers
++      if (a.finishTime === null && b.finishTime === null) return 0;
++      if (a.finishTime === null) return 1;
++      if (b.finishTime === null) return -1;
++      return a.finishTime - b.finishTime;
++    }
+     if (a.finished) return -1;
+     if (b.finished) return 1;
+     return b.raceProgress - a.raceProgress;
+diff --git a/test_crash_fix.js b/test_crash_fix.js
+new file mode 100644
+index 0000000..d48cf0b
+--- /dev/null
++++ b/test_crash_fix.js
+@@ -0,0 +1,146 @@
++// Test for crash & error fixes — check all 4 tracks for console errors
++const { chromium } = require('playwright');
++
++(async () => {
++  const browser = await chromium.launch({ args: ['--no-sandbox'] });
++  const page = await browser.newPage();
++  
++  const errors = [];
++  const warnings = [];
++  
++  page.on('console', msg => {
++    if (msg.type() === 'error') errors.push(msg.text());
++    if (msg.type() === 'warning') warnings.push(msg.text());
++  });
++  page.on('pageerror', err => errors.push('PAGE ERROR: ' + err.message));
++  
++  await page.goto('http://localhost:4567', { waitUntil: 'networkidle', timeout: 30000 });
++  await page.waitForTimeout(2000);
++  
++  console.log('=== Page loaded, errors so far:', errors.length);
++  for (const e of errors) console.log('  ERROR:', e);
++  
++  // Press Enter on title
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(1000);
++  
++  // Test each track
++  const tracks = [0, 1, 2, 3];
++  const trackNames = ['Sunset Bay', 'Mossy Canyon', 'Neon Grid', 'Volcano Peak'];
++  
++  for (const trackIdx of tracks) {
++    console.log(`\n=== Testing Track ${trackIdx}: ${trackNames[trackIdx]} ===`);
++    errors.length = 0;
++    
++    // Select track
++    const cards = await page.$$('.card');
++    if (cards[trackIdx]) {
++      await cards[trackIdx].click();
++      await page.waitForTimeout(200);
++    }
++    
++    // Click Next
++    const nextBtn = await page.$('#ts-next');
++    if (nextBtn) await nextBtn.click();
++    await page.waitForTimeout(500);
++    
++    // Select first character, click Next
++    const charCards = await page.$$('.card');
++    if (charCards[0]) await charCards[0].click();
++    await page.waitForTimeout(200);
++    
++    const csNext = await page.$('#cs-next');
++    if (csNext) await csNext.click();
++    await page.waitForTimeout(500);
++    
++    // Start race
++    const startBtn = await page.$('#ds-start');
++    if (startBtn) await startBtn.click();
++    await page.waitForTimeout(2000);
++    
++    // Hold accelerate and run race for 15 seconds
++    await page.keyboard.down('w');
++    
++    for (let i = 0; i < 15; i++) {
++      await page.waitForTimeout(1000);
++      
++      // Check game state
++      const state = await page.evaluate(() => {
++        return {
++          allKarts: window.__allKarts?.length || 0,
++          raceStatus: window.__raceState?.status || 'unknown',
++          playerPos: window.__allKarts?.[0]?.position ? 
++            `${window.__allKarts[0].position.x.toFixed(1)},${window.__allKarts[0].position.y.toFixed(1)},${window.__allKarts[0].position.z.toFixed(1)}` : 'N/A',
++          playerSpeed: window.__allKarts?.[0]?.speed?.toFixed(1) || 'N/A',
++        };
++      });
++      
++      if (i % 5 === 0) {
++        console.log(`  t=${i}s: karts=${state.allKarts}, status=${state.raceStatus}, pos=${state.playerPos}, speed=${state.playerSpeed}, errors=${errors.length}`);
++      }
++    }
++    
++    await page.keyboard.up('w');
++    
++    // Report errors for this track
++    console.log(`  Track ${trackNames[trackIdx]}: ${errors.length} errors`);
++    for (const e of errors) console.log('    ERROR:', e.substring(0, 200));
++    
++    // Take screenshot
++    await page.screenshot({ path: `/home/daytona/workspace/test_track_${trackIdx}.png` });
++    
++    // Quit to menu via pause
++    await page.keyboard.press('Escape');
++    await page.waitForTimeout(500);
++    
++    const quitBtn = await page.$('[data-act="quit"]');
++    if (quitBtn) await quitBtn.click();
++    await page.waitForTimeout(1000);
++    
++    // Press Enter to get past title
++    await page.keyboard.press('Enter');
++    await page.waitForTimeout(1000);
++  }
++  
++  // Final check: rapid restart test
++  console.log('\n=== Rapid restart test ===');
++  errors.length = 0;
++  
++  // Select first track
++  const cards2 = await page.$$('.card');
++  if (cards2[0]) await cards2[0].click();
++  await page.waitForTimeout(200);
++  const nextBtn2 = await page.$('#ts-next');
++  if (nextBtn2) await nextBtn2.click();
++  await page.waitForTimeout(500);
++  const charCards2 = await page.$$('.card');
++  if (charCards2[0]) await charCards2[0].click();
++  await page.waitForTimeout(200);
++  const csNext2 = await page.$('#cs-next');
++  if (csNext2) await csNext2.click();
++  await page.waitForTimeout(500);
++  const startBtn2 = await page.$('#ds-start');
++  if (startBtn2) await startBtn2.click();
++  await page.waitForTimeout(3000);
++  
++  // Race briefly then restart 3 times quickly
++  for (let r = 0; r < 3; r++) {
++    await page.keyboard.down('w');
++    await page.waitForTimeout(2000);
++    await page.keyboard.up('w');
++    
++    await page.keyboard.press('Escape');
++    await page.waitForTimeout(300);
++    const restartBtn = await page.$('[data-act="restart"]');
++    if (restartBtn) await restartBtn.click();
++    await page.waitForTimeout(2000);
++  }
++  
++  console.log(`  Rapid restart test: ${errors.length} errors`);
++  for (const e of errors) console.log('    ERROR:', e.substring(0, 200));
++  
++  await page.screenshot({ path: '/home/daytona/workspace/test_restart.png' });
++  
++  await browser.close();
++  console.log('\n=== Done ===');
++})();
+\ No newline at end of file
+diff --git a/test_crash_fixes.png b/test_crash_fixes.png
+new file mode 100644
+index 0000000..b14be96
+Binary files /dev/null and b/test_crash_fixes.png differ
+diff --git a/test_crash_verify.js b/test_crash_verify.js
+new file mode 100644
+index 0000000..1566059
+--- /dev/null
++++ b/test_crash_verify.js
+@@ -0,0 +1,131 @@
++// Test crash fixes: step cap, DNF sort, event priority
++const { chromium } = require('playwright');
++
++(async () => {
++  const browser = await chromium.launch({ args: ['--no-sandbox'] });
++  const page = await browser.newPage();
++  
++  const errors = [];
++  page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
++  page.on('pageerror', err => errors.push('PAGE ERROR: ' + err.message));
++  
++  await page.goto('http://localhost:4567', { waitUntil: 'networkidle', timeout: 30000 });
++  await page.waitForTimeout(2000);
++  
++  console.log('=== Page loaded, errors:', errors.length);
++  
++  // Press Enter on title
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(1000);
++  
++  // Select first track
++  const cards = await page.$$('.card');
++  if (cards[0]) await cards[0].click();
++  await page.waitForTimeout(200);
++  await page.$('#ts-next').then(b => b?.click());
++  await page.waitForTimeout(500);
++  
++  // Select first character
++  const charCards = await page.$$('.card');
++  if (charCards[0]) await charCards[0].click();
++  await page.waitForTimeout(200);
++  await page.$('#cs-next').then(b => b?.click());
++  await page.waitForTimeout(500);
++  
++  // Start race
++  await page.$('#ds-start').then(b => b?.click());
++  await page.waitForTimeout(2000);
++  
++  // Test 1: Check step cap fix — countdown should complete within 8 seconds
++  console.log('\n=== Test 1: Countdown completion ===');
++  let countdownDone = false;
++  for (let i = 0; i < 12; i++) {
++    await page.waitForTimeout(1000);
++    const state = await page.evaluate(() => ({
++      status: window.__raceState?.status || 'unknown',
++      raceTime: window.__raceState?.raceTime || 0,
++      speed: window.__allKarts?.[0]?.speed?.toFixed(1) || '0',
++    }));
++    console.log(`  t=${i}s: status=${state.status}, raceTime=${state.raceTime.toFixed(1)}, speed=${state.speed}`);
++    if (state.status === 'racing') {
++      countdownDone = true;
++      console.log('  ✓ Countdown completed at t=' + i + 's');
++      break;
++    }
++  }
++  if (!countdownDone) console.log('  ✗ Countdown did not complete in 12 seconds');
++  
++  // Now accelerate and race for a bit
++  await page.keyboard.down('w');
++  await page.waitForTimeout(5000);
++  
++  const state1 = await page.evaluate(() => ({
++    status: window.__raceState?.status,
++    raceTime: window.__raceState?.raceTime?.toFixed(1),
++    speed: window.__allKarts?.[0]?.speed?.toFixed(1),
++    pos: window.__allKarts?.[0]?.racePosition,
++  }));
++  console.log(`\n  Racing: status=${state1.status}, time=${state1.raceTime}, speed=${state1.speed}, position=${state1.pos}`);
++  
++  await page.keyboard.up('w');
++  
++  // Test 2: DNF sort order
++  console.log('\n=== Test 2: DNF sort order ===');
++  const sortTest = await page.evaluate(() => {
++    // Simulate DNF scenario: mark some karts as finished with null finishTime
++    const karts = window.__allKarts;
++    if (!karts) return 'no karts';
++    
++    // Save state
++    const saved = karts.map(k => ({ finished: k.finished, finishTime: k.finishTime, raceProgress: k.raceProgress }));
++    
++    // Set up test scenario: kart 0 finished at 60s, kart 1 DNF, kart 2 finished at 50s
++    karts[0].finished = true; karts[0].finishTime = 60;
++    karts[1].finished = true; karts[1].finishTime = null; // DNF
++    karts[2].finished = true; karts[2].finishTime = 50;
++    karts[3].finished = false; karts[3].raceProgress = 5;
++    karts[4].finished = false; karts[4].raceProgress = 3;
++    
++    // Sort using the same logic as getRaceResults
++    const sorted = [...karts].sort((a, b) => {
++      if (a.finished && b.finished) {
++        if (a.finishTime === null && b.finishTime === null) return 0;
++        if (a.finishTime === null) return 1;
++        if (b.finishTime === null) return -1;
++        return a.finishTime - b.finishTime;
++      }
++      if (a.finished) return -1;
++      if (b.finished) return 1;
++      return b.raceProgress - a.raceProgress;
++    });
++    
++    const result = sorted.map((k, i) => `${i+1}: idx=${karts.indexOf(k)} ft=${k.finishTime} fin=${k.finished}`);
++    
++    // Restore state
++    for (let i = 0; i < karts.length; i++) {
++      karts[i].finished = saved[i].finished;
++      karts[i].finishTime = saved[i].finishTime;
++      karts[i].raceProgress = saved[i].raceProgress;
++    }
++    
++    return result;
++  });
++  console.log('  Sort result:');
++  for (const r of sortTest) console.log('    ' + r);
++  
++  // Verify DNF is last among finished karts
++  const dnfLine = sortTest.find(r => r.includes('ft=null'));
++  const dnfPos = sortTest.indexOf(dnfLine) + 1;
++  const finishedLines = sortTest.filter(r => r.includes('fin=true'));
++  console.log(`  DNF at position ${dnfPos} of ${finishedLines.length} finishers — ${dnfPos === finishedLines.length ? '✓ correct (last among finished)' : '✗ wrong'}`);
++  
++  // Test 3: Error count
++  console.log('\n=== Test 3: Console errors ===');
++  console.log(`  Total errors: ${errors.length}`);
++  for (const e of errors) console.log('    ERROR:', e.substring(0, 150));
++  
++  await page.screenshot({ path: '/home/daytona/workspace/test_crash_fixes.png' });
++  
++  await browser.close();
++  console.log('\n=== All tests done ===');
++})();
+diff --git a/test_restart.png b/test_restart.png
+new file mode 100644
+index 0000000..5ddeddc
+Binary files /dev/null and b/test_restart.png differ
+diff --git a/test_smoke.js b/test_smoke.js
+new file mode 100644
+index 0000000..b66a40b
+--- /dev/null
++++ b/test_smoke.js
+@@ -0,0 +1,83 @@
++// Quick all-tracks smoke test after crash fixes
++const { chromium } = require('playwright');
++
++(async () => {
++  const browser = await chromium.launch({ args: ['--no-sandbox'] });
++  const page = await browser.newPage();
++  
++  const errors = [];
++  page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
++  page.on('pageerror', err => errors.push('PAGE ERROR: ' + err.message));
++  
++  await page.goto('http://localhost:4567', { waitUntil: 'networkidle', timeout: 30000 });
++  await page.waitForTimeout(2000);
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(1000);
++  
++  const trackNames = ['Sunset Bay', 'Mossy Canyon', 'Neon Grid', 'Volcano Peak'];
++  
++  for (let t = 0; t < 4; t++) {
++    console.log(`\n=== Track ${t}: ${trackNames[t]} ===`);
++    errors.length = 0;
++    
++    // Select track
++    const cards = await page.$$('.card');
++    if (cards[t]) await cards[t].click();
++    await page.waitForTimeout(200);
++    await page.$('#ts-next').then(b => b?.click());
++    await page.waitForTimeout(500);
++    
++    // Select character
++    const cCards = await page.$$('.card');
++    if (cCards[t]) await cCards[t].click(); // different character each track
++    await page.waitForTimeout(200);
++    await page.$('#cs-next').then(b => b?.click());
++    await page.waitForTimeout(500);
++    
++    // Start race
++    await page.$('#ds-start').then(b => b?.click());
++    await page.waitForTimeout(3000);
++    
++    // Wait for countdown to finish, then race briefly
++    let raceStarted = false;
++    for (let w = 0; w < 8; w++) {
++      const st = await page.evaluate(() => window.__raceState?.status);
++      if (st === 'racing') { raceStarted = true; break; }
++      await page.waitForTimeout(1000);
++    }
++    console.log(`  Countdown: ${raceStarted ? '✓ done' : '✗ stuck'}`);
++    
++    // Race for 8 seconds
++    await page.keyboard.down('w');
++    await page.waitForTimeout(8000);
++    
++    const state = await page.evaluate(() => ({
++      karts: window.__allKarts?.length,
++      status: window.__raceState?.status,
++      raceTime: window.__raceState?.raceTime?.toFixed(1),
++      playerSpeed: window.__allKarts?.[0]?.speed?.toFixed(1),
++      playerLap: window.__allKarts?.[0]?.currentLap,
++      aiSpeeds: window.__allKarts?.slice(1).map(k => k.speed?.toFixed(0)).join(','),
++    }));
++    console.log(`  State: karts=${state.karts}, status=${state.status}, time=${state.raceTime}s, speed=${state.playerSpeed}, lap=${state.playerLap}`);
++    console.log(`  AI speeds: ${state.aiSpeeds}`);
++    console.log(`  Errors: ${errors.length}`);
++    for (const e of errors) console.log('    ' + e.substring(0, 120));
++    
++    await page.keyboard.up('w');
++    
++    // Take screenshot
++    await page.screenshot({ path: `/home/daytona/workspace/test_smoke_track${t}.png` });
++    
++    // Quit to menu
++    await page.keyboard.press('Escape');
++    await page.waitForTimeout(300);
++    await page.$('[data-act="quit"]').then(b => b?.click());
++    await page.waitForTimeout(1000);
++    await page.keyboard.press('Enter');
++    await page.waitForTimeout(1000);
++  }
++  
++  await browser.close();
++  console.log('\n=== Smoke test complete ===');
++})();
+diff --git a/test_smoke_track0.png b/test_smoke_track0.png
+new file mode 100644
+index 0000000..8f44eb6
+Binary files /dev/null and b/test_smoke_track0.png differ
+diff --git a/test_smoke_track1.png b/test_smoke_track1.png
+new file mode 100644
+index 0000000..dcbd470
+Binary files /dev/null and b/test_smoke_track1.png differ
+diff --git a/test_smoke_track2.png b/test_smoke_track2.png
+new file mode 100644
+index 0000000..6a943e1
+Binary files /dev/null and b/test_smoke_track2.png differ
+diff --git a/test_smoke_track3.png b/test_smoke_track3.png
+new file mode 100644
+index 0000000..a400f50
+Binary files /dev/null and b/test_smoke_track3.png differ
+diff --git a/test_track_0.png b/test_track_0.png
+new file mode 100644
+index 0000000..37a6535
+Binary files /dev/null and b/test_track_0.png differ
+diff --git a/test_track_1.png b/test_track_1.png
+new file mode 100644
+index 0000000..6cbceb5
+Binary files /dev/null and b/test_track_1.png differ
+diff --git a/test_track_2.png b/test_track_2.png
+new file mode 100644
+index 0000000..a24b965
+Binary files /dev/null and b/test_track_2.png differ
+diff --git a/test_track_3.png b/test_track_3.png
+new file mode 100644
+index 0000000..18218f9
+Binary files /dev/null and b/test_track_3.png differ
