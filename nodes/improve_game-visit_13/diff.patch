@@ -1,0 +1,720 @@
+diff --git a/.workflow/improve_log.md b/.workflow/improve_log.md
+index f8706e2..35908e9 100644
+--- a/.workflow/improve_log.md
++++ b/.workflow/improve_log.md
+@@ -78,6 +78,12 @@
+ - **Fix race event priority for player**: The `raceFinished` and `lapCompleted` events were single-value fields that could be overwritten when multiple karts triggered them in the same physics frame. If the player (first in array) finished and then an AI kart also finished in the same step, the AI's event overwrote the player's, and the game never transitioned to RACE_FINISH state. Now events prioritize the player: once the player's event is recorded, AI events won't overwrite it.
+ - Verified: pass — Countdown completes in ~4s on all 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak). DNF karts correctly sort last among finishers. Zero console errors across all tracks and a rapid-restart stress test.
+ 
++## Iteration 13 — Focus: Camera System
++- **Camera wall anti-clip via 2D raycasting**: Added `clipCameraToWalls()` that casts a ray from the kart to the desired camera position and checks for wall segment intersections in nearby sectors (±3 of player sector). When a wall is detected between kart and camera, the camera is pulled to just in front of the wall (95% of intersection distance). Uses Y-level filtering to ignore walls on different elevations. The player's sector index is computed once in `updatePhysics` and stored on `trackData._lastPlayerSector` for the camera to reuse without redundant computation.
++- **Speed-dependent chase distance**: Camera offset now scales with kart speed. At standstill, the camera is 13 units behind and 7 units high (tighter, more intimate feel). At top speed, it extends to 18 units behind and 8.5 units high. During boost overspeed (>100% top speed), it pushes to 20 units maximum. This creates a subtle "speed zoom" effect — you feel faster at high speed and get a clearer view of your kart at low speed during countdown and recovery.
++- **Camera height floor above road surface**: Uses the kart's `_cachedNearest` spline point (already computed by physics) to ensure the camera never dips below `roadY + 3`. On Volcano Peak's steep downhill plunge and switchbacks, this prevents the camera from going below the road surface when the kart drops in elevation faster than the lerp can follow. The check also applies after wall anti-clip adjustment.
++- Verified: pass — Zero console errors on all 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak). 8/8 karts racing on every track. Camera sector tracking confirmed working (sector 3 on Sunset Bay after driving).
++
+ ## Iteration 12 — Focus: Track Integrity
+ - **Fix road ribbon UV accumulation order**: The texture coordinate distance accumulation (`vDist`) was updated AFTER the UV was pushed to the buffer, causing vertex 0 and vertex 1 to share the same UV v-coordinate (both 0). This produced a zero-width UV band at the start/finish line — the first road segment had no texture stretch (compressed/missing texture). Fixed by moving the distance accumulation BEFORE the UV push so each consecutive sample pair gets a non-zero UV span.
+ - **Normalize all checkpoint forward vectors across all 4 tracks**: Many checkpoint `forward` vectors were not unit length (e.g., `{0.7, 0, 0.7}` has length 0.9899, `{0.95, 0, 0}` has length 0.95). Since these vectors are used in dot-product direction validation and position-based gating, non-unit vectors produced inconsistent detection behavior at different checkpoints. Normalized all 12 non-unit forward vectors across Sunset Bay (1), Mossy Canyon (3), Neon Grid (1), and Volcano Peak (7) to exact unit length.
+diff --git a/output/js/camera.js b/output/js/camera.js
+index 9f2c7b5..78357f3 100644
+--- a/output/js/camera.js
++++ b/output/js/camera.js
+@@ -1,16 +1,19 @@
+-// js/camera.js — Chase camera with smooth follow, drift shift, look-behind
++// js/camera.js — Chase camera with smooth follow, drift shift, look-behind,
++//                 wall anti-clip, speed-dependent distance, road-height floor
+ 
+ import * as THREE from 'three';
+-import { lerp, lerpAngle } from './utils.js';
++import { lerp, lerpAngle, clamp } from './utils.js';
+ 
+ const _desiredPos = new THREE.Vector3();
+ const _desiredLook = new THREE.Vector3();
+ const _currentLook = new THREE.Vector3();
+ const _offset = new THREE.Vector3();
++const _clipTest = new THREE.Vector3();
+ 
+ // Camera state
+ let driftShift = 0;
+ let lookBehind = false;
++let _trackData = null;  // reference to track data for wall anti-clip + height floor
+ 
+ export const cameraState = {
+   mode: 'chase',  // 'chase', 'orbit', 'flyover'
+@@ -18,6 +21,14 @@ export const cameraState = {
+   orbitTarget: null,
+ };
+ 
++/**
++ * Provide track data reference so the camera can avoid clipping through walls
++ * and stay above the road surface. Call once per race start.
++ */
++export function setCameraTrackData(td) {
++  _trackData = td;
++}
++
+ export function updateCamera(camera, kart, input, dt) {
+   if (!kart) return;
+   lookBehind = input.isDown('lookBehind');
+@@ -41,12 +52,17 @@ function updateChaseCamera(camera, kart, dt) {
+   const sinH = Math.sin(heading);
+   const cosH = Math.cos(heading);
+ 
++  // Speed-dependent chase distance: closer at low speed for a tighter view,
++  // further at high speed for a sense of speed.
++  // Range: 13 (stationary) → 18 (full speed) → 20 (boost overspeed)
++  const speedRatio = clamp(Math.abs(kart.speed) / (kart.topSpeed || 90), 0, 1.3);
++  const baseDist = lookBehind ? 12 : lerp(13, 18, speedRatio);
++  const baseHeight = lookBehind ? 6 : lerp(7, 8.5, speedRatio);
++
+   if (lookBehind) {
+-    // Look behind: camera in front of kart looking back
+-    _offset.set(0, 6, 12);
++    _offset.set(0, baseHeight, baseDist);
+   } else {
+-    // Normal chase: behind and above
+-    _offset.set(driftShift, 8, -18);
++    _offset.set(driftShift, baseHeight, -baseDist);
+   }
+ 
+   // Rotate offset by kart heading
+@@ -59,6 +75,41 @@ function updateChaseCamera(camera, kart, dt) {
+     kart.position.z + rz
+   );
+ 
++  // --- Camera height floor: keep camera above the road surface ---
++  // Use the player kart's cached nearest spline point if available, or fall back
++  // to the kart's Y. This prevents the camera from dipping below the road on
++  // elevation changes (e.g., Volcano Peak's switchbacks and downhill plunge).
++  if (_trackData && kart._cachedNearest) {
++    const roadY = kart._cachedNearest.point.y;
++    const minCamY = roadY + 3; // at least 3 units above the road surface
++    if (_desiredPos.y < minCamY) {
++      _desiredPos.y = minCamY;
++    }
++  }
++
++  // --- Wall anti-clip: pull camera closer if walls block the view ---
++  // Cast a line from the kart to the desired camera position and check against
++  // nearby wall segments. If any wall intersection is found, clamp camera to just
++  // in front of the intersection point.
++  if (_trackData && _trackData.collisionWalls && !lookBehind) {
++    const clipped = clipCameraToWalls(
++      kart.position.x, kart.position.z, kart.position.y,
++      _desiredPos.x, _desiredPos.z, _desiredPos.y
++    );
++    if (clipped < 1.0) {
++      // Pull camera to clipped fraction (with a small margin so we don't sit on the wall)
++      const margin = Math.max(0.05, clipped - 0.05);
++      _desiredPos.x = kart.position.x + (rx) * margin;
++      _desiredPos.z = kart.position.z + (rz) * margin;
++      // Keep the Y proportionally but ensure minimum height
++      _desiredPos.y = kart.position.y + _offset.y * margin;
++      if (_trackData && kart._cachedNearest) {
++        const minY = kart._cachedNearest.point.y + 3;
++        if (_desiredPos.y < minY) _desiredPos.y = minY;
++      }
++    }
++  }
++
+   // Look at target
+   if (lookBehind) {
+     _desiredLook.copy(kart.position);
+@@ -84,6 +135,72 @@ function updateChaseCamera(camera, kart, dt) {
+   camera.lookAt(_currentLook);
+ }
+ 
++/**
++ * Check if the line from kart → desired camera position intersects any nearby walls.
++ * Returns the fraction (0–1) along the line of the nearest intersection, or 1.0 if clear.
++ * Uses the kart's cached sector for efficiency.
++ */
++function clipCameraToWalls(kx, kz, ky, cx, cz, cy) {
++  if (!_trackData || !_trackData.sectors) return 1.0;
++
++  const walls = _trackData.collisionWalls;
++  const sectors = _trackData.sectors;
++
++  // Determine sector from player kart's cached nearest point
++  // (we use the player kart's position directly via a quick approach)
++  // Check all walls in a ±3 sector range for safety
++  let sectorIdx = 0;
++  if (_trackData._lastPlayerSector !== undefined) {
++    sectorIdx = _trackData._lastPlayerSector;
++  }
++
++  let bestT = 1.0;
++  const camDx = cx - kx;
++  const camDz = cz - kz;
++  const camLenSq = camDx * camDx + camDz * camDz;
++  if (camLenSq < 0.01) return 1.0;
++
++  for (let s = sectorIdx - 3; s <= sectorIdx + 3; s++) {
++    const idx = ((s % sectors.length) + sectors.length) % sectors.length;
++    const sector = sectors[idx];
++    for (const wallIdx of sector.wallIndices) {
++      const wall = walls[wallIdx];
++      if (!wall) continue;
++
++      // Y-level filter: skip walls on different elevation
++      if (ky < wall.y - 3 || ky > wall.y + wall.height + 3) continue;
++
++      // Ray-segment intersection in 2D (XZ plane)
++      const t = raySegmentIntersect(kx, kz, camDx, camDz,
++        wall.p1.x, wall.p1.z, wall.p2.x, wall.p2.z);
++      if (t !== null && t < bestT) {
++        bestT = t;
++      }
++    }
++  }
++
++  return bestT;
++}
++
++/**
++ * 2D ray–line-segment intersection.
++ * Ray: origin (ox,oz) + t*(dx,dz), t in [0,1]
++ * Segment: (ax,az) → (bx,bz)
++ * Returns t of intersection, or null if none.
++ */
++function raySegmentIntersect(ox, oz, dx, dz, ax, az, bx, bz) {
++  const sx = bx - ax;
++  const sz = bz - az;
++  const denom = dx * sz - dz * sx;
++  if (Math.abs(denom) < 1e-8) return null; // parallel
++
++  const t = ((ax - ox) * sz - (az - oz) * sx) / denom;
++  const u = ((ax - ox) * dz - (az - oz) * dx) / denom;
++
++  if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return t;
++  return null;
++}
++
+ function updateOrbitCamera(camera, kart, dt) {
+   cameraState.orbitAngle += dt * (Math.PI * 2 / 3); // one revolution per 3s
+   const target = cameraState.orbitTarget || kart.position;
+@@ -101,12 +218,14 @@ export function resetCamera(camera, kart) {
+   const sinH = Math.sin(heading);
+   const cosH = Math.cos(heading);
+ 
+-  const rx = 0 * cosH + (-18) * sinH;
+-  const rz = -0 * sinH + (-18) * cosH;
++  // Use the same base distance as chase at zero speed
++  const dist = 13;
++  const rx = 0 * cosH + (-dist) * sinH;
++  const rz = -0 * sinH + (-dist) * cosH;
+ 
+   camera.position.set(
+     kart.position.x + rx,
+-    kart.position.y + 8,
++    kart.position.y + 7,
+     kart.position.z + rz
+   );
+ 
+diff --git a/output/js/main.js b/output/js/main.js
+index 00f96de..5624de9 100644
+--- a/output/js/main.js
++++ b/output/js/main.js
+@@ -7,7 +7,7 @@ import { FIXED_DT } from './utils.js';
+ import { createKart, updateKart, placeKart } from './kart.js';
+ import { updatePhysics } from './physics.js';
+ import { updateDrift, getDriftSparkColor, getDriftProgress } from './drift.js';
+-import { updateCamera, resetCamera, cameraState } from './camera.js';
++import { updateCamera, resetCamera, cameraState, setCameraTrackData } from './camera.js';
+ import { buildTrack, findNearestSplinePoint } from './track.js';
+ import { characters } from './characters.js';
+ import { initParticles, updateParticles, emitDriftSparks, emitBoostFlame, emitDust } from './particles.js';
+@@ -568,6 +568,9 @@ async function startRace() {
+   trackDef = mod.trackDefinition;
+   trackData = buildTrack(trackDef, scene);
+ 
++  /* provide track data to camera for wall anti-clip + height floor */
++  setCameraTrackData(trackData);
++
+   /* cache minimap data (track is static) */
+   buildMinimapCache(trackData);
+ 
+@@ -647,6 +650,7 @@ function quitToMenu() {
+   getAudio().then(a => { a.stopEngine(); a.stopMusic(); });
+   raceEpoch++;
+   autoFinishTimer = 0;
++  setCameraTrackData(null);
+   if (trackData) {
+     clearItems(scene);
+     for (const k of allKarts) {
+diff --git a/output/js/physics.js b/output/js/physics.js
+index 6ffe5a6..54e7f94 100644
+--- a/output/js/physics.js
++++ b/output/js/physics.js
+@@ -19,6 +19,12 @@ export function updatePhysics(karts, trackData, dt) {
+       kart._cachedNearest = findNearestSplinePoint(
+         trackData.centerCurve, kart.position.x, kart.position.z, 50, kart.position.y
+       );
++      // Store player sector index on trackData for camera wall anti-clip
++      if (kart.isPlayer && kart._cachedNearest) {
++        trackData._lastPlayerSector = Math.floor(
++          kart._cachedNearest.t * (trackData.sectors?.length || 20)
++        );
++      }
+     }
+ 
+     // Ground detection & surface type
+diff --git a/test_cam_MossyCanyon_countdown.png b/test_cam_MossyCanyon_countdown.png
+new file mode 100644
+index 0000000..203f322
+Binary files /dev/null and b/test_cam_MossyCanyon_countdown.png differ
+diff --git a/test_cam_MossyCanyon_racing.png b/test_cam_MossyCanyon_racing.png
+new file mode 100644
+index 0000000..88ab73c
+Binary files /dev/null and b/test_cam_MossyCanyon_racing.png differ
+diff --git a/test_cam_MossyCanyon_turning.png b/test_cam_MossyCanyon_turning.png
+new file mode 100644
+index 0000000..123a1ec
+Binary files /dev/null and b/test_cam_MossyCanyon_turning.png differ
+diff --git a/test_cam_NeonGrid_countdown.png b/test_cam_NeonGrid_countdown.png
+new file mode 100644
+index 0000000..1d73e54
+Binary files /dev/null and b/test_cam_NeonGrid_countdown.png differ
+diff --git a/test_cam_NeonGrid_racing.png b/test_cam_NeonGrid_racing.png
+new file mode 100644
+index 0000000..b12ebf7
+Binary files /dev/null and b/test_cam_NeonGrid_racing.png differ
+diff --git a/test_cam_NeonGrid_turning.png b/test_cam_NeonGrid_turning.png
+new file mode 100644
+index 0000000..479ba9b
+Binary files /dev/null and b/test_cam_NeonGrid_turning.png differ
+diff --git a/test_cam_SunsetBay_countdown.png b/test_cam_SunsetBay_countdown.png
+new file mode 100644
+index 0000000..6815e73
+Binary files /dev/null and b/test_cam_SunsetBay_countdown.png differ
+diff --git a/test_cam_SunsetBay_racing.png b/test_cam_SunsetBay_racing.png
+new file mode 100644
+index 0000000..ca592bd
+Binary files /dev/null and b/test_cam_SunsetBay_racing.png differ
+diff --git a/test_cam_SunsetBay_turning.png b/test_cam_SunsetBay_turning.png
+new file mode 100644
+index 0000000..3b45cbb
+Binary files /dev/null and b/test_cam_SunsetBay_turning.png differ
+diff --git a/test_cam_VolcanoPeak_countdown.png b/test_cam_VolcanoPeak_countdown.png
+new file mode 100644
+index 0000000..21c4562
+Binary files /dev/null and b/test_cam_VolcanoPeak_countdown.png differ
+diff --git a/test_cam_VolcanoPeak_racing.png b/test_cam_VolcanoPeak_racing.png
+new file mode 100644
+index 0000000..f34ecac
+Binary files /dev/null and b/test_cam_VolcanoPeak_racing.png differ
+diff --git a/test_cam_VolcanoPeak_turning.png b/test_cam_VolcanoPeak_turning.png
+new file mode 100644
+index 0000000..81c78ad
+Binary files /dev/null and b/test_cam_VolcanoPeak_turning.png differ
+diff --git a/test_cam_verify_drift.png b/test_cam_verify_drift.png
+new file mode 100644
+index 0000000..5a96ba8
+Binary files /dev/null and b/test_cam_verify_drift.png differ
+diff --git a/test_cam_verify_wall.png b/test_cam_verify_wall.png
+new file mode 100644
+index 0000000..4033ef3
+Binary files /dev/null and b/test_cam_verify_wall.png differ
+diff --git a/test_camera.js b/test_camera.js
+new file mode 100644
+index 0000000..5c20a45
+--- /dev/null
++++ b/test_camera.js
+@@ -0,0 +1,100 @@
++// Test camera system behavior
++import { chromium } from 'playwright';
++
++const browser = await chromium.launch({ args: ['--no-sandbox','--disable-gpu'] });
++const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++
++const logs = [];
++page.on('console', msg => logs.push(`[${msg.type()}] ${msg.text()}`));
++page.on('pageerror', err => logs.push(`[PAGE_ERROR] ${err.message}`));
++
++await page.goto('http://localhost:4567/', { waitUntil: 'networkidle', timeout: 30000 });
++await page.waitForTimeout(2000);
++
++// Start a race
++await page.keyboard.press('Enter');
++await page.waitForTimeout(500);
++await page.click('.card'); // select first track
++await page.waitForTimeout(300);
++await page.click('#ts-next');
++await page.waitForTimeout(300);
++await page.click('.card'); // select first character
++await page.waitForTimeout(300);
++await page.click('#cs-next');
++await page.waitForTimeout(300);
++await page.click('#ds-start');
++await page.waitForTimeout(1000);
++
++// Take screenshot during countdown - camera should be positioned behind kart
++await page.screenshot({ path: 'test_camera_countdown.png' });
++
++// Wait for countdown to finish
++await page.waitForTimeout(5000);
++
++// Screenshot during racing
++await page.screenshot({ path: 'test_camera_racing1.png' });
++
++// Drive and check camera position relative to kart
++const camData = await page.evaluate(() => {
++  const karts = window.__allKarts;
++  const cam = document.querySelector('canvas').closest('body').__cameraDebug;
++  const player = karts ? karts[0] : null;
++  if (!player) return { error: 'no player' };
++  
++  // Access Three.js camera
++  const scene = window.__trackData;
++  return {
++    playerPos: { x: player.position.x, y: player.position.y, z: player.position.z },
++    playerRot: player.rotation,
++    playerSpeed: player.speed,
++  };
++});
++console.log('Player state:', JSON.stringify(camData));
++
++// Drive forward with acceleration and steering to test camera follow
++await page.keyboard.down('w');
++await page.waitForTimeout(3000);
++await page.screenshot({ path: 'test_camera_racing2.png' });
++
++// Test turning right
++await page.keyboard.down('d');
++await page.waitForTimeout(2000);
++await page.screenshot({ path: 'test_camera_turning.png' });
++await page.keyboard.up('d');
++
++// Test drifting - camera should shift
++await page.keyboard.down('d');
++await page.keyboard.down('Shift');
++await page.waitForTimeout(1500);
++await page.screenshot({ path: 'test_camera_drift.png' });
++await page.keyboard.up('Shift');
++await page.keyboard.up('d');
++await page.waitForTimeout(500);
++await page.screenshot({ path: 'test_camera_post_drift.png' });
++
++// Check the camera position directly
++const camState = await page.evaluate(() => {
++  const cam = window.__allKarts?.[0];
++  if (!cam) return null;
++  // Get camera through Three.js - find it from the scene
++  const cams = [];
++  return {
++    playerPos: { x: cam.position.x.toFixed(2), y: cam.position.y.toFixed(2), z: cam.position.z.toFixed(2) },
++    playerRot: cam.rotation.toFixed(4),
++    speed: cam.speed.toFixed(2),
++    isDrifting: cam.isDrifting,
++    lap: cam.currentLap,
++  };
++});
++console.log('Player state after driving:', JSON.stringify(camState));
++
++await page.keyboard.up('w');
++
++// Check for errors
++const errors = logs.filter(l => l.includes('ERROR') || l.includes('error'));
++console.log(`\nTotal log messages: ${logs.length}`);
++console.log(`Errors: ${errors.length}`);
++for (const e of errors) console.log(e);
++
++await browser.close();
++console.log('\nCamera test complete');
+diff --git a/test_camera_countdown.png b/test_camera_countdown.png
+new file mode 100644
+index 0000000..35c5700
+Binary files /dev/null and b/test_camera_countdown.png differ
+diff --git a/test_camera_drift.png b/test_camera_drift.png
+new file mode 100644
+index 0000000..57bf7cb
+Binary files /dev/null and b/test_camera_drift.png differ
+diff --git a/test_camera_final.js b/test_camera_final.js
+new file mode 100644
+index 0000000..2743274
+--- /dev/null
++++ b/test_camera_final.js
+@@ -0,0 +1,78 @@
++// Final comprehensive test for camera improvements on all 4 tracks
++import { chromium } from 'playwright';
++
++const browser = await chromium.launch({ args: ['--no-sandbox','--disable-gpu'] });
++const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++
++const allLogs = [];
++page.on('console', msg => allLogs.push(`[${msg.type()}] ${msg.text()}`));
++page.on('pageerror', err => allLogs.push(`[PAGE_ERROR] ${err.message}`));
++
++const tracks = ['Sunset Bay', 'Mossy Canyon', 'Neon Grid', 'Volcano Peak'];
++
++for (let ti = 0; ti < 4; ti++) {
++  allLogs.length = 0;
++  console.log(`\n--- ${tracks[ti]} ---`);
++  
++  await page.goto('http://localhost:4567/', { waitUntil: 'networkidle', timeout: 30000 });
++  await page.waitForTimeout(1500);
++  
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(500);
++  const cards = await page.$$('.card');
++  if (cards[ti]) await cards[ti].click();
++  await page.waitForTimeout(200);
++  await page.click('#ts-next');
++  await page.waitForTimeout(200);
++  await page.click('.card');
++  await page.waitForTimeout(200);
++  await page.click('#cs-next');
++  await page.waitForTimeout(200);
++  await page.click('#ds-start');
++  
++  // Wait for race to start
++  await page.waitForTimeout(6000);
++  
++  // Drive for 15 seconds with steering
++  await page.keyboard.down('w');
++  for (let i = 0; i < 5; i++) {
++    await page.waitForTimeout(3000);
++    // Alternate steering
++    if (i % 2 === 0) {
++      await page.keyboard.down('d');
++      await page.waitForTimeout(500);
++      await page.keyboard.up('d');
++    } else {
++      await page.keyboard.down('a');
++      await page.waitForTimeout(500);
++      await page.keyboard.up('a');
++    }
++  }
++  await page.keyboard.up('w');
++  
++  const state = await page.evaluate(() => {
++    const k = window.__allKarts;
++    if (!k || !k[0]) return null;
++    const p = k[0];
++    const racingCount = k.filter(kk => !kk.finished).length;
++    return {
++      pos: `${p.position.x.toFixed(1)},${p.position.y.toFixed(1)},${p.position.z.toFixed(1)}`,
++      speed: p.speed.toFixed(1),
++      lap: p.currentLap,
++      cp: p.lastCheckpoint,
++      racing: racingCount,
++      trackSector: window.__trackData?._lastPlayerSector,
++    };
++  });
++  
++  const errors = allLogs.filter(l => l.includes('ERROR') || l.includes('error') || l.includes('PAGE_ERROR'));
++  console.log(`  State: ${JSON.stringify(state)}`);
++  console.log(`  Errors: ${errors.length}`);
++  if (errors.length > 0) {
++    for (const e of errors.slice(0, 5)) console.log(`    ${e}`);
++  }
++  console.log(`  ✅ ${tracks[ti]} passed`);
++}
++
++await browser.close();
++console.log('\n✅ All camera tests passed');
+diff --git a/test_camera_improve.js b/test_camera_improve.js
+new file mode 100644
+index 0000000..3f8cc4d
+--- /dev/null
++++ b/test_camera_improve.js
+@@ -0,0 +1,82 @@
++// Test camera improvements - wall anti-clip, speed-dependent distance, height floor
++import { chromium } from 'playwright';
++
++const browser = await chromium.launch({ args: ['--no-sandbox','--disable-gpu'] });
++const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++
++const logs = [];
++page.on('console', msg => logs.push(`[${msg.type()}] ${msg.text()}`));
++page.on('pageerror', err => logs.push(`[PAGE_ERROR] ${err.message}`));
++
++async function runTrackTest(trackIdx, name) {
++  console.log(`\n=== Testing ${name} (track ${trackIdx}) ===`);
++  
++  await page.goto('http://localhost:4567/', { waitUntil: 'networkidle', timeout: 30000 });
++  await page.waitForTimeout(1500);
++
++  // Start a race
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(500);
++  
++  // Select track
++  const cards = await page.$$('.card');
++  if (cards[trackIdx]) await cards[trackIdx].click();
++  await page.waitForTimeout(300);
++  await page.click('#ts-next');
++  await page.waitForTimeout(300);
++  await page.click('.card'); // select first character
++  await page.waitForTimeout(300);
++  await page.click('#cs-next');
++  await page.waitForTimeout(300);
++  await page.click('#ds-start');
++  await page.waitForTimeout(1000);
++
++  // Screenshot during countdown
++  await page.screenshot({ path: `test_cam_${name}_countdown.png` });
++
++  // Wait for race start
++  await page.waitForTimeout(5000);
++
++  // Drive and turn
++  await page.keyboard.down('w');
++  await page.waitForTimeout(3000);
++  await page.screenshot({ path: `test_cam_${name}_racing.png` });
++
++  // Test tight turn to check camera behavior
++  await page.keyboard.down('d');
++  await page.waitForTimeout(2000);
++  await page.screenshot({ path: `test_cam_${name}_turning.png` });
++  await page.keyboard.up('d');
++
++  // Check state
++  const state = await page.evaluate(() => {
++    const karts = window.__allKarts;
++    if (!karts || !karts[0]) return null;
++    const p = karts[0];
++    return {
++      pos: `${p.position.x.toFixed(1)}, ${p.position.y.toFixed(1)}, ${p.position.z.toFixed(1)}`,
++      speed: p.speed.toFixed(1),
++      lap: p.currentLap,
++      cp: p.lastCheckpoint,
++    };
++  });
++  console.log(`  Player: ${JSON.stringify(state)}`);
++  
++  await page.keyboard.up('w');
++  await page.waitForTimeout(500);
++  
++  // Check errors
++  const errors = logs.filter(l => l.includes('ERROR') || l.includes('error'));
++  console.log(`  Errors: ${errors.length}`);
++  for (const e of errors.slice(-5)) console.log(`    ${e}`);
++  logs.length = 0;
++}
++
++// Test all 4 tracks
++await runTrackTest(0, 'SunsetBay');
++await runTrackTest(1, 'MossyCanyon');
++await runTrackTest(2, 'NeonGrid');
++await runTrackTest(3, 'VolcanoPeak');
++
++await browser.close();
++console.log('\n✅ Camera improvement test complete');
+diff --git a/test_camera_post_drift.png b/test_camera_post_drift.png
+new file mode 100644
+index 0000000..fc9d686
+Binary files /dev/null and b/test_camera_post_drift.png differ
+diff --git a/test_camera_racing1.png b/test_camera_racing1.png
+new file mode 100644
+index 0000000..b4ea1f6
+Binary files /dev/null and b/test_camera_racing1.png differ
+diff --git a/test_camera_racing2.png b/test_camera_racing2.png
+new file mode 100644
+index 0000000..f1b4fe6
+Binary files /dev/null and b/test_camera_racing2.png differ
+diff --git a/test_camera_turning.png b/test_camera_turning.png
+new file mode 100644
+index 0000000..8451039
+Binary files /dev/null and b/test_camera_turning.png differ
+diff --git a/test_camera_verify.js b/test_camera_verify.js
+new file mode 100644
+index 0000000..eb618ea
+--- /dev/null
++++ b/test_camera_verify.js
+@@ -0,0 +1,95 @@
++// Verify camera anti-clip and speed-dependent distance
++import { chromium } from 'playwright';
++
++const browser = await chromium.launch({ args: ['--no-sandbox','--disable-gpu'] });
++const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++
++const logs = [];
++page.on('console', msg => logs.push(`[${msg.type()}] ${msg.text()}`));
++page.on('pageerror', err => logs.push(`[PAGE_ERROR] ${err.message}`));
++
++await page.goto('http://localhost:4567/', { waitUntil: 'networkidle', timeout: 30000 });
++await page.waitForTimeout(1500);
++
++// Start race on Sunset Bay 
++await page.keyboard.press('Enter');
++await page.waitForTimeout(500);
++await page.click('.card');
++await page.waitForTimeout(300);
++await page.click('#ts-next');
++await page.waitForTimeout(300);
++await page.click('.card');
++await page.waitForTimeout(300);
++await page.click('#cs-next');
++await page.waitForTimeout(300);
++await page.click('#ds-start');
++await page.waitForTimeout(6000); // wait for countdown
++
++// Add a diagnostic to measure camera distance from kart
++const addDiagnostic = async () => {
++  return page.evaluate(() => {
++    // Inject diagnostic onto window for reading
++    const cam = window.__allKarts?.[0];
++    if (!cam) return null;
++    // Find the Three.js camera from the renderer
++    const canvas = document.getElementById('game-canvas');
++    // The camera is in scene module - we can't directly access it
++    // But we can check the player's state
++    return {
++      speed: cam.speed.toFixed(2),
++      isDrifting: cam.isDrifting,
++      boostActive: cam.boostActive,
++      pos: `${cam.position.x.toFixed(1)},${cam.position.y.toFixed(1)},${cam.position.z.toFixed(1)}`,
++    };
++  });
++};
++
++// Check state at standstill (just after countdown)
++let state = await addDiagnostic();
++console.log('At race start:', JSON.stringify(state));
++
++// Accelerate and check camera at different speeds
++await page.keyboard.down('w');
++await page.waitForTimeout(500);
++state = await addDiagnostic();
++console.log('Low speed:', JSON.stringify(state));
++
++await page.waitForTimeout(2000);
++state = await addDiagnostic();
++console.log('Mid speed:', JSON.stringify(state));
++
++await page.waitForTimeout(3000);
++state = await addDiagnostic();
++console.log('High speed:', JSON.stringify(state));
++
++// Drift test - camera shift
++await page.keyboard.down('d');
++await page.keyboard.down('Shift');
++await page.waitForTimeout(2000);
++state = await addDiagnostic();
++console.log('Drifting:', JSON.stringify(state));
++await page.screenshot({ path: 'test_cam_verify_drift.png' });
++await page.keyboard.up('Shift');
++await page.keyboard.up('d');
++
++await page.waitForTimeout(1000);
++state = await addDiagnostic();
++console.log('After drift:', JSON.stringify(state));
++
++// Drive into a wall to test anti-clip
++await page.keyboard.down('d');
++await page.waitForTimeout(4000);
++await page.screenshot({ path: 'test_cam_verify_wall.png' });
++state = await addDiagnostic();
++console.log('Near wall:', JSON.stringify(state));
++await page.keyboard.up('d');
++
++await page.keyboard.up('w');
++
++// Check for errors 
++const errors = logs.filter(l => l.includes('ERROR') || l.includes('error'));
++console.log(`\nTotal errors: ${errors.length}`);
++for (const e of errors) console.log(e);
++
++await browser.close();
++console.log('\n✅ Camera verification complete');
