@@ -69,9 +69,30 @@ export function buildTrack(trackDef, scene) {
     samples.push({ t, pos, tangent, perp, width, leftEdge, rightEdge, bankAngle });
   }
 
+  // Snap last sample's edges to match first sample for watertight closure.
+  // On a closed CatmullRom, t=1.0 and t=0.0 are geometrically identical, but
+  // floating-point drift in tangent/perp computation can leave a multi-unit gap
+  // between the last wall segment's end and the first wall segment's start
+  // (measured at ~4 units on Mossy Canyon, ~2.2 on Neon Grid).
+  if (samples.length > 2) {
+    const first = samples[0];
+    const last = samples[samples.length - 1];
+    last.pos.copy(first.pos);
+    last.leftEdge.copy(first.leftEdge);
+    last.rightEdge.copy(first.rightEdge);
+    last.tangent.copy(first.tangent);
+    last.perp.copy(first.perp);
+    last.width = first.width;
+    last.bankAngle = first.bankAngle;
+  }
+
   // 3. Build road surface ribbon
   const roadGroup = buildRoadRibbon(samples, trackDef);
   group.add(roadGroup);
+
+  // 3b. Start/finish line marker — checkered stripe across road at t=0
+  const startLine = buildStartFinishLine(samples[0]);
+  if (startLine) group.add(startLine);
 
   // 4. Build walls
   const { wallMeshes, collisionWalls } = buildWalls(samples, trackDef);
@@ -133,6 +154,63 @@ export function buildTrack(trackDef, scene) {
     itemBoxes: trackDef.itemBoxes || [],
     hazards: trackDef.hazards || [],
   };
+}
+
+/**
+ * Build a checkered start/finish line across the road at t=0.
+ * Creates alternating black/white squares as a visual landmark.
+ */
+function buildStartFinishLine(sample) {
+  if (!sample) return null;
+  const left = sample.leftEdge;
+  const right = sample.rightEdge;
+  const tangent = sample.tangent;
+  const y = sample.pos.y + 0.05; // slightly above road to avoid z-fighting
+
+  // Line is 2 units deep along the tangent direction
+  const depth = 2;
+  const numSquares = 8;
+
+  const geo = new THREE.BufferGeometry();
+  const verts = [];
+  const colors = [];
+  const indices = [];
+
+  for (let i = 0; i < numSquares; i++) {
+    const t0 = i / numSquares;
+    const t1 = (i + 1) / numSquares;
+
+    // Interpolate across the road width
+    const x0 = left.x + (right.x - left.x) * t0;
+    const z0 = left.z + (right.z - left.z) * t0;
+    const x1 = left.x + (right.x - left.x) * t1;
+    const z1 = left.z + (right.z - left.z) * t1;
+
+    // Offset forward/backward along tangent
+    const fx = tangent.x * depth * 0.5;
+    const fz = tangent.z * depth * 0.5;
+
+    const base = verts.length / 3;
+    verts.push(x0 - fx, y, z0 - fz);
+    verts.push(x1 - fx, y, z1 - fz);
+    verts.push(x1 + fx, y, z1 + fz);
+    verts.push(x0 + fx, y, z0 + fz);
+
+    const isWhite = i % 2 === 0;
+    const c = isWhite ? 1.0 : 0.15;
+    for (let v = 0; v < 4; v++) colors.push(c, c, c);
+
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.setIndex(indices);
+
+  const mat = new THREE.MeshBasicMaterial({ vertexColors: true });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.renderOrder = 1; // render on top of road
+  return mesh;
 }
 
 function buildRoadRibbon(samples, trackDef) {
@@ -226,16 +304,18 @@ function buildWalls(samples, trackDef) {
   for (let i = 0; i < samples.length - 1; i++) {
     const s0 = samples[i];
     const s1 = samples[i + 1];
+    // Store the spline t-value of the source sample on each wall for sector mapping
+    const sampleT = s0.t;
 
     // Left wall segment
     const lp1 = s0.leftEdge;
     const lp2 = s1.leftEdge;
-    addWallSegment(lp1, lp2, wallHeight, wallThickness, wallMat, wallMeshes, collisionWalls, 'left');
+    addWallSegment(lp1, lp2, wallHeight, wallThickness, wallMat, wallMeshes, collisionWalls, 'left', sampleT);
 
     // Right wall segment
     const rp1 = s0.rightEdge;
     const rp2 = s1.rightEdge;
-    addWallSegment(rp1, rp2, wallHeight, wallThickness, wallMat, wallMeshes, collisionWalls, 'right');
+    addWallSegment(rp1, rp2, wallHeight, wallThickness, wallMat, wallMeshes, collisionWalls, 'right', sampleT);
   }
 
   // Only create instanced mesh if there are wall segments
@@ -248,7 +328,7 @@ function buildWalls(samples, trackDef) {
   return { wallMeshes: [], collisionWalls };
 }
 
-function addWallSegment(p1, p2, height, thickness, mat, meshes, collisionWalls, side) {
+function addWallSegment(p1, p2, height, thickness, mat, meshes, collisionWalls, side, sampleT) {
   const dx = p2.x - p1.x;
   const dz = p2.z - p1.z;
   const len = Math.sqrt(dx * dx + dz * dz);
@@ -270,6 +350,7 @@ function addWallSegment(p1, p2, height, thickness, mat, meshes, collisionWalls, 
     normal,
     y: (p1.y + p2.y) / 2,
     height,
+    sampleT,  // spline t-value of the source sample for sector mapping
   });
 
   // Visual: store data for merge later
@@ -411,15 +492,21 @@ function buildSky(environment) {
 }
 
 function buildSectors(samples, collisionWalls, numSectors) {
+  // Assign walls to sectors based on their spline t-value rather than
+  // sequential index. This ensures the t-based sector lookup in physics.js
+  // (sectorIdx = floor(nearest.t * numSectors)) correctly maps to the sector
+  // containing walls at that track position — even when addWallSegment skips
+  // short segments, which would break sequential index-based assignment.
   const sectors = [];
-  const wallsPerSector = Math.ceil(collisionWalls.length / numSectors);
-
   for (let i = 0; i < numSectors; i++) {
-    const start = i * wallsPerSector;
-    const end = Math.min(start + wallsPerSector, collisionWalls.length);
-    sectors.push({
-      wallIndices: Array.from({ length: end - start }, (_, j) => start + j),
-    });
+    sectors.push({ wallIndices: [] });
+  }
+
+  for (let w = 0; w < collisionWalls.length; w++) {
+    const wall = collisionWalls[w];
+    const t = wall.sampleT !== undefined ? wall.sampleT : w / collisionWalls.length;
+    const sIdx = Math.min(Math.floor(t * numSectors), numSectors - 1);
+    sectors[sIdx].wallIndices.push(w);
   }
 
   return sectors;
