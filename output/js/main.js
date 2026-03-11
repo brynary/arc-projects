@@ -154,7 +154,21 @@ function fixedUpdate(dt) {
 
   /* AI */
   for (const k of allKarts) {
-    if (k.isPlayer || k.finished) continue;
+    if (k.isPlayer) continue;
+    if (k.finished) {
+      // Finished AI karts coast to a stop; don't run AI logic
+      if (Math.abs(k.speed) > 1) {
+        k.speed *= 0.95;
+        const sinH = Math.sin(k.rotation);
+        const cosH = Math.cos(k.rotation);
+        k.position.x += sinH * k.speed * dt;
+        k.position.z += cosH * k.speed * dt;
+        k.mesh.position.copy(k.position);
+      } else {
+        k.speed = 0;
+      }
+      continue;
+    }
     updateAI(k, trackData, allKarts, dt);
     const ai = getAIInput(k);
     updateDrift(k, ai, dt);

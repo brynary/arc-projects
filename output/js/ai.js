@@ -45,8 +45,11 @@ const DIFFICULTY_PRESETS = {
 
 const AI_UPDATE_INTERVAL  = 1 / 30;            // 30 Hz decision rate
 const STUCK_SPEED_THRESH  = 5;                  // u/s below which counts as stuck
-const STUCK_TIME_THRESH   = 1.5;                // seconds before reverse kick-in
+const STUCK_TIME_THRESH   = 1.0;                // seconds before reverse kick-in
 const REVERSE_DURATION    = 0.8;                // seconds of reverse
+const MAX_CONSECUTIVE_STUCKS = 3;               // escalation threshold
+const ESCALATED_REVERSE_DURATION = 1.5;         // longer reverse after repeated stucks
+const RECOVERY_BIAS_DURATION = 0.5;             // seconds of post-reverse homing to spline
 const ITEM_USE_DELAY_MIN  = 1.0;
 const ITEM_USE_DELAY_MAX  = 3.0;
 const FIZZBOMB_RANGE      = 50;
@@ -99,6 +102,10 @@ export function initAI(kart, trackData, difficulty = globalDifficulty) {
     stuckTimer: 0,
     reverseTimer: 0,
     reverseSteerBias: 0,
+    consecutiveStucks: 0,         // escalation counter
+    lastStuckTime: 0,             // race-time of last stuck event
+    recoveryBiasTimer: 0,         // post-reverse spline-homing period
+    _trackData: trackData,        // reference for reverse steering calc
 
     // Drift
     driftTimer: 0,
@@ -157,7 +164,7 @@ export function updateAI(kart, trackData, allKarts, dt) {
     ai.wantsDriftRelease = false;
 
     if (ai.reverseTimer > 0) {
-      updateReverse(kart, dt);
+      updateReverse(kart, trackData, dt);
     } else {
       updateSteering(kart, trackData);
       updateDriftDecision(kart, trackData);
@@ -249,7 +256,13 @@ function updateSteering(kart, trackData) {
 
   // 2. Compute speed-adaptive look-ahead distance
   const speedRatio = clamp(Math.abs(kart.speed) / (kart._baseTopSpeed || 80), 0, 1);
-  const lookAhead = lerp(ai.baseLookAhead, ai.baseLookAhead * 2, speedRatio);
+  let lookAhead = lerp(ai.baseLookAhead, ai.baseLookAhead * 2, speedRatio);
+
+  // During recovery bias (just came out of reverse), use shorter look-ahead
+  // to home more tightly toward the spline
+  if (ai.recoveryBiasTimer > 0) {
+    lookAhead = ai.baseLookAhead * 0.5;
+  }
 
   // 3. Convert look-ahead distance to a spline-parameter offset
   const splineLength = ai.spline.getLength();
@@ -261,12 +274,14 @@ function updateSteering(kart, trackData) {
   ai.spline.getPointAt(targetTOnSpline, _targetPt);
 
   // 5. Desired heading toward target + steering error
+  //    During recovery bias, suppress steering error for cleaner homing
   _toTarget.set(
     _targetPt.x - kart.position.x,
     0,
     _targetPt.z - kart.position.z,
   );
-  const desiredHeading = Math.atan2(_toTarget.x, _toTarget.z) + ai.steeringErrorRad;
+  const errorScale = ai.recoveryBiasTimer > 0 ? 0 : 1;
+  const desiredHeading = Math.atan2(_toTarget.x, _toTarget.z) + ai.steeringErrorRad * errorScale;
 
   // 6. Heading error (wrapped to -PI..PI)
   let headingError = desiredHeading - kart.rotation;
@@ -283,7 +298,9 @@ function updateSteering(kart, trackData) {
   ai.wantsBrake = false;
 
   // Ease off throttle if heading error is very large (bad line, recovering)
-  if (Math.abs(headingError) > 1.2) {
+  // But NOT if we're off-road — keep driving to get back on track
+  const isOffRoad = kart.surfaceType === 'offroad';
+  if (Math.abs(headingError) > 1.2 && !isOffRoad && !ai.recoveryBiasTimer) {
     ai.wantsAccel = false;
     ai.wantsBrake = kart.speed > 30;
   }
@@ -514,25 +531,94 @@ function updateRubberBand(kart, allKarts) {
 function updateStuckDetection(kart, dt) {
   const ai = kart.ai;
 
+  // Tick recovery bias (post-reverse spline-homing)
+  if (ai.recoveryBiasTimer > 0) {
+    ai.recoveryBiasTimer -= dt;
+  }
+
   if (ai.reverseTimer > 0) {
     ai.reverseTimer -= dt;
+    // When reverse ends, start recovery bias period
+    if (ai.reverseTimer <= 0) {
+      ai.recoveryBiasTimer = RECOVERY_BIAS_DURATION;
+    }
     return;
   }
 
-  if (Math.abs(kart.speed) < STUCK_SPEED_THRESH && !kart.frozenTimer) {
+  // Don't count as stuck during freeze (respawn, countdown)
+  if (kart.frozenTimer > 0) {
+    ai.stuckTimer = 0;
+    return;
+  }
+
+  if (Math.abs(kart.speed) < STUCK_SPEED_THRESH) {
     ai.stuckTimer += dt;
     if (ai.stuckTimer >= STUCK_TIME_THRESH) {
-      // Kick into reverse
-      ai.reverseTimer = REVERSE_DURATION;
+      // Track consecutive stucks (within 8 seconds of each other)
+      const now = performance.now() / 1000;
+      if (now - ai.lastStuckTime < 8) {
+        ai.consecutiveStucks++;
+      } else {
+        ai.consecutiveStucks = 1;
+      }
+      ai.lastStuckTime = now;
+
+      // Escalate reverse duration for repeated stucks
+      const escalated = ai.consecutiveStucks >= MAX_CONSECUTIVE_STUCKS;
+      ai.reverseTimer = escalated ? ESCALATED_REVERSE_DURATION : REVERSE_DURATION;
       ai.stuckTimer = 0;
-      ai.reverseSteerBias = Math.random() < 0.5 ? -1 : 1;
+
+      // Smart reverse steering: steer toward the spline center instead of random
+      computeReverseSteerBias(kart);
     }
   } else {
     ai.stuckTimer = 0;
   }
 }
 
-function updateReverse(kart, _dt) {
+/**
+ * Compute reverse steer direction toward the nearest spline point.
+ * When reversing, the kart moves backward, so we steer the front end
+ * AWAY from the spline to turn the rear toward it.
+ */
+function computeReverseSteerBias(kart) {
+  const ai = kart.ai;
+  const trackData = ai._trackData;
+
+  if (!trackData || !trackData.centerCurve) {
+    ai.reverseSteerBias = Math.random() < 0.5 ? -1 : 1;
+    return;
+  }
+
+  // Find the spline point slightly ahead (where we want to go after recovery)
+  const nearest = findNearestSplinePoint(
+    trackData.centerCurve, kart.position.x, kart.position.z, 50, kart.position.y
+  );
+
+  // Get a point slightly ahead on the spline for better recovery direction
+  const lookT = (nearest.t + 0.02) % 1; // ~2% ahead
+  const targetPt = trackData.centerCurve.getPointAt(lookT);
+
+  // Direction from kart to target (in world space)
+  const dx = targetPt.x - kart.position.x;
+  const dz = targetPt.z - kart.position.z;
+  const toTargetAngle = Math.atan2(dx, dz);
+
+  // Kart's current heading
+  const heading = kart.rotation;
+
+  // When reversing, the kart moves backward. To turn the rear toward the spline,
+  // we need to steer the front end to the opposite side.
+  // Cross product sign tells us which side the target is on.
+  let angleDiff = toTargetAngle - heading;
+  angleDiff = ((angleDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+  // When reversing, steer opposite to turn rear toward target
+  ai.reverseSteerBias = angleDiff > 0 ? -1 : 1;
+}
+
+function updateReverse(kart, trackData, _dt) {
   const ai = kart.ai;
 
   ai.wantsAccel       = false;
