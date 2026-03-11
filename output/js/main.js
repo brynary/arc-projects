@@ -265,18 +265,10 @@ function showFinalLapBanner() {
 
 /* ═══════════════════════  MINIMAP  ═══════════════════════ */
 let minimapFrame = 0;
-function updateMinimap() {
-  minimapFrame++;
-  if (minimapFrame % 2 !== 0) return;  // 30 Hz
-  const cv = document.getElementById('minimap-cv');
-  if (!cv || !trackData?.centerCurve) return;
-  const ctx = cv.getContext('2d');
-  const W = 130, H = 130;
-  ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
-  ctx.fillRect(0, 0, W, H);
+let minimapCache = null; // { pts, minX, maxX, minZ, maxZ, sc, offX, offZ, charColors, tx, tz }
 
-  /* compute bounding box of track */
+function buildMinimapCache(trackData) {
+  if (!trackData?.centerCurve) { minimapCache = null; return; }
   const pts = [];
   for (let i = 0; i <= 60; i++) {
     const p = trackData.centerCurve.getPointAt(i / 60);
@@ -284,12 +276,29 @@ function updateMinimap() {
   }
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const p of pts) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); }
-  const pad = 12;
+  const W = 130, H = 130, pad = 12;
   const scaleX = (W - pad * 2) / (maxX - minX || 1);
   const scaleZ = (H - pad * 2) / (maxZ - minZ || 1);
   const sc = Math.min(scaleX, scaleZ);
   const offX = (W - (maxX - minX) * sc) / 2;
   const offZ = (H - (maxZ - minZ) * sc) / 2;
+  const charColors = {};
+  for (const c of characters) charColors[c.id] = '#' + c.color.toString(16).padStart(6, '0');
+  minimapCache = { pts, minX, sc, offX, minZ, offZ, charColors };
+}
+
+function updateMinimap() {
+  minimapFrame++;
+  if (minimapFrame % 2 !== 0) return;  // 30 Hz
+  const cv = document.getElementById('minimap-cv');
+  if (!cv || !minimapCache) return;
+  const ctx = cv.getContext('2d');
+  const W = 130, H = 130;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(0, 0, W, H);
+
+  const { pts, minX, sc, offX, minZ, offZ, charColors } = minimapCache;
   const tx = x => (x - minX) * sc + offX;
   const tz = z => (z - minZ) * sc + offZ;
 
@@ -305,9 +314,6 @@ function updateMinimap() {
   ctx.closePath(); ctx.stroke();
 
   /* draw karts */
-  const charColors = {};
-  for (const c of characters) charColors[c.id] = '#' + c.color.toString(16).padStart(6, '0');
-
   for (const k of allKarts) {
     ctx.beginPath();
     ctx.arc(tx(k.position.x), tz(k.position.z), k.isPlayer ? 4 : 2.5, 0, Math.PI * 2);
@@ -510,6 +516,9 @@ async function startRace() {
   const mod = await import(`./tracks/${TRACK_FILES[selectedTrackIdx]}.js`);
   trackDef = mod.trackDefinition;
   trackData = buildTrack(trackDef, scene);
+
+  /* cache minimap data (track is static) */
+  buildMinimapCache(trackData);
 
   /* environment */
   const env = trackDef.environment || {};

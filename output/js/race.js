@@ -185,6 +185,9 @@ function updateCheckpoints(kart, trackData) {
   return null;
 }
 
+// Pre-allocated array for position sorting (avoids per-frame [...allKarts] spread)
+let _sortBuffer = [];
+
 /**
  * Compute race progress and assign positions 1-8.
  */
@@ -208,16 +211,19 @@ function updatePositions(allKarts, trackData) {
     kart.raceProgress = (kart.currentLap * numCheckpoints) + kart.lastCheckpoint + 1 + fraction;
   }
 
-  // Sort by progress descending (finished karts always first, by finish time)
-  const sorted = [...allKarts].sort((a, b) => {
+  // Reuse sort buffer to avoid allocating a new array every frame
+  _sortBuffer.length = allKarts.length;
+  for (let i = 0; i < allKarts.length; i++) _sortBuffer[i] = allKarts[i];
+
+  _sortBuffer.sort((a, b) => {
     if (a.finished && b.finished) return a.finishTime - b.finishTime;
     if (a.finished) return -1;
     if (b.finished) return 1;
     return b.raceProgress - a.raceProgress;
   });
 
-  for (let i = 0; i < sorted.length; i++) {
-    sorted[i].racePosition = i + 1;
+  for (let i = 0; i < _sortBuffer.length; i++) {
+    _sortBuffer[i].racePosition = i + 1;
   }
 }
 

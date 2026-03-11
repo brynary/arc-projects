@@ -364,6 +364,9 @@ function removeShieldVisual(kart) {
 
 const HOMING_TURN_RATE = 2; // rad/s
 
+// Reusable temporaries for homing pigeon updates (avoid per-frame allocations)
+const _toTarget = new THREE.Vector3();
+
 /**
  * Update all active projectiles (move, check collisions).
  */
@@ -386,17 +389,21 @@ export function updateProjectiles(allKarts, dt) {
     // Homing pigeon: steer toward target
     if (proj.type === 'homingPigeon' && proj.targetKart) {
       const target = proj.targetKart;
-      const toTarget = new THREE.Vector3().subVectors(target.position, proj.position);
-      toTarget.y = 0;
-      const dist = toTarget.length();
+      _toTarget.subVectors(target.position, proj.position);
+      _toTarget.y = 0;
+      const dist = _toTarget.length();
 
       if (dist > 0.1) {
-        toTarget.normalize();
+        _toTarget.divideScalar(dist); // normalize in-place without allocation
 
-        const currentDir = proj.velocity.clone().normalize();
+        // Compute current direction inline (avoid clone + normalize allocation)
+        const velLen = Math.sqrt(proj.velocity.x * proj.velocity.x + proj.velocity.z * proj.velocity.z);
+        const cdx = velLen > 0 ? proj.velocity.x / velLen : 0;
+        const cdz = velLen > 0 ? proj.velocity.z / velLen : 1;
+
         // Compute angular difference
-        const cross = currentDir.x * toTarget.z - currentDir.z * toTarget.x;
-        const dot = currentDir.x * toTarget.x + currentDir.z * toTarget.z;
+        const cross = cdx * _toTarget.z - cdz * _toTarget.x;
+        const dot = cdx * _toTarget.x + cdz * _toTarget.z;
         let angleToTarget = Math.atan2(-cross, dot);
 
         // Clamp turn rate
@@ -411,8 +418,13 @@ export function updateProjectiles(allKarts, dt) {
         proj.velocity.x = vx;
         proj.velocity.z = vz;
 
-        // Maintain speed
-        proj.velocity.normalize().multiplyScalar(90);
+        // Maintain speed — normalize and scale inline
+        const newLen = Math.sqrt(proj.velocity.x * proj.velocity.x + proj.velocity.z * proj.velocity.z);
+        if (newLen > 0) {
+          const scale = 90 / newLen;
+          proj.velocity.x *= scale;
+          proj.velocity.z *= scale;
+        }
       }
     }
 

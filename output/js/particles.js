@@ -70,7 +70,9 @@ export function spawnParticle(x, y, z, vx, vy, vz, color, life = 0.3, size = 0.3
 export function updateParticles(dt) {
   if (!instancedMesh) return;
 
-  for (let i = activeParticles.length - 1; i >= 0; i--) {
+  // Iterate forward; use swap-and-pop for O(1) removal instead of splice
+  let i = 0;
+  while (i < activeParticles.length) {
     const p = activeParticles[i];
     p.life -= dt;
 
@@ -79,7 +81,10 @@ export function updateParticles(dt) {
       dummyMatrix.makeScale(0, 0, 0);
       instancedMesh.setMatrixAt(p.idx, dummyMatrix);
       particlePool.push(p.idx);
-      activeParticles.splice(i, 1);
+      // Swap with last element and pop (O(1) instead of O(n) splice)
+      const last = activeParticles.length - 1;
+      if (i < last) activeParticles[i] = activeParticles[last];
+      activeParticles.pop();
       continue;
     }
 
@@ -101,6 +106,7 @@ export function updateParticles(dt) {
     instancedMesh.setMatrixAt(p.idx, dummyMatrix);
     dummyColor.setRGB(p.r, p.g, p.b);
     instancedMesh.setColorAt(p.idx, dummyColor);
+    i++;
   }
 
   instancedMesh.instanceMatrix.needsUpdate = true;
