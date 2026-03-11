@@ -150,16 +150,19 @@ const aiRacing = [
   { x:  3, y: 0, z: 160 },
   { x:  4, y: 0, z: 200 },
 
-  // Hairpin — wide entry, tight apex
-  { x: 10, y: 0, z: 225 },
-  { x: 30, y: 0, z: 244 },
-  { x: 48, y: 0, z: 245 },  // apex close to inner wall
-  { x: 55, y: 0, z: 230 },
-  { x: 48, y: 0, z: 210 },
-  { x: 35, y: 0, z: 200 },
+  // Hairpin — wider path through the turn, more intermediate points
+  { x:  8, y: 0, z: 220 },
+  { x: 18, y: 0, z: 238 },
+  { x: 32, y: 0, z: 250 },
+  { x: 45, y: 0, z: 254 },  // near track center apex
+  { x: 58, y: 0, z: 250 },
+  { x: 65, y: 0, z: 238 },
+  { x: 62, y: 0, z: 220 },
+  { x: 52, y: 0, z: 205 },
+  { x: 38, y: 0, z: 198 },
 
   // Palm Beach — smooth gentle line
-  { x: 32, y: 0, z: 170 },
+  { x: 32, y: 0, z: 175 },
   { x: 38, y: 0, z: 140 },
   { x: 52, y: 0, z: 105 },
   { x: 72, y: 0, z:  75 },

@@ -15,7 +15,7 @@ import { getNearestSplineT, getTrackYAtXZ, isOnRoad } from './tracks/trackBase.j
 /* ── Constants ─────────────────────────────────────────────────────── */
 
 const KART_RADIUS = 1.5;
-const GLANCING_ANGLE = Math.PI / 6; // 30 degrees
+const GLANCING_ANGLE = Math.PI / 4; // 45 degrees
 
 /* ── Kart state factory ────────────────────────────────────────────── */
 
@@ -167,7 +167,7 @@ function handleWallCollisions(kart, cd) {
 
     // Push kart out to KART_RADIUS from wall
     if (dist > 0.001) {
-      const pushScale = KART_RADIUS / dist;
+      const pushScale = (KART_RADIUS + 0.1) / dist;
       kart.x = cp.x + dx * pushScale;
       kart.z = cp.z + dz * pushScale;
     } else {
@@ -195,12 +195,12 @@ function handleWallCollisions(kart, cd) {
       const hitAngle = Math.acos(clamp(absDot, 0, 1));
 
       if (hitAngle < GLANCING_ANGLE) {
-        // Glancing blow — mild slowdown
-        kart.speed *= 0.8;
+        // Glancing blow — very mild slowdown
+        kart.speed *= 0.95;
       } else {
-        // Direct hit — significant slowdown + brief stun
-        kart.speed *= 0.5;
-        kart.stunTimer = 0.2;
+        // Direct hit — slowdown + brief stun
+        kart.speed *= 0.6;
+        kart.stunTimer = 0.15;
       }
     } else {
       kart.speed *= 0.5;
