@@ -1,0 +1,7 @@
+diff --git a/.workflow/improve_counter b/.workflow/improve_counter
+new file mode 100644
+index 0000000..d00491f
+--- /dev/null
++++ b/.workflow/improve_counter
+@@ -0,0 +1 @@
++1
