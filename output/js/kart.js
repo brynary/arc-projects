@@ -179,6 +179,13 @@ export function updateKart(kart, input, dt) {
     }
   }
 
+  // Universal overspeed deceleration: when speed exceeds effectiveTopSpeed
+  // (boost ended, went offroad, etc.) and we're not already lerping in accel branch,
+  // smoothly bring speed down. Prevents floaty feel when losing boost while coasting.
+  if (kart.speed > effectiveTopSpeed && !(accelInput && !stunned)) {
+    kart.speed = lerp(kart.speed, effectiveTopSpeed, 4 * dt);
+  }
+
   // Steering
   const steerLeft = input.isDown('steerLeft');
   const steerRight = input.isDown('steerRight');
@@ -207,7 +214,14 @@ export function updateKart(kart, input, dt) {
     turnMult = lerp(1.5, 1.0, (speedRatio - 0.3) / 0.7);
   }
 
-  const effectiveTurnRate = kart.turnRate * turnMult;
+  let effectiveTurnRate = kart.turnRate * turnMult;
+
+  // High-speed turn damping: when boosting above normal topSpeed, reduce turn rate
+  // for stability — makes boost feel fast but controllable
+  if (Math.abs(kart.speed) > kart.topSpeed) {
+    const overSpeedFactor = clamp(Math.abs(kart.speed) / kart.topSpeed, 1, 1.6);
+    effectiveTurnRate /= lerp(1.0, overSpeedFactor, 0.6);
+  }
 
   // Apply steering
   if (!kart.isDrifting) {
@@ -218,8 +232,11 @@ export function updateKart(kart, input, dt) {
       kart.rotation += kart.driftDirection * 0.12; // ~7° snap into drift
       kart._driftStarted = false;
     }
-    // During drift, steering modulates drift angle
-    const driftSteerRate = effectiveTurnRate * 0.6;
+    // Counter-steer modulation: steering against drift direction tightens arc,
+    // steering with it widens — gives more skill expression
+    const counterSteer = -kart.steerAmount * kart.driftDirection; // positive = counter-steering
+    const driftSteerMod = clamp(0.6 + counterSteer * 0.25, 0.35, 0.85);
+    const driftSteerRate = effectiveTurnRate * driftSteerMod;
     kart.rotation += (kart.driftDirection * effectiveTurnRate * 0.7 + kart.steerAmount * driftSteerRate) * dt;
   }
 
