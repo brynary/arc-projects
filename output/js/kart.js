@@ -78,7 +78,9 @@ export function createKart(character, isPlayer = false, racerIndex = 0) {
     _earlyAccel: false,   // set true if player presses accelerate before GO
 
     // Visual state
-    tiltAngle: 0,
+    tiltAngle: 0,       // Z-axis tilt (drift lean)
+    pitchAngle: 0,      // X-axis pitch (braking nose-dip)
+    offroadBobPhase: 0, // phase accumulator for offroad bounce
 
     // Wheel references (for animation)
     wheels: {
@@ -290,6 +292,24 @@ export function updateKart(kart, input, dt) {
     kart.tiltAngle = lerp(kart.tiltAngle, 0, 8 * dt);
   }
 
+  // Braking nose-dip: tilt kart forward when braking hard at speed
+  // Gives visual weight-transfer feedback, makes braking feel physical
+  const brakingHard = brakeInput && !stunned && kart.speed > 3;
+  const targetPitch = brakingHard ? clamp(kart.speed / kart.topSpeed, 0.15, 1) * 0.18 : 0;
+  kart.pitchAngle = lerp(kart.pitchAngle, targetPitch, 12 * dt);
+
+  // Off-road visual bounce: spec says "kart bounces slightly more" on offroad
+  // Subtle sinusoidal bob proportional to speed when driving on offroad surfaces
+  if (kart.surfaceBlend > 0.1 && Math.abs(kart.speed) > 8) {
+    kart.offroadBobPhase += dt * (6 + Math.abs(kart.speed) * 0.12);
+    // Keep phase bounded to avoid float precision issues over long races
+    if (kart.offroadBobPhase > 100) kart.offroadBobPhase -= 100;
+  } else {
+    // Smoothly decay bob phase effect by zeroing the amplitude (phase drifts harmlessly)
+    kart.offroadBobPhase += dt * 2;
+    if (kart.offroadBobPhase > 100) kart.offroadBobPhase -= 100;
+  }
+
   // Sync mesh
   syncMesh(kart);
 }
@@ -300,8 +320,14 @@ function moveToward(current, target, maxDelta) {
 }
 
 function syncMesh(kart) {
-  kart.mesh.position.copy(kart.position);
-  kart.mesh.rotation.set(0, kart.rotation, kart.tiltAngle);
+  // Apply off-road bounce: subtle Y bob when surfaceBlend > 0.1
+  const bobAmp = kart.surfaceBlend > 0.1
+    ? kart.surfaceBlend * clamp(Math.abs(kart.speed) / 60, 0, 1) * 0.25
+    : 0;
+  const bobY = bobAmp * Math.sin(kart.offroadBobPhase);
+
+  kart.mesh.position.set(kart.position.x, kart.position.y + bobY, kart.position.z);
+  kart.mesh.rotation.set(kart.pitchAngle, kart.rotation, kart.tiltAngle);
 }
 
 function animateWheels(kart, dt) {
@@ -330,6 +356,8 @@ export function respawnKart(kart) {
   kart.driftTier = 0;
   kart.boostActive = false;
   kart.surfaceBlend = 0;
+  kart.pitchAngle = 0;
+  kart.offroadBobPhase = 0;
   syncMesh(kart);
 }
 

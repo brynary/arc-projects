@@ -40,6 +40,13 @@ export function updateCamera(camera, kart, input, dt) {
   }
   driftShift = lerp(driftShift, targetShift, 1 - Math.pow(0.05, dt));
 
+  // Speed-dependent FOV: wider at high speed / boost for dramatic "speed rush"
+  // Base 65° → up to 75° at boost overspeed. Narrows slightly to 63° at standstill.
+  const speedRatioFov = clamp(Math.abs(kart.speed) / (kart.topSpeed || 90), 0, 1.4);
+  const targetFov = 63 + speedRatioFov * 8.5; // 63 → 71.5 at top speed, up to ~75 at 1.4× (boost)
+  camera.fov = lerp(camera.fov, targetFov, 1 - Math.pow(0.1, dt));
+  camera.updateProjectionMatrix();
+
   if (cameraState.mode === 'chase') {
     updateChaseCamera(camera, kart, dt);
   } else if (cameraState.mode === 'orbit') {
