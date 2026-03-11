@@ -1,0 +1,722 @@
+diff --git a/.workflow/improve_log.md b/.workflow/improve_log.md
+index 1718fad..1c03d50 100644
+--- a/.workflow/improve_log.md
++++ b/.workflow/improve_log.md
+@@ -34,4 +34,11 @@
+ - **High-speed turn rate damping during boost**: When kart speed exceeds normal topSpeed (during boost), turn rate is now reduced proportionally to the overspeed factor (up to 1.6x). At max boost speed, steering is ~36% less responsive. This makes boost feel fast and dramatic without the kart becoming twitchy or uncontrollable at high velocities.
+ - **Universal overspeed deceleration**: Previously, speed clamping when exceeding effectiveTopSpeed only triggered while the player held accelerate. Now, overspeed decel also applies during coasting and braking (lerp rate 4/s). This eliminates the floaty feel when boost expires while coasting or when driving from road onto offroad without holding throttle.
+ - **Drift counter-steer modulation**: During drift, steering against the drift direction (counter-steering) now tightens the arc by reducing the drift steer modifier from 0.6 to as low as 0.35, while steering with the drift widens it up to 0.85. This gives skilled players more control over their drift line and makes drifting feel more responsive to input.
+-- Verified: pass — All 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak) load and race cleanly with zero console errors. Drift, boost, coast, and steering all function correctly across all tracks.
+\ No newline at end of file
++- Verified: pass — All 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak) load and race cleanly with zero console errors. Drift, boost, coast, and steering all function correctly across all tracks.
++
++## Iteration 6 — Focus: AI Reliability
++- **Smart reverse steering**: When an AI kart gets stuck and enters reverse recovery, it now computes the direction toward the nearest spline point (slightly ahead on the track) instead of choosing a random steer direction. This ensures the kart reverses TOWARD the racing line rather than potentially deeper into a wall. Uses `computeReverseSteerBias()` which finds the track center and steers the rear toward it.
++- **Faster stuck detection + progressive escalation**: Reduced stuck time threshold from 1.5s to 1.0s for quicker recovery. Added `consecutiveStucks` counter — if the AI gets stuck 3+ times within 8 seconds, reverse duration escalates from 0.8s to 1.5s for a more aggressive recovery maneuver. The counter resets if 8+ seconds pass between stuck events.
++- **Post-reverse recovery bias**: After reverse ends, a 0.5s `recoveryBiasTimer` activates shorter look-ahead (50% of normal) and suppresses steering error. This makes the AI home more tightly toward the spline center immediately after unsticking, preventing re-entry into the same wall. The off-road throttle cut is also suppressed during recovery to keep the kart moving.
++- **Finished AI karts coast to stop**: Previously, finished AI karts were completely skipped in the update loop, leaving them frozen in place on the track. Now they gradually decelerate (5% per frame) and continue moving forward until stopped, preventing them from being static obstacles blocking the track for other racers.
++- Verified: pass — All 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak) load and race cleanly with zero console errors. AI karts actively race and overtake the player across all tracks.
+\ No newline at end of file
+diff --git a/ai_test_t15.png b/ai_test_t15.png
+new file mode 100644
+index 0000000..3b03dfd
+Binary files /dev/null and b/ai_test_t15.png differ
+diff --git a/ai_test_t3.png b/ai_test_t3.png
+new file mode 100644
+index 0000000..67aada5
+Binary files /dev/null and b/ai_test_t3.png differ
+diff --git a/ai_test_t30.png b/ai_test_t30.png
+new file mode 100644
+index 0000000..e267574
+Binary files /dev/null and b/ai_test_t30.png differ
+diff --git a/ai_volcano_test.png b/ai_volcano_test.png
+new file mode 100644
+index 0000000..eb58264
+Binary files /dev/null and b/ai_volcano_test.png differ
+diff --git a/ai_volcano_test2.png b/ai_volcano_test2.png
+new file mode 100644
+index 0000000..004a80b
+Binary files /dev/null and b/ai_volcano_test2.png differ
+diff --git a/output/js/ai.js b/output/js/ai.js
+index a904c1d..16ecacb 100644
+--- a/output/js/ai.js
++++ b/output/js/ai.js
+@@ -45,8 +45,11 @@ const DIFFICULTY_PRESETS = {
+ 
+ const AI_UPDATE_INTERVAL  = 1 / 30;            // 30 Hz decision rate
+ const STUCK_SPEED_THRESH  = 5;                  // u/s below which counts as stuck
+-const STUCK_TIME_THRESH   = 1.5;                // seconds before reverse kick-in
++const STUCK_TIME_THRESH   = 1.0;                // seconds before reverse kick-in
+ const REVERSE_DURATION    = 0.8;                // seconds of reverse
++const MAX_CONSECUTIVE_STUCKS = 3;               // escalation threshold
++const ESCALATED_REVERSE_DURATION = 1.5;         // longer reverse after repeated stucks
++const RECOVERY_BIAS_DURATION = 0.5;             // seconds of post-reverse homing to spline
+ const ITEM_USE_DELAY_MIN  = 1.0;
+ const ITEM_USE_DELAY_MAX  = 3.0;
+ const FIZZBOMB_RANGE      = 50;
+@@ -99,6 +102,10 @@ export function initAI(kart, trackData, difficulty = globalDifficulty) {
+     stuckTimer: 0,
+     reverseTimer: 0,
+     reverseSteerBias: 0,
++    consecutiveStucks: 0,         // escalation counter
++    lastStuckTime: 0,             // race-time of last stuck event
++    recoveryBiasTimer: 0,         // post-reverse spline-homing period
++    _trackData: trackData,        // reference for reverse steering calc
+ 
+     // Drift
+     driftTimer: 0,
+@@ -157,7 +164,7 @@ export function updateAI(kart, trackData, allKarts, dt) {
+     ai.wantsDriftRelease = false;
+ 
+     if (ai.reverseTimer > 0) {
+-      updateReverse(kart, dt);
++      updateReverse(kart, trackData, dt);
+     } else {
+       updateSteering(kart, trackData);
+       updateDriftDecision(kart, trackData);
+@@ -249,7 +256,13 @@ function updateSteering(kart, trackData) {
+ 
+   // 2. Compute speed-adaptive look-ahead distance
+   const speedRatio = clamp(Math.abs(kart.speed) / (kart._baseTopSpeed || 80), 0, 1);
+-  const lookAhead = lerp(ai.baseLookAhead, ai.baseLookAhead * 2, speedRatio);
++  let lookAhead = lerp(ai.baseLookAhead, ai.baseLookAhead * 2, speedRatio);
++
++  // During recovery bias (just came out of reverse), use shorter look-ahead
++  // to home more tightly toward the spline
++  if (ai.recoveryBiasTimer > 0) {
++    lookAhead = ai.baseLookAhead * 0.5;
++  }
+ 
+   // 3. Convert look-ahead distance to a spline-parameter offset
+   const splineLength = ai.spline.getLength();
+@@ -261,12 +274,14 @@ function updateSteering(kart, trackData) {
+   ai.spline.getPointAt(targetTOnSpline, _targetPt);
+ 
+   // 5. Desired heading toward target + steering error
++  //    During recovery bias, suppress steering error for cleaner homing
+   _toTarget.set(
+     _targetPt.x - kart.position.x,
+     0,
+     _targetPt.z - kart.position.z,
+   );
+-  const desiredHeading = Math.atan2(_toTarget.x, _toTarget.z) + ai.steeringErrorRad;
++  const errorScale = ai.recoveryBiasTimer > 0 ? 0 : 1;
++  const desiredHeading = Math.atan2(_toTarget.x, _toTarget.z) + ai.steeringErrorRad * errorScale;
+ 
+   // 6. Heading error (wrapped to -PI..PI)
+   let headingError = desiredHeading - kart.rotation;
+@@ -283,7 +298,9 @@ function updateSteering(kart, trackData) {
+   ai.wantsBrake = false;
+ 
+   // Ease off throttle if heading error is very large (bad line, recovering)
+-  if (Math.abs(headingError) > 1.2) {
++  // But NOT if we're off-road — keep driving to get back on track
++  const isOffRoad = kart.surfaceType === 'offroad';
++  if (Math.abs(headingError) > 1.2 && !isOffRoad && !ai.recoveryBiasTimer) {
+     ai.wantsAccel = false;
+     ai.wantsBrake = kart.speed > 30;
+   }
+@@ -514,25 +531,94 @@ function updateRubberBand(kart, allKarts) {
+ function updateStuckDetection(kart, dt) {
+   const ai = kart.ai;
+ 
++  // Tick recovery bias (post-reverse spline-homing)
++  if (ai.recoveryBiasTimer > 0) {
++    ai.recoveryBiasTimer -= dt;
++  }
++
+   if (ai.reverseTimer > 0) {
+     ai.reverseTimer -= dt;
++    // When reverse ends, start recovery bias period
++    if (ai.reverseTimer <= 0) {
++      ai.recoveryBiasTimer = RECOVERY_BIAS_DURATION;
++    }
++    return;
++  }
++
++  // Don't count as stuck during freeze (respawn, countdown)
++  if (kart.frozenTimer > 0) {
++    ai.stuckTimer = 0;
+     return;
+   }
+ 
+-  if (Math.abs(kart.speed) < STUCK_SPEED_THRESH && !kart.frozenTimer) {
++  if (Math.abs(kart.speed) < STUCK_SPEED_THRESH) {
+     ai.stuckTimer += dt;
+     if (ai.stuckTimer >= STUCK_TIME_THRESH) {
+-      // Kick into reverse
+-      ai.reverseTimer = REVERSE_DURATION;
++      // Track consecutive stucks (within 8 seconds of each other)
++      const now = performance.now() / 1000;
++      if (now - ai.lastStuckTime < 8) {
++        ai.consecutiveStucks++;
++      } else {
++        ai.consecutiveStucks = 1;
++      }
++      ai.lastStuckTime = now;
++
++      // Escalate reverse duration for repeated stucks
++      const escalated = ai.consecutiveStucks >= MAX_CONSECUTIVE_STUCKS;
++      ai.reverseTimer = escalated ? ESCALATED_REVERSE_DURATION : REVERSE_DURATION;
+       ai.stuckTimer = 0;
+-      ai.reverseSteerBias = Math.random() < 0.5 ? -1 : 1;
++
++      // Smart reverse steering: steer toward the spline center instead of random
++      computeReverseSteerBias(kart);
+     }
+   } else {
+     ai.stuckTimer = 0;
+   }
+ }
+ 
+-function updateReverse(kart, _dt) {
++/**
++ * Compute reverse steer direction toward the nearest spline point.
++ * When reversing, the kart moves backward, so we steer the front end
++ * AWAY from the spline to turn the rear toward it.
++ */
++function computeReverseSteerBias(kart) {
++  const ai = kart.ai;
++  const trackData = ai._trackData;
++
++  if (!trackData || !trackData.centerCurve) {
++    ai.reverseSteerBias = Math.random() < 0.5 ? -1 : 1;
++    return;
++  }
++
++  // Find the spline point slightly ahead (where we want to go after recovery)
++  const nearest = findNearestSplinePoint(
++    trackData.centerCurve, kart.position.x, kart.position.z, 50, kart.position.y
++  );
++
++  // Get a point slightly ahead on the spline for better recovery direction
++  const lookT = (nearest.t + 0.02) % 1; // ~2% ahead
++  const targetPt = trackData.centerCurve.getPointAt(lookT);
++
++  // Direction from kart to target (in world space)
++  const dx = targetPt.x - kart.position.x;
++  const dz = targetPt.z - kart.position.z;
++  const toTargetAngle = Math.atan2(dx, dz);
++
++  // Kart's current heading
++  const heading = kart.rotation;
++
++  // When reversing, the kart moves backward. To turn the rear toward the spline,
++  // we need to steer the front end to the opposite side.
++  // Cross product sign tells us which side the target is on.
++  let angleDiff = toTargetAngle - heading;
++  angleDiff = ((angleDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
++  if (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
++
++  // When reversing, steer opposite to turn rear toward target
++  ai.reverseSteerBias = angleDiff > 0 ? -1 : 1;
++}
++
++function updateReverse(kart, trackData, _dt) {
+   const ai = kart.ai;
+ 
+   ai.wantsAccel       = false;
+diff --git a/output/js/main.js b/output/js/main.js
+index 684243b..1ca1369 100644
+--- a/output/js/main.js
++++ b/output/js/main.js
+@@ -154,7 +154,21 @@ function fixedUpdate(dt) {
+ 
+   /* AI */
+   for (const k of allKarts) {
+-    if (k.isPlayer || k.finished) continue;
++    if (k.isPlayer) continue;
++    if (k.finished) {
++      // Finished AI karts coast to a stop; don't run AI logic
++      if (Math.abs(k.speed) > 1) {
++        k.speed *= 0.95;
++        const sinH = Math.sin(k.rotation);
++        const cosH = Math.cos(k.rotation);
++        k.position.x += sinH * k.speed * dt;
++        k.position.z += cosH * k.speed * dt;
++        k.mesh.position.copy(k.position);
++      } else {
++        k.speed = 0;
++      }
++      continue;
++    }
+     updateAI(k, trackData, allKarts, dt);
+     const ai = getAIInput(k);
+     updateDrift(k, ai, dt);
+diff --git a/test_ai_quick.js b/test_ai_quick.js
+new file mode 100644
+index 0000000..65d24fb
+--- /dev/null
++++ b/test_ai_quick.js
+@@ -0,0 +1,71 @@
++// Quick AI test: start race on track 0, observe AI for 30s
++import { chromium } from 'playwright';
++
++(async () => {
++  const browser = await chromium.launch({ headless: true });
++  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++  
++  const errors = [];
++  page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
++  page.on('pageerror', err => errors.push(err.message));
++  
++  await page.goto('http://localhost:4567/', { waitUntil: 'networkidle' });
++  await page.waitForTimeout(1000);
++  
++  // Navigate to race
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(400);
++  await page.click('#ts-next');
++  await page.waitForTimeout(400);
++  await page.click('#cs-next');
++  await page.waitForTimeout(400);
++  await page.click('#ds-start');
++  await page.waitForTimeout(8000); // countdown
++  
++  // Hold accelerate + slight steering
++  await page.keyboard.down('ArrowUp');
++  
++  // Expose game state for inspection
++  await page.evaluate(() => {
++    // Patch to expose allKarts 
++    window.__getAIState = () => {
++      // Access via module scope - need to find karts in the scene
++      const scene = window.__scene;
++      if (!scene) return null;
++      return 'no direct access';
++    };
++  });
++  
++  // Sample every 3 seconds for 30 seconds
++  for (let i = 0; i < 10; i++) {
++    await page.waitForTimeout(3000);
++    
++    const hudInfo = await page.evaluate(() => {
++      const pos = document.getElementById('hp')?.textContent || '';
++      const lap = document.getElementById('hl')?.textContent || '';
++      const time = document.getElementById('ht-main')?.textContent || '';
++      const countdown = document.getElementById('hcd')?.textContent || '';
++      return { pos, lap, time, countdown };
++    });
++    
++    console.log(`t=${(i+1)*3}s: ${hudInfo.lap} | ${hudInfo.pos} | time=${hudInfo.time}`);
++    
++    if (i === 0 || i === 4 || i === 9) {
++      await page.screenshot({ path: `ai_test_t${(i+1)*3}.png` });
++    }
++  }
++  
++  await page.keyboard.up('ArrowUp');
++  
++  // Check for results
++  const final = await page.evaluate(() => {
++    const rp = document.getElementById('results-panel');
++    return { resultsVisible: rp && !rp.classList.contains('hidden') };
++  });
++  
++  console.log(`\nResults visible: ${final.resultsVisible}`);
++  console.log(`Errors: ${errors.length}`);
++  errors.slice(0, 5).forEach(e => console.log(`  ${e}`));
++  
++  await browser.close();
++})();
+diff --git a/test_ai_reliability.js b/test_ai_reliability.js
+new file mode 100644
+index 0000000..57bbfce
+--- /dev/null
++++ b/test_ai_reliability.js
+@@ -0,0 +1,103 @@
++// Test AI reliability: check if AI karts get stuck, complete laps, finish races
++import { chromium } from 'playwright';
++
++const TRACKS = [0, 1, 2, 3];
++const TRACK_NAMES = ['Sunset Bay', 'Mossy Canyon', 'Neon Grid', 'Volcano Peak'];
++
++(async () => {
++  const browser = await chromium.launch({ headless: true });
++  
++  for (const trackIdx of TRACKS) {
++    console.log(`\n=== Testing ${TRACK_NAMES[trackIdx]} (track ${trackIdx}) ===`);
++    const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++    
++    // Collect console errors
++    const errors = [];
++    page.on('console', msg => {
++      if (msg.type() === 'error') errors.push(msg.text());
++    });
++    page.on('pageerror', err => errors.push(err.message));
++    
++    await page.goto('http://localhost:4567/', { waitUntil: 'networkidle' });
++    await page.waitForTimeout(1000);
++    
++    // Start race: press Enter -> select track -> next -> next -> start
++    await page.keyboard.press('Enter');
++    await page.waitForTimeout(500);
++    
++    // Select track
++    const trackCards = await page.$$('.card');
++    if (trackCards[trackIdx]) await trackCards[trackIdx].click();
++    await page.waitForTimeout(200);
++    await page.click('#ts-next');
++    await page.waitForTimeout(500);
++    
++    // Select character (just use default)
++    await page.click('#cs-next');
++    await page.waitForTimeout(500);
++    
++    // Start race
++    await page.click('#ds-start');
++    await page.waitForTimeout(1000); // Wait for track to load
++    
++    // Wait for countdown (6s) + a bit more
++    await page.waitForTimeout(7000);
++    
++    // Hold accelerate for the entire race
++    await page.keyboard.down('ArrowUp');
++    
++    // Sample AI state periodically for 60 seconds
++    const samples = [];
++    const NUM_SAMPLES = 20;
++    const SAMPLE_INTERVAL = 3000; // 3 seconds between samples
++    
++    for (let s = 0; s < NUM_SAMPLES; s++) {
++      await page.waitForTimeout(SAMPLE_INTERVAL);
++      
++      const state = await page.evaluate(() => {
++        if (typeof window.__allKarts === 'undefined') {
++          // Try to find allKarts from the module scope - we need to expose it
++          return null;
++        }
++        return null;
++      });
++      
++      // Take a screenshot at key moments
++      if (s === 0 || s === 5 || s === 10 || s === 15 || s === 19) {
++        await page.screenshot({ path: `test_ai_track${trackIdx}_t${s}.png` });
++      }
++      
++      // Check HUD for race time and position info
++      const hudInfo = await page.evaluate(() => {
++        const pos = document.getElementById('hp')?.textContent || '';
++        const lap = document.getElementById('hl')?.textContent || '';
++        const time = document.getElementById('ht-main')?.textContent || '';
++        return { pos, lap, time };
++      });
++      
++      console.log(`  t=${s*3}s: ${hudInfo.lap} ${hudInfo.pos} time=${hudInfo.time}`);
++      samples.push(hudInfo);
++    }
++    
++    await page.keyboard.up('ArrowUp');
++    
++    // Check for race completion or stuck states
++    const finalState = await page.evaluate(() => {
++      const resultsPanel = document.getElementById('results-panel');
++      const isResultsVisible = resultsPanel && !resultsPanel.classList.contains('hidden');
++      return { isResultsVisible };
++    });
++    
++    console.log(`  Race completed: ${finalState.isResultsVisible}`);
++    if (errors.length > 0) {
++      console.log(`  Errors (${errors.length}):`, errors.slice(0, 5));
++    } else {
++      console.log(`  No console errors ✓`);
++    }
++    
++    await page.close();
++  }
++  
++  await browser.close();
++  console.log('\nDone!');
++})();
+diff --git a/test_ai_track0_t0.png b/test_ai_track0_t0.png
+new file mode 100644
+index 0000000..3ac9e27
+Binary files /dev/null and b/test_ai_track0_t0.png differ
+diff --git a/test_ai_track0_t10.png b/test_ai_track0_t10.png
+new file mode 100644
+index 0000000..22cca15
+Binary files /dev/null and b/test_ai_track0_t10.png differ
+diff --git a/test_ai_track0_t15.png b/test_ai_track0_t15.png
+new file mode 100644
+index 0000000..f626f61
+Binary files /dev/null and b/test_ai_track0_t15.png differ
+diff --git a/test_ai_track0_t19.png b/test_ai_track0_t19.png
+new file mode 100644
+index 0000000..12908ee
+Binary files /dev/null and b/test_ai_track0_t19.png differ
+diff --git a/test_ai_track0_t5.png b/test_ai_track0_t5.png
+new file mode 100644
+index 0000000..c740d26
+Binary files /dev/null and b/test_ai_track0_t5.png differ
+diff --git a/test_ai_track1_t0.png b/test_ai_track1_t0.png
+new file mode 100644
+index 0000000..97fb432
+Binary files /dev/null and b/test_ai_track1_t0.png differ
+diff --git a/test_ai_track1_t10.png b/test_ai_track1_t10.png
+new file mode 100644
+index 0000000..419128e
+Binary files /dev/null and b/test_ai_track1_t10.png differ
+diff --git a/test_ai_track1_t15.png b/test_ai_track1_t15.png
+new file mode 100644
+index 0000000..849511c
+Binary files /dev/null and b/test_ai_track1_t15.png differ
+diff --git a/test_ai_track1_t19.png b/test_ai_track1_t19.png
+new file mode 100644
+index 0000000..c80011e
+Binary files /dev/null and b/test_ai_track1_t19.png differ
+diff --git a/test_ai_track1_t5.png b/test_ai_track1_t5.png
+new file mode 100644
+index 0000000..5c132b7
+Binary files /dev/null and b/test_ai_track1_t5.png differ
+diff --git a/test_ai_track2_t0.png b/test_ai_track2_t0.png
+new file mode 100644
+index 0000000..d68be99
+Binary files /dev/null and b/test_ai_track2_t0.png differ
+diff --git a/test_ai_track2_t5.png b/test_ai_track2_t5.png
+new file mode 100644
+index 0000000..e5db79f
+Binary files /dev/null and b/test_ai_track2_t5.png differ
+diff --git a/test_ai_volcano.js b/test_ai_volcano.js
+new file mode 100644
+index 0000000..7bb0b7a
+--- /dev/null
++++ b/test_ai_volcano.js
+@@ -0,0 +1,75 @@
++// Test AI reliability by exposing internal state and running at accelerated speed
++import { chromium } from 'playwright';
++
++(async () => {
++  const browser = await chromium.launch({ headless: true });
++  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++  
++  const errors = [];
++  page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
++  page.on('pageerror', err => errors.push(err.message));
++  
++  await page.goto('http://localhost:4567/', { waitUntil: 'networkidle' });
++  await page.waitForTimeout(1000);
++  
++  // Navigate to race
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(300);
++  
++  // Select Volcano Peak (most complex track)
++  const trackCards = await page.$$('.card');
++  if (trackCards[3]) await trackCards[3].click();
++  await page.waitForTimeout(200);
++  await page.click('#ts-next');
++  await page.waitForTimeout(300);
++  await page.click('#cs-next');
++  await page.waitForTimeout(300);
++  await page.click('#ds-start');
++  await page.waitForTimeout(2000); // Let track load
++  
++  // Inject state exposure into game module
++  await page.evaluate(() => {
++    // Hook into the game loop to expose kart states
++    window.__aiSnapshots = [];
++    window.__snapshotInterval = setInterval(() => {
++      // Access game scene children to find kart meshes
++      const scene = document.querySelector('canvas')?.__scene;
++    }, 1000);
++  });
++  
++  // Wait for countdown + 20s of racing  
++  await page.keyboard.down('ArrowUp');
++  await page.waitForTimeout(25000);
++  
++  // Take screenshot
++  await page.screenshot({ path: 'ai_volcano_test.png' });
++  
++  const hudInfo = await page.evaluate(() => {
++    return {
++      pos: document.getElementById('hp')?.textContent || '',
++      lap: document.getElementById('hl')?.textContent || '',
++      time: document.getElementById('ht-main')?.textContent || '',
++    };
++  });
++  console.log(`After 25s: ${hudInfo.lap} | ${hudInfo.pos} | time=${hudInfo.time}`);
++  
++  // Wait 20 more seconds
++  await page.waitForTimeout(20000);
++  await page.screenshot({ path: 'ai_volcano_test2.png' });
++  
++  const hudInfo2 = await page.evaluate(() => {
++    return {
++      pos: document.getElementById('hp')?.textContent || '',
++      lap: document.getElementById('hl')?.textContent || '',
++      time: document.getElementById('ht-main')?.textContent || '',
++    };
++  });
++  console.log(`After 45s: ${hudInfo2.lap} | ${hudInfo2.pos} | time=${hudInfo2.time}`);
++  
++  await page.keyboard.up('ArrowUp');
++  
++  console.log(`Errors: ${errors.length}`);
++  errors.forEach(e => console.log(`  ERR: ${e}`));
++  
++  await browser.close();
++})();
+diff --git a/verify_ai.js b/verify_ai.js
+new file mode 100644
+index 0000000..355f133
+--- /dev/null
++++ b/verify_ai.js
+@@ -0,0 +1,71 @@
++// Verify AI improvements: test on Sunset Bay + Volcano Peak
++import { chromium } from 'playwright';
++
++const TRACKS = [
++  { idx: 0, name: 'Sunset Bay' },
++  { idx: 3, name: 'Volcano Peak' },
++];
++
++(async () => {
++  const browser = await chromium.launch({ headless: true });
++  
++  for (const track of TRACKS) {
++    console.log(`\n=== ${track.name} ===`);
++    const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++    
++    const errors = [];
++    page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
++    page.on('pageerror', err => errors.push(err.message));
++    
++    await page.goto('http://localhost:4567/', { waitUntil: 'networkidle' });
++    await page.waitForTimeout(800);
++    
++    // Navigate to race
++    await page.keyboard.press('Enter');
++    await page.waitForTimeout(300);
++    
++    // Select track
++    const cards = await page.$$('.card');
++    if (cards[track.idx]) await cards[track.idx].click();
++    await page.waitForTimeout(200);
++    await page.click('#ts-next');
++    await page.waitForTimeout(300);
++    await page.click('#cs-next');
++    await page.waitForTimeout(300);
++    await page.click('#ds-start');
++    await page.waitForTimeout(2000);
++    
++    // Hold accelerate
++    await page.keyboard.down('ArrowUp');
++    
++    // Sample at intervals
++    for (let i = 0; i < 8; i++) {
++      await page.waitForTimeout(3000);
++      
++      const hudInfo = await page.evaluate(() => ({
++        pos: document.getElementById('hp')?.textContent || '',
++        lap: document.getElementById('hl')?.textContent || '',
++        time: document.getElementById('ht-main')?.textContent || '',
++      }));
++      
++      console.log(`  t=${(i+1)*3}s: ${hudInfo.lap} | ${hudInfo.pos} | time=${hudInfo.time}`);
++    }
++    
++    // Take screenshot at end
++    await page.screenshot({ path: `verify_ai_${track.name.replace(/\s/g, '_')}.png` });
++    
++    await page.keyboard.up('ArrowUp');
++    
++    if (errors.length > 0) {
++      console.log(`  ❌ Errors (${errors.length}):`);
++      errors.slice(0, 5).forEach(e => console.log(`    ${e}`));
++    } else {
++      console.log(`  ✓ No console errors`);
++    }
++    
++    await page.close();
++  }
++  
++  await browser.close();
++  console.log('\nDone!');
++})();
+diff --git a/verify_ai2.js b/verify_ai2.js
+new file mode 100644
+index 0000000..2881576
+--- /dev/null
++++ b/verify_ai2.js
+@@ -0,0 +1,63 @@
++// Verify AI on Mossy Canyon and Neon Grid 
++import { chromium } from 'playwright';
++
++const TRACKS = [
++  { idx: 1, name: 'Mossy Canyon' },
++  { idx: 2, name: 'Neon Grid' },
++];
++
++(async () => {
++  const browser = await chromium.launch({ headless: true });
++  
++  for (const track of TRACKS) {
++    console.log(`\n=== ${track.name} ===`);
++    const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++    
++    const errors = [];
++    page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
++    page.on('pageerror', err => errors.push(err.message));
++    
++    await page.goto('http://localhost:4567/', { waitUntil: 'networkidle' });
++    await page.waitForTimeout(800);
++    
++    await page.keyboard.press('Enter');
++    await page.waitForTimeout(300);
++    
++    const cards = await page.$$('.card');
++    if (cards[track.idx]) await cards[track.idx].click();
++    await page.waitForTimeout(200);
++    await page.click('#ts-next');
++    await page.waitForTimeout(300);
++    await page.click('#cs-next');
++    await page.waitForTimeout(300);
++    await page.click('#ds-start');
++    await page.waitForTimeout(2000);
++    
++    await page.keyboard.down('ArrowUp');
++    
++    for (let i = 0; i < 5; i++) {
++      await page.waitForTimeout(3000);
++      const hudInfo = await page.evaluate(() => ({
++        pos: document.getElementById('hp')?.textContent || '',
++        lap: document.getElementById('hl')?.textContent || '',
++        time: document.getElementById('ht-main')?.textContent || '',
++      }));
++      console.log(`  t=${(i+1)*3}s: ${hudInfo.lap} | ${hudInfo.pos} | time=${hudInfo.time}`);
++    }
++    
++    await page.screenshot({ path: `verify_ai_${track.name.replace(/\s/g, '_')}.png` });
++    await page.keyboard.up('ArrowUp');
++    
++    if (errors.length > 0) {
++      console.log(`  ❌ Errors (${errors.length}):`);
++      errors.slice(0, 5).forEach(e => console.log(`    ${e}`));
++    } else {
++      console.log(`  ✓ No console errors`);
++    }
++    
++    await page.close();
++  }
++  
++  await browser.close();
++  console.log('\nDone!');
++})();
+diff --git a/verify_ai_Mossy_Canyon.png b/verify_ai_Mossy_Canyon.png
+new file mode 100644
+index 0000000..20a3725
+Binary files /dev/null and b/verify_ai_Mossy_Canyon.png differ
+diff --git a/verify_ai_Neon_Grid.png b/verify_ai_Neon_Grid.png
+new file mode 100644
+index 0000000..c01764b
+Binary files /dev/null and b/verify_ai_Neon_Grid.png differ
+diff --git a/verify_ai_Sunset_Bay.png b/verify_ai_Sunset_Bay.png
+new file mode 100644
+index 0000000..b659603
+Binary files /dev/null and b/verify_ai_Sunset_Bay.png differ
+diff --git a/verify_ai_Volcano_Peak.png b/verify_ai_Volcano_Peak.png
+new file mode 100644
+index 0000000..ca9d9d8
+Binary files /dev/null and b/verify_ai_Volcano_Peak.png differ
