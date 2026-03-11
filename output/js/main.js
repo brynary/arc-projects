@@ -45,6 +45,9 @@ let currentDifficulty = 'standard', mirrorMode = false, allowClones = false;
 let pausedFrom = '';
 let sparkT = 0, boostT = 0, dustT = 0;
 let prevPlayerLap = 0;
+let raceEpoch = 0;         // incremented on every race start / quit — guards stale setTimeouts
+let autoFinishTimer = 0;   // countdown after player finishes to auto-DNF remaining AI
+const AUTO_FINISH_TIMEOUT = 30; // seconds after player finish to force-end race
 
 const TRACK_FILES = ['sunsetBay','mossyCanyon','neonGrid','volcanoPeak'];
 const TRACK_META = [
@@ -119,7 +122,8 @@ function fixedUpdate(dt) {
     showCountdownNum(0);
     gameState = 'RACING';
     getAudio().then(a => { a.playCountdownGo(); a.startMusic(trackDef.name); });
-    setTimeout(() => { const c = document.querySelector('.hud-countdown'); if(c) c.classList.remove('show'); }, 700);
+    const epoch = raceEpoch;
+    setTimeout(() => { if (raceEpoch !== epoch) return; const c = document.querySelector('.hud-countdown'); if(c) c.classList.remove('show'); }, 700);
   }
   if (ev.countdownTick > 0) getAudio().then(a => a.playCountdownBeep());
   if (ev.lapCompleted && ev.lapCompleted.kart === playerKart) {
@@ -132,12 +136,27 @@ function fixedUpdate(dt) {
   }
   if (ev.raceFinished?.isPlayer) {
     gameState = 'RACE_FINISH';
+    autoFinishTimer = AUTO_FINISH_TIMEOUT;
     cameraState.mode = 'orbit'; cameraState.orbitAngle = 0; cameraState.orbitTarget = playerKart.position;
     getAudio().then(a => { a.playRaceFinish(); a.stopEngine(); a.stopMusic(); });
-    setTimeout(showResults, 3000);
+    const epoch = raceEpoch;
+    setTimeout(() => { if (raceEpoch !== epoch) return; showResults(); }, 3000);
   }
 
   if (raceState.status !== 'racing' && gameState === 'COUNTDOWN') return;
+
+  /* Auto-DNF: after player finishes, count down; force-end race for remaining AI */
+  if (gameState === 'RACE_FINISH' && autoFinishTimer > 0) {
+    autoFinishTimer -= dt;
+    if (autoFinishTimer <= 0) {
+      for (const k of allKarts) {
+        if (!k.finished) {
+          k.finished = true;
+          k.finishTime = null; // null = DNF
+        }
+      }
+    }
+  }
 
   /* player */
   if (playerKart && !playerKart.finished) {
@@ -267,14 +286,16 @@ function showLapSplit(lap) {
   const t = playerKart.lapTimes[playerKart.lapTimes.length - 1];
   el.textContent = `Lap ${lap}: ${formatTime(t, 2)}`;
   el.style.opacity = '1';
-  setTimeout(() => { el.style.opacity = '0'; }, 3000);
+  const epoch = raceEpoch;
+  setTimeout(() => { if (raceEpoch !== epoch) return; el.style.opacity = '0'; }, 3000);
 }
 
 function showFinalLapBanner() {
   const el = document.getElementById('hfl');
   if (!el) return;
   el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 3000);
+  const epoch = raceEpoch;
+  setTimeout(() => { if (raceEpoch !== epoch) return; el.classList.remove('show'); }, 3000);
 }
 
 /* ═══════════════════════  MINIMAP  ═══════════════════════ */
@@ -589,6 +610,10 @@ async function startRace() {
   initRace(allKarts, trackData);
   gameState = 'COUNTDOWN';
   accumulator = 0;
+  raceEpoch++;
+  autoFinishTimer = 0;
+  sparkT = 0; boostT = 0; dustT = 0;
+  prevPlayerLap = 0;
   resetCamera(camera, playerKart);
 
   // Expose for debug / testing
@@ -604,6 +629,8 @@ function restartRace() {
 
 function quitToMenu() {
   getAudio().then(a => { a.stopEngine(); a.stopMusic(); });
+  raceEpoch++;
+  autoFinishTimer = 0;
   if (trackData) {
     clearItems(scene);
     for (const k of allKarts) {
@@ -619,5 +646,6 @@ function quitToMenu() {
   hudEl.classList.remove('active');
   resultsEl?.classList.add('hidden');
   cameraState.mode = 'chase';
+  sparkT = 0; boostT = 0; dustT = 0;
   showTitle();
 }

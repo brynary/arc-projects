@@ -14,6 +14,7 @@ export const raceState = {
   allFinished: false,
   countdownNumber: 0,   // 3, 2, 1, 0 (GO)
   startBoostWindow: false,
+  epoch: 0,             // incremented on each initRace — guards stale setTimeouts
 };
 
 /**
@@ -27,6 +28,7 @@ export function initRace(allKarts, trackData) {
   raceState.allFinished = false;
   raceState.countdownNumber = -1;
   raceState.startBoostWindow = false;
+  raceState.epoch++;
 
   for (const kart of allKarts) {
     kart.currentLap = 0;
@@ -44,6 +46,10 @@ export function initRace(allKarts, trackData) {
     kart.stunTimer = 0;
     kart.invincibleTimer = 0;
     kart.frozenTimer = 0;
+    kart.shieldActive = false;
+    kart.shieldTimer = 0;
+    kart.empLockoutTimer = 0;
+    kart._prevItem = null;       // prevent spurious pickup sound after restart
   }
 }
 
@@ -93,8 +99,9 @@ export function updateRace(allKarts, trackData, dt) {
         kart.raceStartTime = 0;
       }
 
-      // Start boost window closes after 0.3s (handled externally)
-      setTimeout(() => { raceState.startBoostWindow = false; }, 300);
+      // Start boost window closes after 0.3s (guarded by epoch)
+      const epoch = raceState.epoch;
+      setTimeout(() => { if (raceState.epoch !== epoch) return; raceState.startBoostWindow = false; }, 300);
     }
 
     return events;
