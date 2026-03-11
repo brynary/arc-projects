@@ -1,0 +1,14 @@
+[log] Fabro Racer initialized.
+[warning] [.WebGL-0x146c0014c200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels
+[warning] [.WebGL-0x146c0014c200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels
+[warning] [.WebGL-0x146c0014c200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels
+[warning] [.WebGL-0x146c0014c200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)
+[log] Building track: Sunset Circuit
+[log] Track built. Spline length: 602.8m
+[log] Race started!
+[warning] THREE.Material: 'emissive' is not a property of THREE.MeshBasicMaterial.
+[warning] THREE.Material: 'emissive' is not a property of THREE.MeshBasicMaterial.
+[warning] THREE.Material: 'emissive' is not a property of THREE.MeshBasicMaterial.
+[log] Building track: Fungal Canyon
+[log] Track built. Spline length: 623.9m
+[log] Race started!
