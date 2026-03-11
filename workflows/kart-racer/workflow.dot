@@ -182,7 +182,6 @@ If all pass:\n\
 && echo 'Three.js references found' \
 && echo 'OK'"
         ]
-        gate_build [shape=diamond, label="Build OK?"]
 
         verify_playtest [
             label="Playtest",
@@ -309,11 +308,10 @@ Respond with:\n\
     gate_gameplay -> implement_gameplay
 
     // Verify chain
-    implement_polish -> verify_build -> gate_build
+    implement_polish -> verify_build
 
-    gate_build -> verify_playtest [condition="outcome=success"]
-    gate_build -> implement_polish [condition="outcome=fail", label="Fix Build"]
-    gate_build -> implement_polish
+    verify_build -> verify_playtest [condition="outcome=success"]
+    verify_build -> implement_polish [condition="outcome=fail", label="Fix Build"]
 
     verify_playtest -> gate_playtest
 
