@@ -327,7 +327,7 @@ Respond with:\n\
     implement_polish -> verify_build
 
     verify_build -> verify_playtest [condition="outcome=success"]
-    verify_build -> implement_polish [condition="outcome=fail", label="Fix Build"]
+    verify_build -> implement_polish [label="Fix Build"]
 
     verify_playtest -> gate_playtest
 
@@ -338,8 +338,8 @@ Respond with:\n\
     // Improvement loop
     pick_improvement -> improve_game -> check_improve_counter
 
-    check_improve_counter -> pick_improvement [condition="outcome=success", label="Continue"]
     check_improve_counter -> review_fanout    [condition="outcome=fail", label="5 Done"]
+    check_improve_counter -> pick_improvement [label="Continue"]
 
     // Review fanout
     review_fanout -> review_opus
