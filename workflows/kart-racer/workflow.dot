@@ -192,7 +192,7 @@ If all pass:\n\
     }
 
     // =========================================================================
-    // Phase 4b: Iterative Improvement (20 iterations)
+    // Phase 4b: Iterative Improvement (20 rounds)
     // =========================================================================
 
     subgraph cluster_improve {
@@ -212,12 +212,7 @@ If all pass:\n\
             prompt="@prompts/improve.md"
         ]
 
-        check_improve_counter [
-            shape=parallelogram,
-            label="Check Counter",
-            max_retries=25,
-            script="COUNT=$(cat .workflow/improve_counter 2>/dev/null || echo 0); COUNT=$((COUNT + 1)); echo $COUNT > .workflow/improve_counter; if [ $COUNT -lt 20 ]; then echo \"$COUNT/20 — continue\"; else echo 0 > .workflow/improve_counter; echo \"$COUNT/20 — done\"; exit 1; fi"
-        ]
+        gate_improve [shape=diamond, label="20 Done?"]
 
     }
 
@@ -320,10 +315,10 @@ Respond with:\n\
     gate_playtest -> implement_gameplay
 
     // Improvement loop
-    pick_improvement -> improve_game -> check_improve_counter
+    pick_improvement -> improve_game -> gate_improve
 
-    check_improve_counter -> review_fanout    [condition="outcome=fail", label="20 Done"]
-    check_improve_counter -> pick_improvement [label="Continue"]
+    gate_improve -> review_fanout    [condition="context.internal.node_visit_count >= 20"]
+    gate_improve -> pick_improvement
 
     // Review fanout
     review_fanout -> review_opus
