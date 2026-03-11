@@ -1,0 +1,1109 @@
+# Fabro Racer — Complete Game Design Specification
+
+## Overview
+
+Fabro Racer is a 3D voxel-art kart racer built entirely with Three.js. It features 4 themed tracks, 8 playable characters, 6 items, drift-boost mechanics, and 7 CPU opponents per race. The game is delivered as purely static files — one `index.html`, ES module JavaScript files, and texture assets — with no build step, no Node.js runtime, and no frameworks.
+
+---
+
+## 1. Technical Architecture
+
+### File Structure
+
+```
+fabro-racer/
+├── index.html                  # Entry point, loads all modules
+├── js/
+│   ├── main.js                 # Bootstrap, game loop, state machine
+│   ├── renderer.js             # Three.js scene, camera, lighting, post-processing
+│   ├── input.js                # Keyboard input manager
+│   ├── physics.js              # Arcade physics, collision detection/response
+│   ├── kart.js                 # Kart entity: movement, drift, boost
+│   ├── ai.js                   # CPU driver behavior, spline following, difficulty
+│   ├── track.js                # Track geometry builder, checkpoints, splines
+│   ├── tracks/
+│   │   ├── sunsetBay.js        # Track 1 definition
+│   │   ├── mossyCanyon.js      # Track 2 definition
+│   │   ├── neonGrid.js         # Track 3 definition
+│   │   └── volcanoPeak.js      # Track 4 definition
+│   ├── characters.js           # 8 character definitions and voxel model builders
+│   ├── items.js                # Item definitions, pickup logic, effects
+│   ├── itemBox.js              # Item box placement and respawn
+│   ├── hud.js                  # HUD overlay (HTML/CSS positioned over canvas)
+│   ├── minimap.js              # 2D minimap renderer (separate small canvas)
+│   ├── menu.js                 # All menu screens (title, track select, etc.)
+│   ├── audio.js                # Web Audio API: SFX and music
+│   ├── voxel.js                # Voxel model builder utilities
+│   ├── particles.js            # Particle system for boost flames, drift sparks
+│   ├── countdown.js            # Pre-race countdown sequence
+│   └── utils.js                # Math helpers, easing functions, constants
+├── textures/
+│   ├── road.png                # Tiling road surface
+│   ├── grass.png               # Off-road grass
+│   ├── sand.png                # Off-road sand
+│   ├── lava.png                # Hazard surface
+│   ├── grid.png                # Neon grid surface
+│   ├── snow.png                # Off-road snow
+│   ├── rock.png                # Canyon rock walls
+│   ├── water.png               # Water surface
+│   ├── itembox.png             # Item box texture
+│   └── skybox/                 # Per-track sky textures or gradient configs
+│       ├── sunset.png
+│       ├── canyon.png
+│       ├── neon.png
+│       └── volcano.png
+└── fonts/
+    └── (optional bitmap font PNGs for HUD)
+```
+
+### Technology Constraints
+
+| Constraint | Detail |
+|---|---|
+| **Runtime** | Browser only. No server-side code. |
+| **Three.js** | Loaded via ES module import map from CDN (`unpkg` or `jsdelivr`), pinned version (e.g., r162). |
+| **Language** | Vanilla JavaScript, ES modules (`type="module"` on script tags). |
+| **Build step** | None. No TypeScript, no JSX, no bundler, no npm. |
+| **Serving** | Works from any static file server (`python -m http.server`, VS Code Live Server, nginx, etc.). |
+| **Performance** | 60 fps target on mid-range hardware (integrated GPU laptop from ~2020). |
+
+### index.html Structure
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Fabro Racer</title>
+  <style>
+    /* Full-viewport canvas, HUD overlay styles, menu styles */
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.162.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.162.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+  <div id="hud-overlay"><!-- HUD elements --></div>
+  <div id="menu-overlay"><!-- Menu screens --></div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
+```
+
+### Game State Machine
+
+```
+TITLE → TRACK_SELECT → CHARACTER_SELECT → DIFFICULTY_SELECT → COUNTDOWN → RACING → PAUSED → RACING
+                                                                           ↓
+                                                                      RACE_FINISH → RESULTS → TRACK_SELECT
+```
+
+States:
+- **TITLE**: Logo, "Press Enter to Start" prompt.
+- **TRACK_SELECT**: 4 track cards with preview renders. Arrow keys to navigate, Enter to confirm.
+- **CHARACTER_SELECT**: 8 character models with stat bars. Arrow keys to navigate, Enter to confirm.
+- **DIFFICULTY_SELECT**: Chill / Standard / Mean. Optional Mirror Mode and Allow Clones toggles. Start Race button.
+- **COUNTDOWN**: Camera sweeps track, 3-2-1-GO countdown.
+- **RACING**: Active gameplay.
+- **PAUSED**: Overlay menu — Resume / Restart / Quit to Menu.
+- **RACE_FINISH**: Cross finish line on final lap — brief celebration camera.
+- **RESULTS**: Final standings, times, option to Restart or return to Track Select.
+
+### Rendering
+
+- **Camera**: Chase cam, positioned behind and above the player kart, with smooth interpolation (lerp factor ~0.08). Slight side-shift during drifts.
+- **Lighting**: One directional light (sun) + ambient light. Per-track color tinting.
+- **Voxel style**: All models (karts, scenery, items) built from colored `THREE.BoxGeometry` blocks. Flat shading, no textures on models — color only. Track surfaces use tiling textures.
+- **Draw distance**: Fog per track to limit draw distance (300–600 units depending on track).
+- **Shadows**: Single cascaded shadow map from the directional light on karts only — scenery uses baked shading.
+
+---
+
+## 2. Driving Model
+
+### Baseline Movement
+
+| Parameter | Value |
+|---|---|
+| **Base top speed** | 90 units/s (modified by character Speed stat) |
+| **Acceleration** | 0→top in ~1.8s (modified by character Acceleration stat) |
+| **Braking decel** | 3× acceleration rate |
+| **Coasting decel** | 0.5× acceleration rate (no input = gentle slowdown) |
+| **Turning radius** | Responsive — full lock turns ~60°/s at top speed, ~90°/s at low speed |
+| **Reverse speed** | 30% of top speed |
+| **Gravity** | 30 units/s² (for ramps and falls) |
+
+### Steering
+
+- Steering is analog-feeling even on keyboard: ramp up to full turn rate over 0.1s, ramp down over 0.08s.
+- At higher speeds, turn rate reduces slightly (speed-dependent understeer) to keep things readable.
+- Counter-steering (turning opposite to current slide direction) is 20% faster than normal steering.
+
+### Drifting
+
+Drifting is the core skill mechanic. It lets players take corners faster and earn boost.
+
+**Initiating a drift:**
+- Hold **Drift key** (Shift or Space) + **left or right steering** input.
+- Kart snaps into a drift state: rear slides outward, kart angles ~15°–30° into the turn.
+- Minimum speed to initiate drift: 40% of top speed.
+
+**During a drift:**
+- Player can modulate the drift angle with steering: steer inward to tighten, outward to widen.
+- Drift maintains speed better than normal turning (only 5% speed loss vs. 15% for sharp normal turns).
+- Kart visually kicks out — tire sparks particle effect appears at rear wheels.
+
+**Drift-charge boost tiers:**
+
+| Tier | Drift Duration | Spark Color | Boost Duration | Boost Speed Multiplier |
+|---|---|---|---|---|
+| Tier 1 | 0.5s–1.2s | Blue | 0.7s | 1.25× |
+| Tier 2 | 1.2s–2.2s | Orange | 1.1s | 1.35× |
+| Tier 3 | 2.2s+ | Pink/Purple | 1.5s | 1.45× |
+
+- Releasing the Drift key at any point fires the boost corresponding to the current tier.
+- Releasing before 0.5s of drift: no boost awarded (prevents spam).
+- Visual/audio feedback on tier transitions: spark color change + chime sound.
+- Boost is applied as a speed multiplier that decays linearly over the boost duration back to base speed.
+- Boosts do **not** stack. A new boost replaces the current one.
+
+### Collisions
+
+**Wall collisions:**
+- Glancing hits (angle < 30°): kart deflects along the wall with 15% speed loss. Feels forgiving.
+- Hard hits (angle ≥ 30°): kart bounces back slightly, 35% speed loss, brief (0.3s) reduced control.
+- No spin-outs from walls. The player always retains steering.
+
+**Kart-to-kart collisions:**
+- Lighter kart is pushed more; heavier kart is pushed less (weight stat matters).
+- Speed loss proportional to collision angle: 5% for sideswipes, 20% for head-on.
+- No spin-outs from kart contact. Mild bump and redirect.
+
+**Off-road:**
+- Off-road surfaces (grass, sand, dirt) reduce top speed by 40%.
+- During an active boost, off-road penalty is halved (only 20% reduction).
+- Visual: kart bounces slightly more, dust particles kick up.
+
+### Start Boost
+
+- During the 3-2-1-GO countdown, if the player holds accelerate and releases at "GO" (within a 0.3s window), they get a start boost equivalent to Tier 2 drift boost.
+- Holding too early with no release: kart spins tires and has a 0.5s delayed start (minor penalty).
+
+---
+
+## 3. Tracks
+
+All 4 tracks are unlocked from the start. Each is 3 laps.
+
+### Track 1: Sunset Bay
+
+| Property | Detail |
+|---|---|
+| **Theme** | Tropical coastal — golden sand beaches, palm trees, wooden piers, orange sunset sky |
+| **Sky** | Warm gradient: deep orange to purple. Low sun on horizon. |
+| **Layout** | Gentle oval with two sweeping curves and one chicane |
+| **Length** | ~1200 units |
+| **Width** | 28 units (wide, beginner-friendly) |
+| **Target lap time** | ~32s (Standard difficulty) |
+| **Surface** | Light grey asphalt, sand off-road |
+
+**Layout detail:**
+1. Start/finish straight (200 units) along the beach.
+2. Wide right-hander curving around a rocky headland (good drift spot).
+3. Short straight through a pier tunnel (10-unit-wide narrows).
+4. Sweeping left-hander along a cliffside (ocean visible below).
+5. Chicane through market stalls — two quick left-right turns.
+6. Final straight back to start/finish, slight downhill.
+
+**Hazards:**
+- **Crab crossings**: Small crab voxel models waddle across the road at two points. Contact causes a tiny 0.4s wobble and 10% speed loss. Easily avoidable.
+- **Sand patches**: On the inside of both main curves. Off-road penalty if you cut too far.
+- **Pier tunnel**: Walls are close; poor lines clip them.
+
+**Shortcuts:**
+- On the cliffside left-hander, a narrow dirt path cuts through some palm trees, saving ~1s but it's off-road the whole way. Only worthwhile with a boost active.
+
+**Item box locations:**
+- 2 rows of item boxes (4 boxes each) placed on the two main straights.
+- 1 row of 3 boxes mid-way through the cliffside curve.
+
+**AI splines:**
+- Main racing line: smooth arc through all turns, apexing each corner.
+- Variation spline 1: Wider line, used by defensive/cautious AI.
+- Variation spline 2: Tighter line cutting closer to inside edges, used by aggressive AI.
+- Designated drift zones: the right-hander and the left-hander.
+
+---
+
+### Track 2: Mossy Canyon
+
+| Property | Detail |
+|---|---|
+| **Theme** | Deep forest canyon — mossy stone walls, waterfalls, wooden bridges, dappled green light |
+| **Sky** | Overcast grey-green, light rays filtering through canopy |
+| **Layout** | Winding figure-S through a canyon with elevation changes |
+| **Length** | ~1600 units |
+| **Width** | 22 units (medium, requires more precision) |
+| **Target lap time** | ~48s (Standard difficulty) |
+| **Surface** | Cobblestone road, mossy grass off-road |
+
+**Layout detail:**
+1. Start/finish on a wooden bridge over a river.
+2. Downhill into the canyon — gentle left curve alongside a waterfall.
+3. Tight right hairpin around a massive boulder (prime drift zone).
+4. Uphill climb through a narrow stone corridor.
+5. S-curve along a cliffside ledge (guardrail on outer edge).
+6. Flat section through a mushroom grove — road widens to 30 units.
+7. Sharp left turn under a stone arch.
+8. Downhill corkscrew — the road spirals down one level (~270° turn, banked).
+9. Short straight back to the bridge.
+
+**Hazards:**
+- **Falling rocks**: At the stone corridor (segment 4), small boulders tumble from above at intervals (~5s cycle). Contact = 0.6s slowdown. Telegraphed by pebble particles 1s before.
+- **River splash zones**: At the bridge start and near the waterfall, puddles on the road cause a 0.3s slip (slight lateral push, no steering loss).
+- **Mushroom bounce pads**: In the mushroom grove, 3 large mushroom caps sit on the road edges. Hitting one bounces the kart upward and sideways — fun but costs ~0.5s.
+
+**Shortcuts:**
+- After the hairpin (segment 3), a hidden gap in the canyon wall leads to a cave tunnel that rejoins at segment 5, skipping the uphill corridor. Very tight (10 units wide), saves ~2s.
+
+**Item box locations:**
+- 1 row of 4 on the bridge straight.
+- 1 row of 3 in the mushroom grove.
+- 1 row of 4 on the downhill corkscrew entry.
+
+**AI splines:**
+- Main racing line: smooth S through the canyon, wide entry → tight apex on the hairpin.
+- Variation spline 1: Shortcut-aware — top-difficulty AI uses the cave tunnel 50% of the time.
+- Variation spline 2: Outer line for safety on the corkscrew.
+- Designated drift zones: the hairpin, the stone arch turn, the entire corkscrew.
+
+---
+
+### Track 3: Neon Grid
+
+| Property | Detail |
+|---|---|
+| **Theme** | Retro-futuristic cyberspace — glowing grid floor, neon buildings, floating data blocks, dark void sky |
+| **Sky** | Black with distant purple/blue grid lines receding to horizon |
+| **Layout** | Angular circuit with sharp 90° turns and one long sweeper |
+| **Length** | ~1400 units |
+| **Width** | 24 units |
+| **Target lap time** | ~40s (Standard difficulty) |
+| **Surface** | Glowing cyan grid (road), dark void off-road (instant respawn if you fall off — placed back on track with 1.5s penalty) |
+
+**Layout detail:**
+1. Start/finish straight (250 units) flanked by neon skyscrapers.
+2. 90° right turn into a tunnel through a data tower.
+3. Medium straight (150 units) with floating data block obstacles.
+4. 90° left, then immediate 90° right (quick chicane).
+5. Long sweeping right-hander (~180°) around a central neon pyramid.
+6. Boost ramp launching karts over a gap in the grid floor (must maintain speed or fall).
+7. Landing straight into a gentle left curve.
+8. Final 90° right turn back to the start straight.
+
+**Hazards:**
+- **Floating data blocks**: In segment 3, glowing cubes hover at kart-height and slide left/right slowly. Contact = 0.5s speed loss and lateral push.
+- **Grid gaps**: At the boost ramp (segment 6), if a kart is too slow (< 60% top speed), they fall through and respawn on the far side with a 1.5s time penalty.
+- **EMP strips**: Thin glowing red lines across the road at two points. Crossing one disables boost for 2s (any active boost is canceled, no new boosts for 2s). Avoidable — they don't span the full road width.
+
+**Shortcuts:**
+- At the neon pyramid sweeper (segment 5), the inside edge has a series of small platforms (stepping stones) that cut the corner. Precise driving required — miss a platform and you fall/respawn. Saves ~1.5s.
+
+**Item box locations:**
+- 1 row of 4 on the start straight.
+- 1 row of 3 before the chicane.
+- 1 row of 4 on the landing straight (segment 7).
+
+**AI splines:**
+- Main racing line: sharp braking into 90° turns, smooth arc on the sweeper.
+- Variation spline 1: Aggressive line — minimal braking, drift through 90° turns.
+- Variation spline 2: Safe line — wide approach to all turns, avoids data blocks by hugging edges.
+- Designated drift zones: all 90° turns, the sweeper.
+
+---
+
+### Track 4: Volcano Peak
+
+| Property | Detail |
+|---|---|
+| **Theme** | Active volcano — dark rock, glowing lava rivers, ash particles in the air, ominous red sky |
+| **Sky** | Dark red/grey with ash clouds, orange glow from lava below |
+| **Layout** | Ascending spiral up a volcano, then a plunge back down |
+| **Length** | ~2000 units |
+| **Width** | 22 units (narrow in places, drops to 16 on the summit ridge) |
+| **Target lap time** | ~58s (Standard difficulty) |
+| **Surface** | Dark basalt road, volcanic ash off-road (slower + slight visual obstruction) |
+
+**Layout detail:**
+1. Start/finish in a volcanic village at the base — stone huts and lava-lit lanterns.
+2. Uphill straight alongside a lava river (river is off-road left side — fall in = respawn, 1.5s penalty).
+3. Wide right curve through a lava tube (enclosed tunnel, no off-road here — walls only).
+4. Steep uphill switchback: right hairpin, then left hairpin, gaining significant elevation.
+5. Narrow ridge section (16 units wide) along the crater rim — drop-offs on both sides.
+6. Summit: road circles the crater mouth (~180° left turn). Lava geysers here.
+7. Plunge: steep downhill straight, karts accelerate significantly (1.3× speed boost from gravity).
+8. Banked right curve at the base of the plunge.
+9. Short straight through the village back to start/finish.
+
+**Hazards:**
+- **Lava geysers**: At the summit (segment 6), 3 geyser spots erupt on a staggered 4s cycle. Each geyser is active for 1.5s. Contact = 1.0s spin and speed loss. Telegraphed by bubbling animation 1s before eruption.
+- **Falling lava rocks**: On the plunge (segment 7), small flaming rocks drop from above every ~3s. Contact = 0.4s wobble. Shadows on the ground telegraph landing spots.
+- **Lava river**: Left edge of segment 2. Driving into lava = immediate respawn, 1.5s penalty. There's a guardrail but it has gaps.
+
+**Shortcuts:**
+- On the switchback (segment 4), a hidden ramp between the two hairpins launches karts up to the higher level, skipping the second hairpin. Requires good speed and precise aim. Saves ~2.5s.
+
+**Item box locations:**
+- 1 row of 4 in the village straight.
+- 1 row of 3 at the lava tube exit.
+- 1 row of 4 at the start of the plunge.
+
+**AI splines:**
+- Main racing line: wide on hairpins, centered on the ridge, tight on the summit loop.
+- Variation spline 1: Shortcut-aware — uses the switchback ramp (top-difficulty AI, 30% of the time).
+- Variation spline 2: Ultra-cautious on the ridge (centered, slower).
+- Designated drift zones: both hairpins, the summit loop, the banked curve at plunge bottom.
+
+---
+
+## 4. Characters
+
+All 8 characters are unlocked from the start. Each is a voxel-art figure seated in a voxel kart. Characters are ~5 voxels wide, ~6 tall (seated), ~7 long with the kart.
+
+Stats are on a 1–5 scale. Total stat points per character: 14 (balanced budget).
+
+### Character 1: Bolt
+
+| Property | Detail |
+|---|---|
+| **Appearance** | Yellow-and-black robot with a lightning bolt antenna. Sleek angular kart. |
+| **Speed** | ★★★★★ (5) |
+| **Acceleration** | ★★☆☆☆ (2) |
+| **Handling** | ★★★☆☆ (3) |
+| **Weight** | ★★★★☆ (4) |
+| **AI Personality** | Frontrunner — prioritizes holding the lead, takes optimal racing lines, rarely uses items offensively, saves shields for defense. |
+
+### Character 2: Pebble
+
+| Property | Detail |
+|---|---|
+| **Appearance** | Small grey rock golem with glowing green eyes. Chunky stone kart with moss patches. |
+| **Speed** | ★★☆☆☆ (2) |
+| **Acceleration** | ★★★★☆ (4) |
+| **Handling** | ★★★★★ (5) |
+| **Weight** | ★★★☆☆ (3) |
+| **AI Personality** | Technical — excels at drift chains, takes tight lines, prioritizes cornering speed over straights. Uses items tactically at corners. |
+
+### Character 3: Flare
+
+| Property | Detail |
+|---|---|
+| **Appearance** | Red-and-orange fire sprite with flickering flame hair. Hot-rod kart with exhaust pipes. |
+| **Speed** | ★★★★☆ (4) |
+| **Acceleration** | ★★★★☆ (4) |
+| **Handling** | ★★☆☆☆ (2) |
+| **Weight** | ★★★★☆ (4) |
+| **AI Personality** | Aggressive — pushes into other karts, takes risky lines, uses offensive items immediately, drifts late and hard. |
+
+### Character 4: Mochi
+
+| Property | Detail |
+|---|---|
+| **Appearance** | Pink-and-white round cat creature with stubby ears. Cute bubble-shaped kart. |
+| **Speed** | ★★★☆☆ (3) |
+| **Acceleration** | ★★★★★ (5) |
+| **Handling** | ★★★★☆ (4) |
+| **Weight** | ★★☆☆☆ (2) |
+| **AI Personality** | Item-focused — targets item boxes aggressively, holds items for maximum impact, good recovery from setbacks due to high acceleration. |
+
+### Character 5: Tusk
+
+| Property | Detail |
+|---|---|
+| **Appearance** | Blue-grey mammoth with tiny tusks and a fur-lined helmet. Massive tank-like kart. |
+| **Speed** | ★★★☆☆ (3) |
+| **Acceleration** | ★☆☆☆☆ (1) |
+| **Handling** | ★★☆☆☆ (2) |
+| **Weight** | ★★★★★ (5) + ★★★ (3 bonus from special trait) |
+| **Total stats** | 14 (Weight 5 is in-budget; the +3 bonus is a character trait, not a stat point) |
+| **AI Personality** | Bully — drives wide to block, aims to body-check lighter karts, doesn't drift much, relies on weight to hold position. |
+
+*Note: Tusk's effective weight for collision calculations is 8 (5 base + 3 trait bonus), making Tusk exceptionally hard to push. Tusk's stat budget is still 14 (3+1+2+5=11... let's recalculate):*
+
+**Corrected Tusk stats:**
+
+| Stat | Value |
+|---|---|
+| **Speed** | ★★★☆☆ (3) |
+| **Acceleration** | ★★☆☆☆ (2) |
+| **Handling** | ★★☆☆☆ (2) |
+| **Weight** | ★★★★★ (5) |
+| **Trait** | Immovable — takes 50% less knockback from collisions. |
+| **Budget** | 3+2+2+5 = 12. Remaining 2 points expressed as the trait. |
+
+### Character 6: Zippy
+
+| Property | Detail |
+|---|---|
+| **Appearance** | Green hummingbird creature with goggles. Tiny lightweight kart with oversized wheels. |
+| **Speed** | ★★★☆☆ (3) |
+| **Acceleration** | ★★★★★ (5) |
+| **Handling** | ★★★★★ (5) |
+| **Weight** | ★☆☆☆☆ (1) |
+| **AI Personality** | Evasive — weaves through traffic, avoids collisions, excellent at dodging items and hazards. Rarely initiates contact. |
+
+### Character 7: Cinder
+
+| Property | Detail |
+|---|---|
+| **Appearance** | Dark purple witch with a pointy hat. Broomstick-styled kart with cauldron at the back. |
+| **Speed** | ★★★★☆ (4) |
+| **Acceleration** | ★★★☆☆ (3) |
+| **Handling** | ★★★★☆ (4) |
+| **Weight** | ★★★☆☆ (3) |
+| **AI Personality** | Opportunist — plays mid-pack, waits for others to make mistakes, uses items at the most disruptive moments. Clean, efficient driving. |
+
+### Character 8: Rex
+
+| Property | Detail |
+|---|---|
+| **Appearance** | Orange T-Rex with tiny arms and a toothy grin. Monster-truck-style kart with huge tires. |
+| **Speed** | ★★★★★ (5) |
+| **Acceleration** | ★★★☆☆ (3) |
+| **Handling** | ★★☆☆☆ (2) |
+| **Weight** | ★★★★☆ (4) |
+| **AI Personality** | Charger — picks a line and commits fully, long straight-line rushes, late braker, occasionally overshoots corners. High risk, high reward. |
+
+### Stat Effects
+
+| Stat | Effect on Gameplay |
+|---|---|
+| **Speed** | Modifies base top speed: `topSpeed = 75 + (Speed × 6)` → range 81–105 units/s |
+| **Acceleration** | Modifies acceleration: `accel = 30 + (Accel × 8)` → range 38–70 units/s² |
+| **Handling** | Modifies turn rate: `turnRate = 45 + (Handling × 6)` deg/s → range 51–75 deg/s at top speed |
+| **Weight** | Modifies collision knockback: heavier karts push lighter ones. Also affects drift initiation (heavier = wider drift arc). `knockback = 6 - Weight` (lower = less knockback received) |
+
+---
+
+## 5. Items
+
+One-item capacity. Picking up a new item box when holding an item does nothing (the box is not consumed — it stays for others). Items are activated with a single button press.
+
+### Position-Weighted Distribution
+
+Items are drawn from a weighted pool based on the player's current race position:
+
+| Position | Offensive bias | Defensive bias | Utility bias |
+|---|---|---|---|
+| 1st–2nd | 10% | 50% | 40% |
+| 3rd–4th | 30% | 30% | 40% |
+| 5th–6th | 50% | 20% | 30% |
+| 7th–8th | 65% | 10% | 25% |
+
+### Item 1: Fizz Bomb (Offensive)
+
+| Property | Detail |
+|---|---|
+| **Appearance** | Glowing green sphere with fizz bubbles, ~1.5 voxels diameter |
+| **Effect** | Fires forward in a straight line at 1.5× kart speed. On contact with a kart: target wobbles side-to-side for 1.0s (reduced steering precision by 60%, but steering is NOT disabled). Speed reduced by 20% during wobble. |
+| **Range** | Travels 250 units then despawns. Bounces off walls once. |
+| **Counterplay** | Visible and audible in flight. Can be blocked by a held Shield Bubble. |
+
+### Item 2: Oil Slick (Offensive)
+
+| Property | Detail |
+|---|---|
+| **Appearance** | Black-and-rainbow puddle dropped behind the kart, ~3 voxels wide |
+| **Effect** | Placed on the track surface behind the user. Any kart driving over it enters a brief slide: 0.8s of reduced traction (kart slides laterally ~3 units in the direction of travel). Steering is softened but not disabled. Speed unchanged. |
+| **Duration** | Slick persists for 12s or until triggered by one kart. |
+| **Counterplay** | Visible on track (shiny rainbow sheen). AI avoids if difficulty ≥ Standard. |
+
+### Item 3: Shield Bubble (Defensive)
+
+| Property | Detail |
+|---|---|
+| **Appearance** | Translucent blue sphere surrounding the kart |
+| **Effect** | Activating creates a protective bubble lasting 4s. Blocks one incoming Fizz Bomb, Oil Slick contact, or Homing Pigeon. Also negates one wall collision's speed penalty. Pops after blocking one thing OR after 4s. |
+| **Visual** | Bubble shimmers around kart, pops with a satisfying burst animation when used or expired. |
+
+### Item 4: Turbo Pepper (Utility)
+
+| Property | Detail |
+|---|---|
+| **Appearance** | Red chili pepper voxel model, glows with heat waves |
+| **Effect** | Instant Tier-3-equivalent boost (1.5s, 1.45× speed). Stacks with drift boost if timed right (boosts don't stack — pepper replaces current boost, but if used at drift release, the longer boost wins). |
+| **Tactical use** | Best used on straights or to recover from setbacks. |
+
+### Item 5: Homing Pigeon (Offensive)
+
+| Property | Detail |
+|---|---|
+| **Appearance** | Small white-and-grey voxel bird that flaps comically |
+| **Effect** | Flies toward the kart in the position directly ahead of the user, following the track. On contact: target's kart bounces upward slightly (1.5 voxels) and slows by 25% for 1.2s. Target retains full steering. |
+| **Travel speed** | 1.8× kart speed. Takes ~2-5s to reach target depending on gap. |
+| **Counterplay** | Audible approaching chirps give ~1.5s warning. Blocked by Shield Bubble. Can be dodged with precise boost timing (the pigeon has a turning radius and can overshoot boosting karts). |
+
+### Item 6: Shortcut Star (Utility)
+
+| Property | Detail |
+|---|---|
+| **Appearance** | Spinning golden star, 2 voxels across |
+| **Effect** | For 3s, the kart ignores off-road slowdown completely and gains a 10% speed boost. Ideal for cutting corners or taking shortcuts. Bright golden trail effect while active. |
+| **Tactical use** | Combine with known shortcuts for big gains. Also useful just to cut any corner over grass/sand. |
+
+### Item Effect Summary
+
+| Item | Category | Max control loss | Max steering loss | Duration |
+|---|---|---|---|---|
+| Fizz Bomb | Offensive | 1.0s wobble | 60% reduction (not disabled) | Instant on hit |
+| Oil Slick | Offensive | 0.8s slide | Softened (not disabled) | 12s on ground |
+| Shield Bubble | Defensive | N/A | N/A | 4s or 1 block |
+| Turbo Pepper | Utility | N/A | N/A | 1.5s boost |
+| Homing Pigeon | Offensive | 1.2s slow | None | ~2-5s travel |
+| Shortcut Star | Utility | N/A | N/A | 3s effect |
+
+All items confirm to the constraint: **max loss of control ≤ 1.2s, max steering disabled = 0s (steering is never fully disabled), max steering reduction ≤ 0.6s of significant impairment.**
+
+---
+
+## 6. AI Behavior
+
+### Difficulty Presets
+
+| Parameter | Chill | Standard | Mean |
+|---|---|---|---|
+| **Top speed multiplier** | 0.85× | 0.95× | 1.02× |
+| **Steering accuracy** | ±8° wander | ±4° wander | ±1.5° wander |
+| **Drift usage** | Rarely (20% of drift zones) | Often (60% of drift zones) | Always + chained (95%) |
+| **Item usage IQ** | Uses items randomly within 2s of getting them | Holds items for good moments, basic targeting | Optimal timing, holds defensive items, combo plays |
+| **Hazard avoidance** | Runs into hazards 40% of the time | Avoids most hazards (85%) | Avoids nearly all hazards (98%) |
+| **Shortcut usage** | Never | Occasionally (30%) | Frequently (60%) |
+| **Rubber banding** | Strong (slows when far ahead, speeds up when far behind) | Moderate | Mild (still present to prevent extreme gaps) |
+| **Collision avoidance** | Low — bumps into walls often | Medium — mostly clean | High — very clean racing |
+
+### Rubber Banding Details
+
+Rubber banding modifies AI speed based on distance to the player:
+- **AI far ahead of player**: AI speed reduced by up to 8% (Chill), 5% (Standard), 2% (Mean).
+- **AI far behind player**: AI speed increased by up to 5% (Chill), 3% (Standard), 1% (Mean).
+- "Far" = more than 150 units of track distance.
+- Rubber banding is smooth — it ramps gradually, never snaps.
+
+### Spline Following
+
+Each track defines:
+1. **Center spline**: A series of 3D points tracing the track center.
+2. **Racing line spline**: The optimal apex-hitting line.
+3. **Variation splines**: 2–3 alternative lines (wider, tighter, shortcut).
+
+AI karts follow splines by:
+1. Finding the nearest point on their assigned spline.
+2. Looking ahead by `lookAhead = speed × 0.4s` to find a target point.
+3. Steering toward that target point.
+4. Adding per-difficulty random wander (see table above).
+
+AI karts switch between splines for overtaking:
+- If blocked by a kart ahead on the same spline, shift to an adjacent spline for 3s to attempt a pass.
+- After passing (or failing), return to preferred spline.
+
+### AI Drift Logic
+
+At designated drift zones (marked per-track):
+- AI evaluates if the corner is tight enough to warrant a drift.
+- Initiates drift at zone entry, holds for a duration based on difficulty (Chill: short/Tier 1, Standard: medium/Tier 2, Mean: long/Tier 3).
+- Releases drift at zone exit for boost.
+
+### AI Item Usage
+
+- AI checks item effectiveness before using:
+  - Fizz Bomb: only fire if a target is within 150 units ahead and roughly aligned.
+  - Oil Slick: drop if a kart is within 50 units behind.
+  - Shield Bubble: activate when a Homing Pigeon warning chirp is heard, or preemptively in a crowd.
+  - Turbo Pepper: use on straights or when behind.
+  - Homing Pigeon: use when not in 1st place.
+  - Shortcut Star: use near known shortcuts, or to cut a corner.
+- Chill AI ignores most of this and just activates items semi-randomly.
+
+---
+
+## 7. Race Structure
+
+- **Mode**: Single Race only. No grand prix, no career, no unlockables.
+- **Laps**: Always 3.
+- **Racers**: 1 human + 7 CPU.
+- **Tracks**: All 4 available from the start.
+
+### Race Flow
+
+1. **Pre-race**: Menus (track select → character select → difficulty select).
+2. **Countdown**: Camera shows a sweeping view of the track (3s), then cuts to behind-the-player view. "3... 2... 1... GO!" with sound effects. Start boost window at "GO."
+3. **Racing**: 3 laps. Final lap triggers a "FINAL LAP" banner and optional music tempo increase.
+4. **Finish**: When the player crosses the finish line on lap 3, brief celebration camera (orbit around player kart, 3s). CPU karts continue finishing in the background.
+5. **Results**: Standings screen shows all 8 positions with character icons, names, and finish times. Options: "Race Again" (same settings) / "Change Track" (back to track select) / "Main Menu."
+
+### Checkpoint System
+
+Each track is divided into checkpoints (invisible planes across the track width) to:
+- Validate lap completion (must pass all checkpoints in order).
+- Determine race position (further checkpoint + further past it = higher position).
+- Provide respawn points (if a kart falls off or enters lava, respawn at last checkpoint).
+- Measure track distance for AI rubber banding.
+
+Checkpoint count per track: ~12–20 depending on track length.
+
+---
+
+## 8. Pre-Race Flow & Menus
+
+### Title Screen
+
+- Large "FABRO RACER" title in voxel-block 3D text, rotating slowly.
+- Background: a looping camera fly-through of a random track.
+- "PRESS ENTER TO START" prompt, pulsing.
+- Small "Options" button in the corner.
+
+### Track Selection
+
+- 4 track cards arranged horizontally.
+- Each card shows:
+  - Track name in bold.
+  - Small 3D preview (a rotating overhead view of the track layout, rendered to an inset canvas or pre-captured).
+  - Theme icon (sun, tree, circuit board, volcano).
+  - Difficulty indicator: ★ (Sunset Bay), ★★ (Mossy Canyon), ★★★ (Neon Grid), ★★★★ (Volcano Peak).
+  - Best time (stored in localStorage, or "—" if no record).
+- Arrow keys (left/right) to navigate, Enter to confirm.
+- Background shows a blurred version of the currently highlighted track.
+
+### Character Selection
+
+- 8 character cards in a 2×4 grid (or horizontally scrolling).
+- Each card shows:
+  - Character name.
+  - Voxel model preview (rotating on a small turntable).
+  - 4 stat bars (Speed, Acceleration, Handling, Weight) with filled pips.
+- Arrow keys to navigate, Enter to confirm.
+- Selected character is highlighted with a glowing border.
+
+### Difficulty / Options Selection
+
+After confirming a character:
+- **Difficulty**: Three large buttons — Chill 😌 / Standard 🏁 / Mean 😈
+- **Mirror Mode toggle**: Flips the track left↔right. Off by default.
+- **Allow Clones toggle**: If off (default), CPU characters are all unique (no duplicates of the player's choice or each other). If on, CPU characters are random and may include duplicates.
+- **Start Race** button.
+
+### In-Race Pause Menu
+
+Pressing Escape during a race:
+- Game freezes (physics stop, timers pause).
+- Semi-transparent dark overlay.
+- Three options:
+  - **Resume** — unpause.
+  - **Restart Race** — restart with same settings, go directly to countdown.
+  - **Quit to Menu** — return to title screen.
+
+### Options Menu (accessible from Title and Pause)
+
+- **SFX Volume**: slider, 0–100%.
+- **Music Volume**: slider, 0–100%.
+- **Controls display**: Shows key bindings (not rebindable in v1, just displayed).
+
+---
+
+## 9. HUD & UI
+
+All HUD elements are HTML/CSS overlaid on the Three.js canvas, NOT rendered in 3D. This keeps them crisp at any resolution.
+
+### HUD Layout
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ [Position]                              [Lap] [Timer]   │
+│  ①/8                                   Lap 2/3  1:23.4  │
+│                                                         │
+│                                                         │
+│                                                         │
+│                                                         │
+│                                                         │
+│                                                         │
+│                                                         │
+│                                                         │
+│                                                         │
+│ [Minimap]                                    [Item]     │
+│  ┌──────┐                                   ┌─────┐    │
+│  │ •  · │                                   │ 🌶️  │    │
+│  │·  •  │                                   └─────┘    │
+│  └──────┘                                              │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Position Indicator
+
+- Top-left corner.
+- Large, bold text: "1st", "2nd", "3rd", ... "8th".
+- Color-coded: 1st = gold, 2nd = silver, 3rd = bronze, 4th–8th = white.
+- Smaller "/8" suffix.
+- Animates (brief scale pulse) when position changes.
+
+### Lap Counter
+
+- Top-right area.
+- "Lap 1/3", "Lap 2/3", "Lap 3/3".
+- On entering lap 3: a full-width "🏁 FINAL LAP 🏁" banner slides down from the top, stays for 2s, then slides away.
+
+### Timer
+
+- Top-right, below lap counter.
+- Running race time in M:SS.mmm format.
+- On lap completion, briefly shows the lap split time in a smaller font below (fades after 3s).
+- Best lap time shown in gold if it beats the previous best.
+
+### Minimap
+
+- Bottom-left corner.
+- Small 2D top-down representation of the track (simplified polyline).
+- Dots for each racer — player dot is larger and a distinct color (white with glow). CPU dots are colored by character.
+- Rotates with the player's facing direction (north-up or player-up, configurable — default player-up).
+- ~120×120px size.
+
+### Item Slot
+
+- Bottom-right corner.
+- Square box (~64×64px) showing the current held item's icon.
+- Empty box when no item held (grey border, "—" inside).
+- When an item is collected, the icon spins in with a brief animation.
+- When an item is used, the icon flies out and the box empties.
+- Faint key hint below: "[E]" for use.
+
+### Speed / Boost Indicator
+
+- Below the item slot or integrated into it: a small bar showing current boost tier if drifting:
+  - Blue glow → Orange glow → Pink glow as drift tiers charge.
+  - When boosting: bar depletes over the boost duration.
+
+### Race Start Countdown
+
+- Centered on screen.
+- Large "3" → "2" → "1" → "GO!" text, each lasting 1s.
+- Each number scales up and fades. "GO!" flashes and holds for 0.5s.
+- Sound effect on each count.
+
+### Results Screen
+
+- Full-screen overlay after the race.
+- Standings table:
+  - Position (1st–8th), Character icon, Character name, Finish time.
+  - Player's row highlighted.
+- Bottom: three buttons — "Race Again" / "Change Track" / "Main Menu".
+- If the player got 1st: confetti particle effect behind the standings.
+
+---
+
+## 10. Controls
+
+### Keyboard Mapping
+
+| Action | Primary Key | Alt Key |
+|---|---|---|
+| Accelerate | W | ↑ |
+| Brake / Reverse | S | ↓ |
+| Steer Left | A | ← |
+| Steer Right | D | → |
+| Drift | Shift (hold) | Space (hold) |
+| Use Item | E | X |
+| Look Behind | R | C |
+| Pause | Escape | P |
+
+### Input Handling
+
+- All input via `keydown` / `keyup` events on `window`.
+- Input state stored as a map of currently pressed keys, polled each frame.
+- Steering uses the key-held duration to simulate analog ramp-up (see Driving Model § Steering).
+- Drift requires simultaneous hold of Drift key + a steering direction. Releasing either ends the drift.
+
+---
+
+## 11. Audio
+
+All audio is generated procedurally using the Web Audio API — no external audio files needed. This keeps the project fully self-contained.
+
+### Sound Effects
+
+| Sound | Description | Implementation |
+|---|---|---|
+| **Engine** | Continuous hum, pitch rises with speed | Oscillator (sawtooth, low frequency 80–200Hz) with gain modulated by throttle |
+| **Drift start** | Short tire screech | Noise burst (0.15s) with bandpass filter (1kHz–3kHz) |
+| **Drift sparks** | Continuous crackle during drift | Filtered noise with random gain modulation |
+| **Drift tier up** | Rising chime | Short sine sweep (400Hz→800Hz for T1, →1200Hz for T2, →1600Hz for T3), 0.1s |
+| **Boost fire** | Whoosh | Noise burst (0.3s) with descending bandpass filter |
+| **Item pickup** | Cheerful bling | Quick arpeggio: three ascending sine tones (C5-E5-G5), 0.05s each |
+| **Item use** | Varies by item | Fizz Bomb: "pew" (sine sweep down). Oil Slick: "splat" (noise burst). Shield: "shimmer" (filtered noise, sustained). Pepper: "sizzle" (noise crackle). Pigeon: "coo" (two sine tones). Star: "sparkle" (high arpeggio). |
+| **Item hit (received)** | Impact thud | Low sine pulse (80Hz, 0.2s) + noise burst |
+| **Wall hit** | Thunk | Low noise burst (0.1s) with low-pass filter |
+| **Kart bump** | Soft bonk | Mid sine tone (300Hz, 0.08s) |
+| **Countdown beep** | "3, 2, 1" beep | Sine tone 440Hz, 0.15s per count |
+| **Countdown GO** | Higher pitched, longer | Sine tone 880Hz, 0.3s |
+| **Lap complete** | Brief fanfare | Three ascending notes (C4-E4-G4), 0.1s each |
+| **Final lap** | Alert jingle | Five-note ascending scale, 0.08s each |
+| **Race finish** | Victory jingle | Longer fanfare, 1s |
+| **Menu navigate** | Click/tick | Very short noise pulse, 0.02s |
+| **Menu confirm** | Deeper click | Sine 200Hz, 0.05s |
+
+### Music
+
+Each track has a simple procedural music loop:
+- Built from oscillators and a simple step sequencer.
+- ~8 bar loop, tempo ~120 BPM.
+- Mood matches the track theme:
+  - Sunset Bay: Upbeat, major key, tropical feel (steel drum-like tones).
+  - Mossy Canyon: Mysterious, minor key, slower, ambient pads.
+  - Neon Grid: Electronic, driving beat, arpeggiated synths.
+  - Volcano Peak: Intense, fast, minor key, heavy bass.
+- On final lap: tempo increases by ~15%.
+- Volume ducks slightly when SFX play (simple sidechain-style compression via gain node).
+
+---
+
+## 12. Visual Style
+
+### Voxel Art Direction
+
+- **Everything is boxy.** No smooth curves — all geometry is made of axis-aligned cubes (voxels).
+- **Bright, saturated colors.** Each track has a distinct palette.
+- **Flat shading.** No textures on 3D models — color only. `MeshLambertMaterial` or `MeshPhongMaterial` with flat colors.
+- **Track surfaces**: Tiled textures for roads and off-road (these are the exception to the no-texture rule, for readability).
+- **Scale**: 1 voxel = 1 unit. Karts are ~5×4×7 voxels. Characters are ~5×6×3 (width × height × depth) seated in karts.
+
+### Per-Track Color Palettes
+
+| Track | Road | Off-road | Sky | Accent |
+|---|---|---|---|---|
+| Sunset Bay | Light grey (#C0C0C0) | Sandy yellow (#E8D44D) | Orange-purple gradient | Teal water, green palms |
+| Mossy Canyon | Cobble grey (#808080) | Mossy green (#4A7C4A) | Grey-green overcast | Brown wood, white water |
+| Neon Grid | Cyan lines on dark (#00FFFF on #111) | Void black (#000) | Black with purple grid | Pink, blue, green neon |
+| Volcano Peak | Dark basalt (#3A3A3A) | Ash grey (#555) | Dark red (#330000) | Orange lava, yellow fire |
+
+### Particle Effects
+
+| Effect | When | Appearance |
+|---|---|---|
+| **Drift sparks** | During drift | Small colored cubes (matching drift tier color) emitting from rear wheels, short lifespan (0.3s), scatter backward |
+| **Boost flame** | During boost | Orange/blue cubes streaming from exhaust, longer lifespan (0.5s) |
+| **Dust cloud** | Off-road driving | Brown/tan cubes puffing from wheels |
+| **Item hit** | When hit by item | Burst of white cubes outward from kart |
+| **Confetti** | Results screen (1st place) | Multi-colored cubes falling from above |
+| **Lava bubbles** | Near lava (Volcano Peak) | Orange cubes rising and popping |
+| **Ash** | Volcano Peak ambient | Tiny grey cubes drifting slowly downward across the screen |
+| **Water splash** | Near water (Mossy Canyon, Sunset Bay) | Blue cubes bursting upward |
+
+### Scenery Objects (Voxel-built)
+
+| Track | Objects |
+|---|---|
+| Sunset Bay | Palm trees (5-8 voxel trunk + green cluster top), market stalls (colored awnings), wooden pier posts, beach umbrellas, seagull voxels perched on rails |
+| Mossy Canyon | Pine trees (triangular voxel shape), boulders (grey clusters), mushrooms (red cap, white stem), wooden bridges, waterfall (blue voxels in a sheet, animated downward) |
+| Neon Grid | Neon skyscrapers (tall boxes with glowing edges), floating data cubes, the central pyramid (glowing faces), grid line glow on floor |
+| Volcano Peak | Stone huts (grey boxes with red glowing windows), lava lanterns, rock formations, smoke plumes (dark voxels rising), crater rim jagged edges |
+
+---
+
+## 13. Camera System
+
+### Chase Camera (Default)
+
+- Positioned behind and above the player kart.
+- Offset: `(0, 8, -18)` relative to kart facing direction.
+- Look-at target: kart position + `(0, 2, 0)` (slightly above kart center).
+- Smooth follow: position lerps at factor 0.08/frame (at 60fps).
+- Look-at lerps at factor 0.12/frame (slightly snappier than position).
+
+### Drift Camera Shift
+
+- When drifting, the camera shifts laterally:
+  - Drifting left: camera shifts right by 3 units.
+  - Drifting right: camera shifts left by 3 units.
+- This gives better visibility of the road ahead during a drift.
+- The shift lerps smoothly (factor 0.05).
+
+### Look-Behind
+
+- When the Look Behind key is held, camera snaps to the front of the kart looking backward.
+- Offset: `(0, 6, 12)` relative to kart facing.
+- Look-at: kart position.
+- Transition: quick lerp (factor 0.2) to avoid jarring snap.
+
+### Countdown Camera
+
+- Before the race: camera does a 3s sweeping aerial flyover of the track.
+- Then cuts to behind the player kart for the 3-2-1-GO.
+
+### Finish Camera
+
+- On race completion: camera transitions to an orbit around the player kart (circling at radius 15, height 8, one revolution over 3s).
+
+---
+
+## 14. Track Geometry Construction
+
+Tracks are defined procedurally in code. Each track module exports:
+
+```javascript
+export const trackDefinition = {
+  name: "Sunset Bay",
+  // Center spline: array of {x, y, z} control points
+  centerSpline: [ ... ],
+  // Track width at each spline point (can vary)
+  widths: [ ... ],
+  // Surface type at each segment: 'road', 'bridge', 'tunnel'
+  surfaces: [ ... ],
+  // Banking angle at each segment (degrees)
+  banking: [ ... ],
+  // Off-road regions: polygons defining grass/sand/etc.
+  offRoad: [ { type: 'sand', polygon: [...] }, ... ],
+  // Hazard placements
+  hazards: [ { type: 'crab', position: {x,y,z}, ... }, ... ],
+  // Item box positions
+  itemBoxes: [ { position: {x,y,z} }, ... ],
+  // Checkpoint positions (invisible planes)
+  checkpoints: [ { position: {x,y,z}, normal: {x,y,z}, width: 28 }, ... ],
+  // Start/finish line
+  startLine: { position: {x,y,z}, direction: {x,y,z} },
+  // Starting grid positions (8 slots, 2 columns × 4 rows)
+  startPositions: [ {x,y,z}, ... ],
+  // AI splines
+  racingLine: [ ... ],         // Optimal racing line
+  variationSplines: [ [...], [...] ],  // Alternative lines
+  // Drift zones (spline parameter ranges)
+  driftZones: [ { start: 0.15, end: 0.22 }, ... ],
+  // Scenery objects
+  scenery: [ { type: 'palmTree', position: {x,y,z}, rotation: 0 }, ... ],
+  // Sky/environment config
+  environment: {
+    fogColor: 0xFF8844,
+    fogNear: 100,
+    fogFar: 500,
+    ambientColor: 0xFFDDCC,
+    sunColor: 0xFFFFEE,
+    sunDirection: {x: 0.5, y: 0.8, z: 0.3},
+    skyGradient: { top: 0x6622AA, bottom: 0xFF8844 }
+  }
+};
+```
+
+### Track Mesh Construction
+
+The track builder (`track.js`) takes a track definition and:
+1. Generates a smooth Catmull-Rom spline from the center spline points.
+2. Samples the spline at regular intervals (every 2 units of length).
+3. At each sample, creates a cross-section perpendicular to the spline tangent, with the defined width and banking.
+4. Connects cross-sections into a ribbon mesh for the road surface (UV-mapped for tiling textures).
+5. Adds walls/barriers as thin boxes along track edges where defined.
+6. Places scenery, hazards, and item boxes at their defined positions.
+7. Builds off-road ground planes extending beyond the track edges.
+8. Sets up the collision geometry (simplified — track boundaries as line segments for 2D collision, or invisible wall meshes for 3D raycasting).
+
+### Collision System
+
+- Track boundaries are represented as a series of wall segments (pairs of points forming the left and right edges).
+- Each frame, each kart's position is checked against nearby wall segments (spatial partitioning: divide track into sectors, only check walls in the current and adjacent sectors).
+- Kart-to-kart collision: sphere-sphere check (each kart has a bounding sphere of radius ~3 units).
+- Hazard collision: sphere-sphere or sphere-box checks.
+- Item projectile collision: ray-sphere check (Fizz Bomb) or sphere-sphere (Oil Slick, Pigeon).
+
+---
+
+## 15. Performance Considerations
+
+### Geometry Optimization
+
+- **Instanced meshes** for repeated objects (trees, item boxes, scenery).
+- **Merged geometry** for static track elements (walls, ground) — batch into a single mesh per material.
+- **LOD**: Scenery objects beyond 200 units are replaced with simpler versions (or hidden). Track segments beyond fog distance are not rendered.
+- **Object pooling** for particles: pre-allocate ~200 particle cubes, reuse them.
+
+### Update Loop
+
+- Fixed physics timestep: 1/60s, with interpolation for rendering.
+- Spatial partitioning for collision checks (grid or sector-based).
+- AI pathfinding updates at 30Hz (every other physics frame) — steering interpolated between updates.
+- Particle updates: simple position += velocity, no physics interactions.
+
+### Memory
+
+- No texture larger than 256×256.
+- Total voxel model vertex count target: < 50,000 for all 8 karts combined.
+- Track geometry: < 100,000 vertices per track.
+- Scenery: < 50,000 vertices per track.
+
+---
+
+## 16. localStorage Persistence
+
+Minimal data saved to `localStorage` under the key `fabroRacer`:
+
+```json
+{
+  "bestTimes": {
+    "sunsetBay": { "total": 98.234, "bestLap": 31.456 },
+    "mossyCanyon": null,
+    "neonGrid": null,
+    "volcanoPeak": null
+  },
+  "options": {
+    "sfxVolume": 80,
+    "musicVolume": 60
+  }
+}
+```
+
+---
+
+## 17. Implementation Priority
+
+### Phase 1: Core Loop (MVP)
+1. Three.js scene setup, camera, basic lighting.
+2. Flat plane "track" (rectangle with walls).
+3. Kart movement: accelerate, brake, steer.
+4. Drift mechanic with visual sparks.
+5. Drift-charge boost (all 3 tiers).
+6. Basic HUD: speed, lap, position.
+
+### Phase 2: Track & AI
+7. Spline-based track builder with one track (Sunset Bay).
+8. Checkpoints and lap counting.
+9. AI karts following the racing line spline.
+10. AI difficulty levels.
+11. Race positions calculated.
+
+### Phase 3: Content
+12. All 4 tracks with full geometry and scenery.
+13. All 8 characters with voxel models and stats.
+14. Item system: pickups, all 6 items implemented.
+15. Track hazards.
+
+### Phase 4: Polish
+16. Full menu flow (title, track select, character select, etc.).
+17. Audio (procedural SFX and music).
+18. Minimap.
+19. Particle effects.
+20. Results screen.
+21. localStorage best times.
+22. Mirror mode.
+23. Performance optimization pass.
+
+---
+
+## 18. Key Design Principles
+
+1. **Fun first.** The drifting should feel immediately satisfying. The boost reward should be visceral.
+2. **Readable at speed.** Wide roads, clear track edges, distinct color palettes. The player should always know where to go.
+3. **Goofy, not punishing.** Items cause chaos and laughs, not controller-throwing rage. Recovery is always fast.
+4. **Pack racing.** Rubber banding and wide tracks ensure karts stay in a group. Exciting finishes are the norm.
+5. **Instant play.** No loading screens, no tutorials, no mandatory cutscenes. Title → select → race in under 10 seconds.
+6. **Voxel charm.** The blocky aesthetic is a feature, not a limitation. Lean into it — chunky animations, blocky particles, toy-like proportions.
