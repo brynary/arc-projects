@@ -9,6 +9,8 @@ import { createKart, updateKart, placeKartAtStart } from './kart.js';
 import { handleKartCollisions, updateRacePositions } from './physics.js';
 import { CHARACTERS } from './characters.js';
 import { trackDef as sunsetCircuit } from './tracks/sunsetCircuit.js';
+import { createItemBoxes, updateItemBoxes, checkItemPickup, startRoulette, updateRoulette, useItem, updateActiveItems } from './items.js';
+import { initAI, updateAI } from './ai.js';
 
 // Constants
 const FIXED_STEP = 1 / 60;
@@ -42,30 +44,37 @@ async function init() {
   // Input
   const input = new InputManager();
 
-  // Build track (Sunset Circuit for Phase 1-4 testing)
+  // Build track (Sunset Circuit)
   console.log('Building track...');
   const track = buildTrack(sunsetCircuit, scene);
   console.log('Track built. Spline length:', track.totalLength.toFixed(1) + 'm');
 
+  // Create item boxes
+  const itemState = createItemBoxes(track, scene);
+  console.log('Item boxes created:', itemState.boxes.length);
+
   // Create player kart
   const playerCharDef = CHARACTERS[0]; // Blip
   const playerKart = createKart(playerCharDef, true);
+  playerKart.itemRoulette = false;
+  playerKart.rouletteTimer = 0;
+  playerKart.rouletteDisplay = null;
   scene.add(playerKart.mesh);
 
   // Create CPU karts
   const allKarts = [playerKart];
   for (let i = 1; i < Math.min(8, CHARACTERS.length); i++) {
     const cpuKart = createKart(CHARACTERS[i], false);
+    cpuKart.itemRoulette = false;
+    cpuKart.rouletteTimer = 0;
+    cpuKart.rouletteDisplay = null;
     scene.add(cpuKart.mesh);
     allKarts.push(cpuKart);
   }
 
   // Place karts on starting grid
-  // Player starts at grid position 5 (6th, 0-indexed)
   const gridPositions = getStartingGridPositions(track, allKarts.length);
   const PLAYER_GRID_SLOT = 5;
-
-  // Build assignment: player at slot 5, CPUs fill remaining slots
   const cpuKarts = allKarts.filter(k => k !== playerKart);
   let cpuIdx = 0;
   for (let i = 0; i < gridPositions.length && i < allKarts.length; i++) {
@@ -77,13 +86,35 @@ async function init() {
     }
   }
 
+  // Initialize AI for CPU karts
+  const difficulty = 'standard';
+  for (const kart of allKarts) {
+    if (!kart.isPlayer) {
+      initAI(kart, track, difficulty);
+    }
+  }
+  console.log('AI initialized for', cpuKarts.length, 'CPU karts');
+
   // Chase camera
   const chaseCamera = new ChaseCamera(camera);
   chaseCamera.init(playerKart);
 
   // State manager
   const stateManager = new StateManager();
-  const modules = { updateKart, handleKartCollisions, updateRacePositions };
+  const modules = {
+    updateKart,
+    handleKartCollisions,
+    updateRacePositions,
+    // Items
+    checkItemPickup,
+    startRoulette,
+    updateRoulette,
+    useItem,
+    updateItemBoxes,
+    updateActiveItems,
+    // AI
+    updateAI,
+  };
   const ctx = { renderer, scene, camera, input, chaseCamera, modules };
   stateManager.setContext(ctx);
 
@@ -96,6 +127,7 @@ async function init() {
     track,
     karts: allKarts,
     playerKart,
+    itemState,
   });
 
   // Debug info
@@ -147,13 +179,14 @@ async function init() {
 
     // Debug
     if (debugDiv) {
-      debugDiv.textContent = `FPS: ${fps} | Speed: ${Math.abs(playerKart.speed).toFixed(1)} | Drift: ${playerKart.isDrifting ? 'T' + playerKart.driftTier : 'N'} | Boost: ${playerKart.boostTimer.toFixed(1)} | Surface: ${playerKart.surface?.type || '?'} | Pos: ${playerKart.racePosition} | Lap: ${playerKart.currentLap} | CP: ${playerKart.lastCheckpoint}`;
+      const aiMoving = allKarts.filter(k => !k.isPlayer && Math.abs(k.speed) > 1).length;
+      debugDiv.textContent = `FPS: ${fps} | Speed: ${Math.abs(playerKart.speed).toFixed(1)} | Drift: ${playerKart.isDrifting ? 'T' + playerKart.driftTier : 'N'} | Item: ${playerKart.heldItem || '-'} | Pos: ${playerKart.racePosition}/8 | Lap: ${playerKart.currentLap}/${racingState.totalLaps} | AI: ${aiMoving}/7`;
     }
   }
 
   console.log('Fabro Racer initialized. Starting game loop.');
   // Expose for testing
-  window._game = { input, playerKart, track, allKarts, stateManager };
+  window._game = { input, playerKart, track, allKarts, stateManager, itemState };
   requestAnimationFrame(gameLoop);
 }
 

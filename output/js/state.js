@@ -50,7 +50,8 @@ export class StateManager {
   }
 }
 
-// Minimal racing state for Phases 1-4 testing
+// ── Full RacingState with AI, Items, Countdown, Race Finish ──────────────
+
 export class RacingState {
   constructor() {
     this.ctx = null;
@@ -61,6 +62,15 @@ export class RacingState {
     this.playerKart = null;
     this.raceTime = 0;
     this.paused = false;
+    this.itemState = null;
+    this.totalLaps = 3;
+    // Countdown
+    this.countdownTimer = 4;  // 3..2..1..GO
+    this.countdownPhase = 'countdown'; // 'countdown' | 'racing' | 'finished'
+    this.countdownEl = null;
+    // Finish
+    this.finishTimer = 0;
+    this.resultsShown = false;
   }
 
   enter(ctx, shared, stateManager, data) {
@@ -72,14 +82,32 @@ export class RacingState {
       this.track = data.track;
       this.karts = data.karts;
       this.playerKart = data.playerKart;
+      this.itemState = data.itemState || null;
     }
 
+    this.totalLaps = this.track.trackDef?.laps || 3;
     this.raceTime = 0;
     this.paused = false;
+    this.countdownTimer = 3.5;
+    this.countdownPhase = 'countdown';
+    this.finishTimer = 0;
+    this.resultsShown = false;
+
+    // Create countdown overlay
+    this.countdownEl = document.getElementById('countdown-overlay');
+    if (!this.countdownEl) {
+      this.countdownEl = document.createElement('div');
+      this.countdownEl.id = 'countdown-overlay';
+      document.getElementById('hud-layer').appendChild(this.countdownEl);
+    }
+    this.countdownEl.style.opacity = '1';
+    this.countdownEl.textContent = '3';
   }
 
   exit() {
-    // cleanup
+    if (this.countdownEl) {
+      this.countdownEl.style.opacity = '0';
+    }
   }
 
   fixedUpdate(dt) {
@@ -87,37 +115,157 @@ export class RacingState {
     if (!this.track || !this.playerKart) return;
 
     const { input } = this.ctx;
-    // snapshot() is called by the main game loop — don't call it again here
 
-    // Pause check
+    // ── Countdown phase ────────────────────
+    if (this.countdownPhase === 'countdown') {
+      this.countdownTimer -= dt;
+      const num = Math.ceil(this.countdownTimer);
+      if (this.countdownEl) {
+        if (num > 0 && num <= 3) {
+          this.countdownEl.textContent = String(num);
+          this.countdownEl.style.opacity = '1';
+          this.countdownEl.style.color = '#FFFFFF';
+        } else if (this.countdownTimer <= 0) {
+          this.countdownEl.textContent = 'GO!';
+          this.countdownEl.style.color = '#44FF44';
+          setTimeout(() => {
+            if (this.countdownEl) this.countdownEl.style.opacity = '0';
+          }, 600);
+          this.countdownPhase = 'racing';
+        }
+      }
+      return; // Don't update physics during countdown
+    }
+
+    // ── Pause check ────────────────────────
     if (input.pause) {
       this.paused = !this.paused;
       return;
     }
 
     this.raceTime += dt;
+    const { updateKart, handleKartCollisions, updateRacePositions } = this.ctx.modules;
 
-    // Update player kart
-    const { updateKart } = this.ctx.modules;
-    updateKart(this.playerKart, input, this.track, dt);
+    // ── Update player kart ─────────────────
+    if (!this.playerKart.finished) {
+      updateKart(this.playerKart, input, this.track, dt);
 
-    // Update all karts (for collisions)
-    const { handleKartCollisions, updateRacePositions } = this.ctx.modules;
+      // Item pickup for player
+      if (this.itemState && this.ctx.modules.checkItemPickup) {
+        const picked = this.ctx.modules.checkItemPickup(this.playerKart, this.itemState);
+        if (picked) {
+          this.ctx.modules.startRoulette(this.playerKart);
+        }
+      }
+      // Roulette update
+      if (this.playerKart.itemRoulette && this.ctx.modules.updateRoulette) {
+        this.ctx.modules.updateRoulette(this.playerKart, dt);
+      }
+      // Use item
+      if (input.useItem && this.playerKart.heldItem && this.playerKart.itemReady) {
+        if (this.ctx.modules.useItem) {
+          this.ctx.modules.useItem(this.playerKart, this.karts, this.track, this.itemState);
+        }
+      }
+    }
+
+    // ── Update CPU karts (AI) ──────────────
+    for (const kart of this.karts) {
+      if (kart.isPlayer || kart.finished) continue;
+      if (kart.ai && this.ctx.modules.updateAI) {
+        const aiInput = this.ctx.modules.updateAI(kart, this.track, this.karts, this.itemState, dt);
+        updateKart(kart, aiInput, this.track, dt);
+
+        // AI item pickup
+        if (this.itemState && this.ctx.modules.checkItemPickup) {
+          const picked = this.ctx.modules.checkItemPickup(kart, this.itemState);
+          if (picked) {
+            this.ctx.modules.startRoulette(kart);
+          }
+        }
+        if (kart.itemRoulette && this.ctx.modules.updateRoulette) {
+          this.ctx.modules.updateRoulette(kart, dt);
+        }
+        // AI item use
+        if (aiInput.useItem && kart.heldItem && kart.itemReady) {
+          if (this.ctx.modules.useItem) {
+            this.ctx.modules.useItem(kart, this.karts, this.track, this.itemState);
+          }
+        }
+      }
+    }
+
+    // ── Item system updates ────────────────
+    if (this.itemState && this.ctx.modules.updateItemBoxes) {
+      this.ctx.modules.updateItemBoxes(this.itemState, dt);
+      this.ctx.modules.updateActiveItems(this.itemState, this.karts, dt);
+    }
+
+    // ── Collisions & positions ─────────────
     handleKartCollisions(this.karts);
     updateRacePositions(this.karts);
 
-    // Update HUD
+    // ── Lap/finish detection ───────────────
+    for (const kart of this.karts) {
+      if (!kart.finished && kart.currentLap > this.totalLaps) {
+        kart.finished = true;
+        kart.finishTime = this.raceTime;
+      }
+    }
+
+    // Race finish: all karts done or 15s after player finishes
+    if (this.countdownPhase === 'racing') {
+      if (this.playerKart.finished && !this.resultsShown) {
+        this.finishTimer += dt;
+        if (this.finishTimer > 15 || this.karts.every(k => k.finished)) {
+          this.showResults();
+        }
+      }
+    }
+
+    // ── Update HUD ─────────────────────────
     this.updateHUD();
   }
 
   render(alpha) {
     if (!this.playerKart) return;
-
-    // Update camera
     const { chaseCamera } = this.ctx;
     if (chaseCamera) {
       chaseCamera.lookBehind = this.ctx.input.lookBehind;
       chaseCamera.update(this.playerKart, 1 / 60, alpha);
+    }
+  }
+
+  showResults() {
+    if (this.resultsShown) return;
+    this.resultsShown = true;
+
+    // Force-finish any remaining karts
+    for (const kart of this.karts) {
+      if (!kart.finished) {
+        kart.finished = true;
+        kart.finishTime = this.raceTime;
+      }
+    }
+
+    const sorted = [...this.karts].sort((a, b) => a.racePosition - b.racePosition);
+    let html = '<div class="menu-panel" style="max-width:500px">';
+    html += '<div class="menu-title" style="font-size:36px">🏁 Race Complete!</div>';
+    html += '<table style="width:100%;text-align:left;border-collapse:collapse;margin:12px 0">';
+    html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.2)"><th style="padding:4px 8px">#</th><th>Racer</th><th>Time</th></tr>';
+    for (const k of sorted) {
+      const isP = k.isPlayer ? ' style="color:#FFD700;font-weight:bold"' : '';
+      const t = k.finishTime ? formatTime(k.finishTime) : '—';
+      html += `<tr${isP}><td style="padding:4px 8px">${k.racePosition}</td><td>${k.character.name}${k.isPlayer ? ' ★' : ''}</td><td>${t}</td></tr>`;
+    }
+    html += '</table>';
+    html += '<button class="menu-button" onclick="location.reload()">Race Again</button>';
+    html += '</div>';
+
+    const menu = document.getElementById('menu-layer');
+    if (menu) {
+      menu.innerHTML = html;
+      menu.style.display = 'flex';
     }
   }
 
@@ -131,6 +279,7 @@ export class RacingState {
     const speedEl = document.getElementById('hud-speed-fill');
     const driftEl = document.getElementById('hud-drift-tier');
     const boostEl = document.getElementById('hud-boost-indicator');
+    const itemEl = document.getElementById('hud-item');
 
     if (posEl) {
       const pos = kart.racePosition;
@@ -140,9 +289,8 @@ export class RacingState {
     }
 
     if (lapEl) {
-      const lap = Math.max(1, kart.currentLap);
-      const totalLaps = this.track.trackDef?.laps || 3;
-      lapEl.textContent = `Lap ${lap}/${totalLaps}`;
+      const lap = clampLap(kart.currentLap, this.totalLaps);
+      lapEl.textContent = `Lap ${lap}/${this.totalLaps}`;
     }
 
     if (timerEl) {
@@ -179,6 +327,24 @@ export class RacingState {
         boostEl.style.opacity = '0';
       }
     }
+
+    // Item slot in HUD
+    if (itemEl) {
+      if (kart.itemRoulette) {
+        itemEl.textContent = '❓';
+        itemEl.style.animation = 'pulse 0.15s infinite';
+      } else if (kart.heldItem && kart.itemReady) {
+        const emojis = {
+          sparkOrb: '⚡', homingPigeon: '🐦', turboMushroom: '🍄',
+          speedLeech: '🌀', bananaPeel: '🍌', oilSlick: '🛢️',
+        };
+        itemEl.textContent = emojis[kart.heldItem] || '?';
+        itemEl.style.animation = '';
+      } else {
+        itemEl.textContent = '';
+        itemEl.style.animation = '';
+      }
+    }
   }
 }
 
@@ -186,4 +352,8 @@ function formatTime(seconds) {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
   return `${mins}:${secs.toFixed(3).padStart(6, '0')}`;
+}
+
+function clampLap(current, total) {
+  return Math.max(1, Math.min(current, total));
 }

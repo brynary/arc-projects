@@ -75,9 +75,13 @@ export function createKart(characterDef, isPlayer = false) {
     respawning: false,
     respawnTimer: 0,
 
-    // Items (placeholder for Phase 5)
+    // Items
     heldItem: null,
     itemReady: false,
+    itemRoulette: false,
+    rouletteTimer: 0,
+    rouletteDisplay: null,
+    _mushroomBoost: false,
 
     // Visual
     mesh,

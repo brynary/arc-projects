@@ -457,21 +457,23 @@ export function getTrackSurface(track, worldPos, hintT = -1) {
 
 // Check if a kart has crossed a checkpoint gate
 export function checkCheckpointCrossing(checkpoint, prevPos, currPos) {
-  // Dot product sign change indicates crossing the plane
+  // Dot product sign change indicates crossing the gate plane
   const toPrev = new THREE.Vector3().subVectors(prevPos, checkpoint.position);
   const toCurr = new THREE.Vector3().subVectors(currPos, checkpoint.position);
 
   const dotPrev = toPrev.dot(checkpoint.normal);
   const dotCurr = toCurr.dot(checkpoint.normal);
 
-  // Crossed if signs differ and crossing in the correct direction (positive → negative or negative → positive)
+  // Crossed if signs differ
   if (dotPrev * dotCurr < 0) {
-    // Check if within gate width
+    // Check if within gate width (generous)
     const lateralDist = Math.abs(new THREE.Vector3().subVectors(currPos, checkpoint.position).dot(
       new THREE.Vector3(-checkpoint.normal.z, 0, checkpoint.normal.x)
     ));
-    if (lateralDist < checkpoint.width / 2 + 5) { // generous
-      return dotPrev > 0; // forward crossing
+    if (lateralDist < (checkpoint.width || 20) / 2 + 5) {
+      // Forward crossing: kart moves from behind the gate (negative dot) 
+      // to in front (positive dot), matching the normal direction
+      return dotCurr > 0;
     }
   }
   return false;
