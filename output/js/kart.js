@@ -71,6 +71,12 @@ export function createKart(character, isPlayer = false, racerIndex = 0) {
     // Three.js
     mesh,
 
+    // Surface blend (0 = road, 1 = offroad) — smooth transition
+    surfaceBlend: 0,
+
+    // Start boost tracking
+    _earlyAccel: false,   // set true if player presses accelerate before GO
+
     // Visual state
     tiltAngle: 0,
 
@@ -137,14 +143,19 @@ export function updateKart(kart, input, dt) {
     kart.empLockoutTimer -= dt;
   }
 
-  // Compute effective top speed
+  // Smooth surface blend: lerp between 0 (road) and 1 (offroad) over ~0.3s
+  // This prevents the jarring instant speed drop when touching offroad edges
+  const targetBlend = kart.surfaceType === 'offroad' ? 1 : 0;
+  kart.surfaceBlend = lerp(kart.surfaceBlend, targetBlend, 6 * dt);
+  // Snap when very close to avoid never-ending lerp
+  if (Math.abs(kart.surfaceBlend - targetBlend) < 0.01) kart.surfaceBlend = targetBlend;
+
+  // Compute effective top speed with smooth surface penalty
   let effectiveTopSpeed = kart.topSpeed;
-  if (kart.surfaceType === 'offroad' && !kart.starActive) {
-    if (kart.boostActive) {
-      effectiveTopSpeed *= 0.8; // 20% penalty during boost
-    } else {
-      effectiveTopSpeed *= 0.6; // 40% penalty normally
-    }
+  if (kart.surfaceBlend > 0 && !kart.starActive) {
+    const offroadMult = kart.boostActive ? 0.8 : 0.6;
+    // Blend between 1.0 (road) and offroadMult based on surfaceBlend
+    effectiveTopSpeed *= lerp(1, offroadMult, kart.surfaceBlend);
   }
   if (kart.boostActive) {
     effectiveTopSpeed *= kart.boostMultiplier;
@@ -226,6 +237,13 @@ export function updateKart(kart, input, dt) {
   // Apply steering
   if (!kart.isDrifting) {
     kart.rotation += kart.steerAmount * effectiveTurnRate * dt;
+    // Normal turning speed loss: sharp turns at high speed cost up to 15% speed/s
+    // This makes drifting more rewarding (drift only loses 5% per spec)
+    const turnIntensity = Math.abs(kart.steerAmount) * speedRatio;
+    if (turnIntensity > 0.1 && kart.speed > 5) {
+      const turnSpeedLoss = turnIntensity * 0.15 * kart.speed * dt;
+      kart.speed -= turnSpeedLoss;
+    }
   } else {
     // Drift entry snap: on the first frame of drift, kick the heading into the turn
     if (kart._driftStarted) {
@@ -238,6 +256,11 @@ export function updateKart(kart, input, dt) {
     const driftSteerMod = clamp(0.6 + counterSteer * 0.25, 0.35, 0.85);
     const driftSteerRate = effectiveTurnRate * driftSteerMod;
     kart.rotation += (kart.driftDirection * effectiveTurnRate * 0.7 + kart.steerAmount * driftSteerRate) * dt;
+    // Drift turning speed loss: only 5% (vs 15% for normal turns per spec)
+    // This is the core incentive to drift: you keep more speed through corners
+    if (kart.speed > 5) {
+      kart.speed -= 0.05 * kart.speed * dt;
+    }
   }
 
   // Position update
@@ -306,6 +329,7 @@ export function respawnKart(kart) {
   kart.driftTimer = 0;
   kart.driftTier = 0;
   kart.boostActive = false;
+  kart.surfaceBlend = 0;
   syncMesh(kart);
 }
 

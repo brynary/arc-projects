@@ -6,7 +6,7 @@ import { input } from './input.js';
 import { FIXED_DT } from './utils.js';
 import { createKart, updateKart, placeKart } from './kart.js';
 import { updatePhysics } from './physics.js';
-import { updateDrift, getDriftSparkColor, getDriftProgress } from './drift.js';
+import { updateDrift, getDriftSparkColor, getDriftProgress, applyBoost } from './drift.js';
 import { updateCamera, resetCamera, cameraState, setCameraTrackData } from './camera.js';
 import { buildTrack, findNearestSplinePoint } from './track.js';
 import { characters } from './characters.js';
@@ -131,8 +131,39 @@ function fixedUpdate(dt) {
     getAudio().then(a => { a.playCountdownGo(); a.startMusic(trackDef.name); });
     const epoch = raceEpoch;
     setTimeout(() => { if (raceEpoch !== epoch) return; const c = document.querySelector('.hud-countdown'); if(c) c.classList.remove('show'); }, 700);
+
+    // Start Boost mechanic (per spec):
+    // - Pressing accel during the 0.3s window at GO → Tier 2 drift boost
+    // - Pressing accel before GO → tire-spin: 0.5s freeze, no boost
+    // - Not pressing → normal start
+    if (playerKart) {
+      if (playerKart._earlyAccel) {
+        // Penalty: tire-spin — 0.5s freeze
+        playerKart.frozenTimer = 0.5;
+        playerKart.speed = 0;
+      }
+      // Start monitoring the start boost window (0.3s) via raceState.startBoostWindow
+    }
   }
   if (ev.countdownTick > 0) getAudio().then(a => a.playCountdownBeep());
+
+  // Track early accelerate during the visible 3-2-1 countdown for start boost penalty
+  // Only check once the first number (3) has appeared, not during the initial flyover
+  if (raceState.status === 'countdown' && raceState.countdownNumber >= 1 &&
+      playerKart && !playerKart._earlyAccel) {
+    if (input.isDown('accelerate')) {
+      playerKart._earlyAccel = true;
+    }
+  }
+
+  // Start boost window: if player presses accelerate during the 0.3s window
+  // and didn't press early, grant a Tier 2 drift boost
+  if (raceState.startBoostWindow && playerKart && !playerKart._earlyAccel &&
+      input.isDown('accelerate') && !playerKart._startBoostGranted) {
+    applyBoost(playerKart, 2);
+    playerKart._startBoostGranted = true;
+  }
+
   if (ev.lapCompleted && ev.lapCompleted.kart === playerKart) {
     getAudio().then(a => a.playLapComplete());
     showLapSplit(ev.lapCompleted.lap);
@@ -633,6 +664,11 @@ async function startRace() {
   autoFinishTimer = 0;
   sparkT = 0; boostT = 0; dustT = 0;
   prevPlayerLap = 0;
+  // Reset start boost tracking on player
+  if (playerKart) {
+    playerKart._earlyAccel = false;
+    playerKart._startBoostGranted = false;
+  }
   resetCamera(camera, playerKart);
 
   // Expose for debug / testing

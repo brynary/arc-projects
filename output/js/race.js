@@ -49,6 +49,7 @@ export function initRace(allKarts, trackData) {
     kart.shieldActive = false;
     kart.shieldTimer = 0;
     kart.empLockoutTimer = 0;
+    kart.surfaceBlend = 0;          // reset smooth surface transition
     kart._prevItem = null;       // prevent spurious pickup sound after restart
   }
 }
