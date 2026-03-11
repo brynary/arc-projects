@@ -1,0 +1,418 @@
+diff --git a/.workflow/improve_log.md b/.workflow/improve_log.md
+index e97b0e2..10f1907 100644
+--- a/.workflow/improve_log.md
++++ b/.workflow/improve_log.md
+@@ -114,6 +114,12 @@
+ - **Speed-dependent camera FOV**: Camera FOV now modulates with kart speed for a "speed rush" effect. At standstill: 63° (slightly narrower, intimate feel). At top speed: ~71.5°. During boost overspeed (up to 1.4× top speed): up to ~75°. The FOV lerps smoothly (factor 0.1^dt) to avoid jarring snaps. Combined with the existing speed-dependent chase distance, this creates a convincing sense of acceleration. The projection matrix is updated each visual frame.
+ - Verified: pass — Zero console errors on all 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak). All 8 karts racing on every track. Brake pitch confirmed active (0.116 rad peak). No NaN values on any kart property. Properties (pitchAngle, offroadBobPhase) correctly initialized and reset on respawn.
+ 
++## Iteration 21 — Focus: Race Flow & State
++- **Fix false first-lap completion**: Crossing checkpoint 0 for the first time (from `lastCheckpoint=-1`) was incorrectly triggering a lap increment — `currentLap` jumped from 0 to 1 after just ~2 seconds of driving, and the HUD showed "Lap 2/3" almost immediately. The lap condition `nextCP === 0 && currentLap >= 0` was replaced with `nextCP === 0 && prevCP === numCheckpoints - 1`, requiring the kart to have visited the last checkpoint (full circuit) before a lap is counted. Now the first lap only completes after driving through all checkpoints and returning to checkpoint 0.
++- **Freeze HUD timer at player's finish time**: After the player crosses the finish line, `raceState.raceTime` continues incrementing (so AI karts can record their finish times). But the HUD timer was showing this ever-increasing time, confusing the player into thinking their time was getting worse. Now the HUD timer displays `playerKart.finishTime` once the player has finished, showing their actual race time frozen at the moment they crossed the line.
++- **Proper all-karts-finished detection**: `raceState.allFinished` was initialized to `false` but never set to `true`. Added two detection paths: (1) when auto-DNF fires after 30s, mark all remaining karts as finished and set `raceState.allFinished = true` + `status = 'finished'`; (2) when all karts naturally finish before the timeout, detect `finishedKarts.length === allKarts.length` and transition similarly. This stops unnecessary race processing after all karts are done.
++- Verified: pass — All 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak) load and race with zero console errors. No false first-lap on any track (player stays at Lap 1/3 after 8s of driving on every track). 8/8 karts racing on all tracks. State resets correctly on restart.
++
+ ## Iteration 20 — Focus: Camera System
+ - **Countdown flyover camera**: Implemented the spec-required pre-race camera sweep. During the first 3s of countdown, the camera flies along the track spline at 35–45 units altitude with gentle side-sway, showing an aerial overview of the upcoming course. Uses `easeInOutSine` for smooth acceleration/deceleration. At flyover end, transitions to the behind-player chase view via `resetCamera`. The player's spline position is computed once at flyover start (via `findNearestSplinePoint`) to avoid relying on `_cachedNearest` which isn't populated during frozen countdown frames.
+ - **Spline-aware look-ahead for tight corners**: The camera's look-at target now blends between the kart's heading-based forward point and a point ~4% ahead on the track spline. At higher speeds, the blend increases (up to 40%), so the camera "looks into" upcoming corners before the kart fully rotates. This prevents the kart from going out of frame on tight 90° turns (Neon Grid) and hairpins (Mossy Canyon). Uses a pre-allocated `_splineAhead` Vector3 with `getPointAt(t, target)` to avoid per-frame allocation.
+diff --git a/output/js/main.js b/output/js/main.js
+index 840c7da..fddc16a 100644
+--- a/output/js/main.js
++++ b/output/js/main.js
+@@ -194,11 +194,20 @@ function fixedUpdate(dt) {
+         if (!k.finished) {
+           k.finished = true;
+           k.finishTime = null; // null = DNF
++          raceState.finishedKarts.push(k);
+         }
+       }
++      raceState.allFinished = true;
++      raceState.status = 'finished';
+     }
+   }
+ 
++  /* Detect natural all-finished (all karts crossed the line before auto-DNF) */
++  if (raceState.status === 'racing' && raceState.finishedKarts.length === allKarts.length) {
++    raceState.allFinished = true;
++    raceState.status = 'finished';
++  }
++
+   /* player */
+   if (playerKart && !playerKart.finished) {
+     updateDrift(playerKart, input, dt);
+@@ -363,7 +372,18 @@ function updateHUD() {
+   if (hl) hl.textContent = `Lap ${Math.min(playerKart.currentLap+1,3)}/3`;
+ 
+   const htm = document.getElementById('ht-main');
+-  if (htm) htm.textContent = raceState.status==='racing'||raceState.status==='finished' ? formatTime(raceState.raceTime,1) : '0:00.0';
++  if (htm) {
++    // Freeze timer display at player's finish time once they've finished,
++    // instead of showing the continuously-incrementing race time (which
++    // keeps ticking for AI karts to record their finish times).
++    if (playerKart.finished && playerKart.finishTime != null) {
++      htm.textContent = formatTime(playerKart.finishTime, 1);
++    } else if (raceState.status === 'racing' || raceState.status === 'finished') {
++      htm.textContent = formatTime(raceState.raceTime, 1);
++    } else {
++      htm.textContent = '0:00.0';
++    }
++  }
+ 
+   const hi = document.getElementById('hi');
+   if (hi) hi.textContent = playerKart.heldItem ? (ITEM_ICONS[playerKart.heldItem]||'?') : '—';
+diff --git a/output/js/race.js b/output/js/race.js
+index 9e32961..a80258f 100644
+--- a/output/js/race.js
++++ b/output/js/race.js
+@@ -184,14 +184,17 @@ function updateCheckpoints(kart, trackData) {
+     const effectiveDirDot = kart.speed >= 0 ? dirDot : -dirDot;
+     if (effectiveDirDot < -0.2) return null;
+ 
++    const prevCP = kart.lastCheckpoint;
+     kart.lastCheckpoint = nextCP;
+     kart.lastCheckpointPos.set(cp.position.x, cp.position.y || 0, cp.position.z);
+     if (cp.forward) {
+       kart.lastCheckpointRot = Math.atan2(cp.forward.x, cp.forward.z);
+     }
+ 
+-    // Lap completion
+-    if (nextCP === 0 && kart.currentLap >= 0) {
++    // Lap completion: only trigger when wrapping from the LAST checkpoint back to
++    // checkpoint 0 (a full circuit). Previously, the first crossing of checkpoint 0
++    // (from lastCheckpoint=-1) falsely counted as completing a lap.
++    if (nextCP === 0 && prevCP === numCheckpoints - 1) {
+       const lapTime = raceState.raceTime - (kart.lapTimes.length > 0 ?
+         kart.lapTimes.reduce((a, b) => a + b, 0) : 0);
+       kart.lapTimes.push(lapTime);
+diff --git a/test_raceflow.js b/test_raceflow.js
+new file mode 100644
+index 0000000..3ca9fc6
+--- /dev/null
++++ b/test_raceflow.js
+@@ -0,0 +1,103 @@
++// Test race flow: verify first-lap detection, race lifecycle, state resets
++const { chromium } = require('playwright');
++
++(async () => {
++  const browser = await chromium.launch();
++  const page = await browser.newPage();
++  await page.goto('http://localhost:4567', { waitUntil: 'networkidle' });
++  await page.waitForTimeout(2000);
++
++  // Start a race on Sunset Bay
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(800);
++  // Click first track (Sunset Bay)
++  const trackCards = await page.$$('.card');
++  if (trackCards.length > 0) await trackCards[0].click();
++  await page.waitForTimeout(300);
++  await page.click('#ts-next');
++  await page.waitForTimeout(500);
++  // Select first character
++  const charCards = await page.$$('.card');
++  if (charCards.length > 0) await charCards[0].click();
++  await page.waitForTimeout(300);
++  await page.click('#cs-next');
++  await page.waitForTimeout(500);
++  // Start race
++  await page.click('#ds-start');
++  await page.waitForTimeout(1000);
++
++  // Wait for countdown to finish + race to start
++  console.log('Waiting for countdown...');
++  await page.waitForTimeout(8000);
++
++  // Check initial race state
++  const state1 = await page.evaluate(() => {
++    const rs = window.__raceState;
++    const pk = window.__allKarts?.find(k => k.isPlayer);
++    return {
++      status: rs?.status,
++      raceTime: rs?.raceTime?.toFixed(2),
++      playerLap: pk?.currentLap,
++      playerLastCP: pk?.lastCheckpoint,
++      playerPosition: pk?.racePosition,
++      numCheckpoints: window.__trackData?.checkpoints?.length,
++      lapTimesCount: pk?.lapTimes?.length,
++    };
++  });
++  console.log('After countdown (before driving):', JSON.stringify(state1));
++
++  // Drive forward for ~5 seconds (to reach checkpoint 0)
++  console.log('Driving forward...');
++  await page.keyboard.down('ArrowUp');
++  await page.waitForTimeout(5000);
++
++  const state2 = await page.evaluate(() => {
++    const rs = window.__raceState;
++    const pk = window.__allKarts?.find(k => k.isPlayer);
++    return {
++      status: rs?.status,
++      raceTime: rs?.raceTime?.toFixed(2),
++      playerLap: pk?.currentLap,
++      playerLastCP: pk?.lastCheckpoint,
++      playerPosition: pk?.racePosition,
++      lapTimes: pk?.lapTimes?.map(t => t.toFixed(2)),
++      lapTimesCount: pk?.lapTimes?.length,
++    };
++  });
++  console.log('After 5s of driving:', JSON.stringify(state2));
++
++  // Check if lap was falsely triggered
++  if (state2.playerLap > 0 && state2.lapTimesCount > 0 && parseFloat(state2.lapTimes[0]) < 10) {
++    console.log('BUG CONFIRMED: False first-lap completion detected! First "lap" only took', state2.lapTimes[0], 'seconds');
++  } else if (state2.playerLap === 0) {
++    console.log('OK: No false first-lap completion');
++  }
++
++  // Check the HUD display
++  const hudLap = await page.evaluate(() => document.getElementById('hl')?.textContent);
++  console.log('HUD lap display:', hudLap);
++
++  // Continue driving to check more
++  await page.waitForTimeout(5000);
++  
++  const state3 = await page.evaluate(() => {
++    const rs = window.__raceState;
++    const pk = window.__allKarts?.find(k => k.isPlayer);
++    return {
++      raceTime: rs?.raceTime?.toFixed(2),
++      playerLap: pk?.currentLap,
++      playerLastCP: pk?.lastCheckpoint,
++      lapTimesCount: pk?.lapTimes?.length,
++    };
++  });
++  console.log('After 10s total driving:', JSON.stringify(state3));
++  
++  await page.keyboard.up('ArrowUp');
++  
++  // Take a screenshot
++  await page.screenshot({ path: 'test_raceflow_screenshot.png' });
++  console.log('Screenshot saved');
++
++  await browser.close();
++  console.log('Done');
++})();
+diff --git a/test_raceflow2.js b/test_raceflow2.js
+new file mode 100644
+index 0000000..1bce280
+--- /dev/null
++++ b/test_raceflow2.js
+@@ -0,0 +1,132 @@
++// Comprehensive race flow verification test
++const { chromium } = require('playwright');
++
++(async () => {
++  const browser = await chromium.launch();
++  const page = await browser.newPage();
++  let errors = [];
++  page.on('pageerror', e => errors.push(e.message));
++  
++  await page.goto('http://localhost:4567', { waitUntil: 'networkidle' });
++  await page.waitForTimeout(2000);
++
++  // Navigate menus
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(800);
++  const trackCards = await page.$$('.card');
++  if (trackCards.length > 0) await trackCards[0].click();
++  await page.waitForTimeout(200);
++  await page.click('#ts-next');
++  await page.waitForTimeout(400);
++  const charCards = await page.$$('.card');
++  if (charCards.length > 0) await charCards[0].click();
++  await page.waitForTimeout(200);
++  await page.click('#cs-next');
++  await page.waitForTimeout(400);
++  await page.click('#ds-start');
++  await page.waitForTimeout(1000);
++
++  // Wait for race to start
++  console.log('--- Test 1: No false first-lap ---');
++  await page.waitForTimeout(8000); // Countdown
++
++  // Drive forward
++  await page.keyboard.down('ArrowUp');
++  await page.waitForTimeout(5000);
++
++  const t1 = await page.evaluate(() => {
++    const pk = window.__allKarts?.find(k => k.isPlayer);
++    return {
++      currentLap: pk?.currentLap,
++      lastCheckpoint: pk?.lastCheckpoint,
++      lapTimesCount: pk?.lapTimes?.length,
++    };
++  });
++  console.log('After 5s driving:', JSON.stringify(t1));
++  console.log(t1.currentLap === 0 ? 'PASS: No false first-lap' : 'FAIL: False first-lap detected');
++
++  // --- Test 2: Check all 8 karts ---
++  console.log('\n--- Test 2: All karts racing ---');
++  const kartStates = await page.evaluate(() => {
++    return window.__allKarts?.map(k => ({
++      id: k.characterId,
++      isPlayer: k.isPlayer,
++      speed: Math.abs(k.speed).toFixed(1),
++      lastCP: k.lastCheckpoint,
++      lap: k.currentLap,
++      finished: k.finished,
++    }));
++  });
++  console.log('Karts:', JSON.stringify(kartStates, null, 2));
++  
++  // --- Test 3: HUD shows correct info ---
++  console.log('\n--- Test 3: HUD correctness ---');
++  const hudState = await page.evaluate(() => {
++    return {
++      lap: document.getElementById('hl')?.textContent,
++      timer: document.getElementById('ht-main')?.textContent,
++      position: document.getElementById('hp')?.textContent?.trim(),
++    };
++  });
++  console.log('HUD:', JSON.stringify(hudState));
++  console.log(hudState.lap === 'Lap 1/3' ? 'PASS: HUD shows Lap 1/3' : `FAIL: HUD shows ${hudState.lap}`);
++  // Timer should show a positive time
++  console.log(hudState.timer && hudState.timer !== '0:00.0' ? 'PASS: Timer is running' : 'FAIL: Timer not running');
++
++  // --- Test 4: Race epoch and state are clean ---
++  console.log('\n--- Test 4: Race state integrity ---');
++  const raceIntegrity = await page.evaluate(() => {
++    const rs = window.__raceState;
++    return {
++      status: rs?.status,
++      epoch: rs?.epoch,
++      raceTime: rs?.raceTime?.toFixed(2),
++      finishedCount: rs?.finishedKarts?.length,
++      allFinished: rs?.allFinished,
++    };
++  });
++  console.log('Race state:', JSON.stringify(raceIntegrity));
++  console.log(raceIntegrity.status === 'racing' ? 'PASS: Status is racing' : `FAIL: Status is ${raceIntegrity.status}`);
++  console.log(raceIntegrity.allFinished === false ? 'PASS: allFinished is false' : 'FAIL: allFinished should be false');
++
++  await page.keyboard.up('ArrowUp');
++  
++  // --- Test 5: Console errors ---
++  console.log('\n--- Test 5: Console errors ---');
++  console.log(errors.length === 0 ? 'PASS: No console errors' : `FAIL: ${errors.length} errors: ${errors.join(', ')}`);
++
++  // Take screenshot
++  await page.screenshot({ path: 'test_raceflow_verified.png' });
++  
++  // --- Test 6: Quick restart keeps state clean ---
++  console.log('\n--- Test 6: Restart state cleanup ---');
++  await page.keyboard.press('Escape'); // Pause
++  await page.waitForTimeout(500);
++  const restartBtn = await page.$('[data-act="restart"]');
++  if (restartBtn) {
++    await restartBtn.click();
++    await page.waitForTimeout(9000); // Wait for new countdown
++    
++    const afterRestart = await page.evaluate(() => {
++      const rs = window.__raceState;
++      const pk = window.__allKarts?.find(k => k.isPlayer);
++      return {
++        status: rs?.status,
++        raceTime: rs?.raceTime?.toFixed(2),
++        playerLap: pk?.currentLap,
++        playerLastCP: pk?.lastCheckpoint,
++        lapTimes: pk?.lapTimes?.length,
++        allFinished: rs?.allFinished,
++      };
++    });
++    console.log('After restart:', JSON.stringify(afterRestart));
++    console.log(afterRestart.playerLap === 0 ? 'PASS: Lap reset' : 'FAIL: Lap not reset');
++    console.log(afterRestart.allFinished === false ? 'PASS: allFinished reset' : 'FAIL: allFinished not reset');
++  }
++
++  console.log('\n--- Final errors check ---');
++  console.log(errors.length === 0 ? 'PASS: No console errors overall' : `FAIL: ${errors.length} errors`);
++
++  await browser.close();
++  console.log('All tests complete');
++})();
+diff --git a/test_raceflow_all_tracks.js b/test_raceflow_all_tracks.js
+new file mode 100644
+index 0000000..4bfff3a
+--- /dev/null
++++ b/test_raceflow_all_tracks.js
+@@ -0,0 +1,71 @@
++// Test race flow on all 4 tracks
++const { chromium } = require('playwright');
++
++(async () => {
++  const browser = await chromium.launch();
++  const page = await browser.newPage();
++  let errors = [];
++  page.on('pageerror', e => errors.push(e.message));
++  
++  const tracks = ['Sunset Bay', 'Mossy Canyon', 'Neon Grid', 'Volcano Peak'];
++  
++  for (let trackIdx = 0; trackIdx < 4; trackIdx++) {
++    await page.goto('http://localhost:4567', { waitUntil: 'networkidle' });
++    await page.waitForTimeout(1500);
++    errors = [];
++    
++    // Navigate to race
++    await page.keyboard.press('Enter');
++    await page.waitForTimeout(600);
++    
++    // Select track
++    const trackCards = await page.$$('.card');
++    if (trackCards[trackIdx]) await trackCards[trackIdx].click();
++    await page.waitForTimeout(200);
++    await page.click('#ts-next');
++    await page.waitForTimeout(300);
++    
++    // Select character
++    const charCards = await page.$$('.card');
++    if (charCards[0]) await charCards[0].click();
++    await page.waitForTimeout(200);
++    await page.click('#cs-next');
++    await page.waitForTimeout(300);
++    
++    // Start race
++    await page.click('#ds-start');
++    await page.waitForTimeout(9000); // Wait for countdown
++    
++    // Drive forward for 8 seconds
++    await page.keyboard.down('ArrowUp');
++    await page.waitForTimeout(8000);
++    
++    const state = await page.evaluate(() => {
++      const rs = window.__raceState;
++      const pk = window.__allKarts?.find(k => k.isPlayer);
++      const numCPs = window.__trackData?.checkpoints?.length;
++      const aiLaps = window.__allKarts?.filter(k => !k.isPlayer).map(k => k.currentLap);
++      return {
++        status: rs?.status,
++        raceTime: rs?.raceTime?.toFixed(1),
++        playerLap: pk?.currentLap,
++        playerLastCP: pk?.lastCheckpoint,
++        lapTimesCount: pk?.lapTimes?.length,
++        numCheckpoints: numCPs,
++        aiMaxLap: Math.max(...(aiLaps || [0])),
++        hudLap: document.getElementById('hl')?.textContent,
++        kartsCount: window.__allKarts?.length,
++      };
++    });
++    
++    await page.keyboard.up('ArrowUp');
++    
++    const noFalseLap = state.playerLap === 0 && state.lapTimesCount === 0;
++    const aiNoFalseLap = state.aiMaxLap <= 1; // AI might complete 1 real lap in 8s on easy tracks
++    console.log(`${tracks[trackIdx]}: playerLap=${state.playerLap}, playerLastCP=${state.playerLastCP}, lapTimes=${state.lapTimesCount}, aiMaxLap=${state.aiMaxLap}, HUD=${state.hudLap}, karts=${state.kartsCount}, errors=${errors.length} — ${noFalseLap ? 'PASS' : 'FAIL'}`);
++    if (errors.length > 0) console.log('  Errors:', errors.slice(0, 3).join('; '));
++  }
++  
++  await browser.close();
++  console.log('Done');
++})();
+diff --git a/test_raceflow_screenshot.png b/test_raceflow_screenshot.png
+new file mode 100644
+index 0000000..f9a50fd
+Binary files /dev/null and b/test_raceflow_screenshot.png differ
+diff --git a/test_raceflow_verified.png b/test_raceflow_verified.png
+new file mode 100644
+index 0000000..763217f
+Binary files /dev/null and b/test_raceflow_verified.png differ
