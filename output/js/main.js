@@ -743,6 +743,16 @@ function quitToMenu() {
     }
     allKarts = []; playerKart = null; trackData = null;
   }
+  // Reset raceState to avoid stale status leaking into next race
+  raceState.status = 'pre';
+  raceState.raceTime = 0;
+  raceState.finishedKarts = [];
+  raceState.allFinished = false;
+  raceState.countdownNumber = -1;
+  raceState.startBoostWindow = false;
+  // Clean up debug references so they don't hold stale objects
+  window.__allKarts = null;
+  window.__trackData = null;
   hudEl.classList.remove('active');
   resultsEl?.classList.add('hidden');
   cameraState.mode = 'chase';

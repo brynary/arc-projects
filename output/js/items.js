@@ -248,6 +248,10 @@ function spawnOilSlick(kart) {
 }
 
 function activateShield(kart) {
+  // Remove existing shield visual if re-activating (prevents mesh leak)
+  if (kart.shieldActive) {
+    removeShieldVisual(kart);
+  }
   kart.shieldActive = true;
   kart.shieldTimer = 8;
 
@@ -266,6 +270,7 @@ function activateShield(kart) {
 function activateTurboPepper(kart) {
   kart.boostActive = true;
   kart.boostMultiplier = 1.45;
+  kart.boostInitialMultiplier = 1.45;  // required for linear decay in kart.js
   kart.boostDuration = 1.5;
   kart.boostTimer = 1.5;
 }

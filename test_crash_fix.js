@@ -1,41 +1,45 @@
-// Test for crash & error fixes — check all 4 tracks for console errors
+// Comprehensive crash/error test for all 4 tracks and full lifecycle
 const { chromium } = require('playwright');
 
 (async () => {
-  const browser = await chromium.launch({ args: ['--no-sandbox'] });
-  const page = await browser.newPage();
-  
+  const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-gpu'] });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await context.newPage();
+
   const errors = [];
   const warnings = [];
-  
+
   page.on('console', msg => {
     if (msg.type() === 'error') errors.push(msg.text());
     if (msg.type() === 'warning') warnings.push(msg.text());
   });
-  page.on('pageerror', err => errors.push('PAGE ERROR: ' + err.message));
-  
+  page.on('pageerror', err => errors.push(`PAGE ERROR: ${err.message}`));
+
   await page.goto('http://localhost:4567', { waitUntil: 'networkidle', timeout: 30000 });
   await page.waitForTimeout(2000);
+
+  console.log('=== After initial load ===');
+  console.log('Errors:', errors.length);
+  errors.forEach(e => console.log('  ERR:', e));
+  console.log('Warnings:', warnings.length);
+  warnings.forEach(w => console.log('  WARN:', w));
+
+  // Test Title → Track select → Char select → Diff select → Race for each track
+  const TRACKS = ['Sunset Bay', 'Mossy Canyon', 'Neon Grid', 'Volcano Peak'];
   
-  console.log('=== Page loaded, errors so far:', errors.length);
-  for (const e of errors) console.log('  ERROR:', e);
-  
-  // Press Enter on title
-  await page.keyboard.press('Enter');
-  await page.waitForTimeout(1000);
-  
-  // Test each track
-  const tracks = [0, 1, 2, 3];
-  const trackNames = ['Sunset Bay', 'Mossy Canyon', 'Neon Grid', 'Volcano Peak'];
-  
-  for (const trackIdx of tracks) {
-    console.log(`\n=== Testing Track ${trackIdx}: ${trackNames[trackIdx]} ===`);
+  for (let trackIdx = 0; trackIdx < TRACKS.length; trackIdx++) {
+    console.log(`\n=== Testing Track ${trackIdx}: ${TRACKS[trackIdx]} ===`);
     errors.length = 0;
+    warnings.length = 0;
+
+    // Press Enter at title
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(500);
     
-    // Select track
-    const cards = await page.$$('.card');
-    if (cards[trackIdx]) {
-      await cards[trackIdx].click();
+    // Click track card
+    const trackCards = await page.$$('.card');
+    if (trackCards.length > trackIdx) {
+      await trackCards[trackIdx].click();
       await page.waitForTimeout(200);
     }
     
@@ -44,103 +48,115 @@ const { chromium } = require('playwright');
     if (nextBtn) await nextBtn.click();
     await page.waitForTimeout(500);
     
-    // Select first character, click Next
+    // Click character (random index)
+    const charIdx = trackIdx; // different char per track
     const charCards = await page.$$('.card');
-    if (charCards[0]) await charCards[0].click();
-    await page.waitForTimeout(200);
+    if (charCards.length > charIdx) {
+      await charCards[charIdx].click();
+      await page.waitForTimeout(200);
+    }
     
+    // Click Next to difficulty
     const csNext = await page.$('#cs-next');
     if (csNext) await csNext.click();
     await page.waitForTimeout(500);
     
-    // Start race
+    // Click Start Race
     const startBtn = await page.$('#ds-start');
     if (startBtn) await startBtn.click();
+    await page.waitForTimeout(3000); // wait for track to load + countdown
+
+    console.log(`Errors after starting ${TRACKS[trackIdx]}:`, errors.length);
+    errors.forEach(e => console.log('  ERR:', e));
+
+    // Let race run for 10 seconds 
+    // Simulate driving
+    await page.keyboard.down('ArrowUp');
+    await page.waitForTimeout(5000);
+    
+    // Check for errors during racing
+    console.log(`Errors during racing ${TRACKS[trackIdx]}:`, errors.length);
+    errors.forEach(e => console.log('  ERR:', e));
+
+    // Try drifting 
+    await page.keyboard.down('ArrowLeft');
+    await page.keyboard.down('ShiftLeft');
     await page.waitForTimeout(2000);
+    await page.keyboard.up('ShiftLeft');
+    await page.keyboard.up('ArrowLeft');
+    await page.waitForTimeout(1000);
     
-    // Hold accelerate and run race for 15 seconds
-    await page.keyboard.down('w');
-    
-    for (let i = 0; i < 15; i++) {
-      await page.waitForTimeout(1000);
-      
-      // Check game state
-      const state = await page.evaluate(() => {
-        return {
-          allKarts: window.__allKarts?.length || 0,
-          raceStatus: window.__raceState?.status || 'unknown',
-          playerPos: window.__allKarts?.[0]?.position ? 
-            `${window.__allKarts[0].position.x.toFixed(1)},${window.__allKarts[0].position.y.toFixed(1)},${window.__allKarts[0].position.z.toFixed(1)}` : 'N/A',
-          playerSpeed: window.__allKarts?.[0]?.speed?.toFixed(1) || 'N/A',
-        };
-      });
-      
-      if (i % 5 === 0) {
-        console.log(`  t=${i}s: karts=${state.allKarts}, status=${state.raceStatus}, pos=${state.playerPos}, speed=${state.playerSpeed}, errors=${errors.length}`);
-      }
-    }
-    
-    await page.keyboard.up('w');
-    
-    // Report errors for this track
-    console.log(`  Track ${trackNames[trackIdx]}: ${errors.length} errors`);
-    for (const e of errors) console.log('    ERROR:', e.substring(0, 200));
-    
-    // Take screenshot
-    await page.screenshot({ path: `/home/daytona/workspace/test_track_${trackIdx}.png` });
-    
-    // Quit to menu via pause
+    // Try using an item
+    await page.keyboard.press('KeyE');
+    await page.waitForTimeout(500);
+
+    // Try pause/resume
     await page.keyboard.press('Escape');
     await page.waitForTimeout(500);
-    
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
+
+    console.log(`Total errors after full test of ${TRACKS[trackIdx]}:`, errors.length);
+    errors.forEach(e => console.log('  ERR:', e));
+
+    // Now quit to menu for next track test
+    await page.keyboard.press('Escape'); // pause
+    await page.waitForTimeout(300);
     const quitBtn = await page.$('[data-act="quit"]');
     if (quitBtn) await quitBtn.click();
     await page.waitForTimeout(1000);
     
-    // Press Enter to get past title
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(1000);
+    await page.keyboard.up('ArrowUp');
+    
+    // Check game state
+    const state = await page.evaluate(() => {
+      return {
+        allKarts: window.__allKarts?.length || 0,
+        trackData: !!window.__trackData,
+        raceState: window.__raceState?.status || 'none'
+      };
+    });
+    console.log(`After quit state:`, state);
   }
-  
-  // Final check: rapid restart test
-  console.log('\n=== Rapid restart test ===');
+
+  // Test rapid restart scenario
+  console.log('\n=== Testing rapid restart ===');
   errors.length = 0;
   
-  // Select first track
-  const cards2 = await page.$$('.card');
-  if (cards2[0]) await cards2[0].click();
-  await page.waitForTimeout(200);
-  const nextBtn2 = await page.$('#ts-next');
-  if (nextBtn2) await nextBtn2.click();
+  // Start a race
+  await page.keyboard.press('Enter');
   await page.waitForTimeout(500);
-  const charCards2 = await page.$$('.card');
-  if (charCards2[0]) await charCards2[0].click();
+  const trackCard0 = await page.$('.card');
+  if (trackCard0) await trackCard0.click();
   await page.waitForTimeout(200);
-  const csNext2 = await page.$('#cs-next');
-  if (csNext2) await csNext2.click();
+  const nextBtnR = await page.$('#ts-next');
+  if (nextBtnR) await nextBtnR.click();
   await page.waitForTimeout(500);
-  const startBtn2 = await page.$('#ds-start');
-  if (startBtn2) await startBtn2.click();
-  await page.waitForTimeout(3000);
+  const csNextR = await page.$('#cs-next');
+  if (csNextR) await csNextR.click();
+  await page.waitForTimeout(500);
+  const startBtnR = await page.$('#ds-start');
+  if (startBtnR) await startBtnR.click();
+  await page.waitForTimeout(2000);
   
-  // Race briefly then restart 3 times quickly
-  for (let r = 0; r < 3; r++) {
-    await page.keyboard.down('w');
-    await page.waitForTimeout(2000);
-    await page.keyboard.up('w');
-    
+  // Rapid restart 3 times
+  for (let i = 0; i < 3; i++) {
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(200);
     const restartBtn = await page.$('[data-act="restart"]');
     if (restartBtn) await restartBtn.click();
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(1500);
+    console.log(`Restart ${i+1} errors:`, errors.length);
   }
   
-  console.log(`  Rapid restart test: ${errors.length} errors`);
-  for (const e of errors) console.log('    ERROR:', e.substring(0, 200));
+  errors.forEach(e => console.log('  ERR:', e));
   
-  await page.screenshot({ path: '/home/daytona/workspace/test_restart.png' });
-  
+  // Take final screenshot
+  await page.screenshot({ path: 'screenshot_crash_test.png' });
+
+  console.log('\n=== FINAL SUMMARY ===');
+  console.log('Total errors collected:', errors.length);
+  console.log('Total warnings collected:', warnings.length);
+
   await browser.close();
-  console.log('\n=== Done ===');
-})();
+})().catch(e => { console.error('Test failed:', e); process.exit(1); });
