@@ -42,6 +42,7 @@ export function createKart(character, isPlayer = false, racerIndex = 0) {
     boostTimer: 0,
     boostDuration: 0,
     boostMultiplier: 1,
+    boostInitialMultiplier: 1,  // stored at boost start for linear decay
     stunTimer: 0,
     invincibleTimer: 0,
     frozenTimer: 0,
@@ -117,16 +118,17 @@ export function updateKart(kart, input, dt) {
     kart.invincibleTimer -= dt;
   }
 
-  // Boost decay
+  // Boost decay — linear from initial multiplier to 1.0
   if (kart.boostActive) {
     kart.boostTimer -= dt;
     if (kart.boostTimer <= 0) {
       kart.boostActive = false;
       kart.boostMultiplier = 1;
+      kart.boostInitialMultiplier = 1;
     } else {
-      // Linear decay of multiplier back to 1
+      // True linear decay: interpolate from initial multiplier to 1.0
       const t = kart.boostTimer / kart.boostDuration;
-      kart.boostMultiplier = 1 + (kart.boostMultiplier - 1) * t;
+      kart.boostMultiplier = 1 + (kart.boostInitialMultiplier - 1) * t;
     }
   }
 
@@ -154,7 +156,11 @@ export function updateKart(kart, input, dt) {
   const stunned = kart.stunTimer > 0;
 
   if (accelInput && !stunned) {
-    kart.speed += kart.accel * dt;
+    // Non-linear acceleration: snappier at low speed, tapering near top speed
+    const speedRatioForAccel = clamp(Math.abs(kart.speed) / effectiveTopSpeed, 0, 1);
+    // Acceleration multiplier: 1.5x at 0 speed → 1.0x at 50% → 0.6x near top speed
+    const accelCurve = 1.5 - 0.9 * speedRatioForAccel;
+    kart.speed += kart.accel * accelCurve * dt;
     if (kart.speed > effectiveTopSpeed) {
       kart.speed = lerp(kart.speed, effectiveTopSpeed, 5 * dt);
     }
@@ -207,6 +213,11 @@ export function updateKart(kart, input, dt) {
   if (!kart.isDrifting) {
     kart.rotation += kart.steerAmount * effectiveTurnRate * dt;
   } else {
+    // Drift entry snap: on the first frame of drift, kick the heading into the turn
+    if (kart._driftStarted) {
+      kart.rotation += kart.driftDirection * 0.12; // ~7° snap into drift
+      kart._driftStarted = false;
+    }
     // During drift, steering modulates drift angle
     const driftSteerRate = effectiveTurnRate * 0.6;
     kart.rotation += (kart.driftDirection * effectiveTurnRate * 0.7 + kart.steerAmount * driftSteerRate) * dt;

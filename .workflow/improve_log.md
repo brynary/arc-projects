@@ -9,3 +9,10 @@
 - **GPU memory leak fix — geometry/material disposal**: Added `disposeObject()` recursive disposal for track groups and kart meshes on restart/quit. Previously, switching tracks or restarting races would leak GPU-side geometry and material buffers. Also fixed a null reference crash in camera.js when `playerKart` is null during state transitions.
 
 - Verified: pass — All 4 tracks load without errors, restart/quit/new-track cycle works cleanly, no console errors
+
+## Iteration 2 — Focus: Driving Feel
+- **Fix boost decay (exponential → linear)**: The boost multiplier was self-referencing during decay (`1 + (boostMultiplier - 1) * t`), causing exponential decay instead of linear. Added `boostInitialMultiplier` field stored at boost start, and compute decay as `1 + (initialMultiplier - 1) * t`. Boost now feels stronger and more sustained throughout its duration.
+- **Non-linear acceleration curve**: Replaced flat `accel * dt` with a speed-dependent curve: `accel * (1.5 - 0.9 * speedRatio) * dt`. At standstill, acceleration is 1.5x the base rate (snappy start); at top speed, it tapers to 0.6x (satisfying buildup). Low-speed gain is ~11 units/10 frames vs ~6 units at high speed.
+- **Drift entry heading snap**: On the first frame of a drift, the kart rotation kicks 0.12 radians (~7°) in the drift direction, giving a crisp "snap" into the drift angle. The `_driftStarted` flag is consumed after one frame so it only fires once.
+- **Smoother wall deflection**: Replaced abrupt `atan2` heading assignment with angle-difference blending (70% for glancing, 60% for hard hits). Hard hit speed loss now scales proportionally with impact angle (25-40%) instead of a flat 35%. Stun duration also scales (0.2-0.35s). Walls feel forgiving on grazes and fair on impacts.
+- Verified: pass — All 4 tracks load and race cleanly, no console errors. Unit tests confirm linear boost decay, stronger low-speed acceleration, and visible drift snap.

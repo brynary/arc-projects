@@ -115,6 +115,7 @@ export function applyBoost(kart, tier) {
 
   kart.boostActive = true;
   kart.boostMultiplier = config.multiplier;
+  kart.boostInitialMultiplier = config.multiplier;
   kart.boostDuration = config.duration;
   kart.boostTimer = config.duration;
   kart._boostStarted = tier;

@@ -143,25 +143,38 @@ function resolveWallCollision(kart, wall, collision) {
   const dot = headingX * collision.nx + headingZ * collision.nz;
   const angle = Math.acos(clamp(Math.abs(dot), 0, 1));
 
+  // Wall tangent direction (along the wall surface)
+  const tangentX = -collision.nz;
+  const tangentZ = collision.nx;
+  const tangentDot = headingX * tangentX + headingZ * tangentZ;
+
   if (angle < Math.PI / 6) {
-    // Glancing hit: deflect along wall, 15% speed loss
+    // Glancing hit: smoothly deflect along wall, 15% speed loss
     kart.speed *= 0.85;
-    // Deflect heading along wall tangent
-    const tangentX = -collision.nz;
-    const tangentZ = collision.nx;
-    const tangentDot = headingX * tangentX + headingZ * tangentZ;
-    kart.rotation = Math.atan2(
+    // Blend toward wall-tangent heading rather than snapping
+    const deflectedHeading = Math.atan2(
       tangentX * Math.sign(tangentDot),
       tangentZ * Math.sign(tangentDot)
     );
+    // Smooth blend: 70% toward deflected heading (feels natural, no jarring snap)
+    let diff = deflectedHeading - kart.rotation;
+    diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
+    if (diff < -Math.PI) diff += Math.PI * 2;
+    kart.rotation += diff * 0.7;
   } else {
-    // Hard hit: bounce back, 35% speed loss, brief reduced control
-    kart.speed *= 0.65;
-    kart.stunTimer = Math.max(kart.stunTimer, 0.3);
-    // Reflect heading
+    // Hard hit: proportional speed loss based on angle severity, brief reduced control
+    const severity = clamp((angle - Math.PI / 6) / (Math.PI / 3), 0, 1);
+    const speedLoss = 0.75 - severity * 0.15;  // 25%-40% speed loss
+    kart.speed *= speedLoss;
+    kart.stunTimer = Math.max(kart.stunTimer, 0.2 + severity * 0.15);
+    // Blend toward reflected heading
     const reflectX = headingX - 2 * dot * collision.nx;
     const reflectZ = headingZ - 2 * dot * collision.nz;
-    kart.rotation = Math.atan2(reflectX, reflectZ);
+    const reflectedHeading = Math.atan2(reflectX, reflectZ);
+    let diff = reflectedHeading - kart.rotation;
+    diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
+    if (diff < -Math.PI) diff += Math.PI * 2;
+    kart.rotation += diff * 0.6;
   }
 }
 
