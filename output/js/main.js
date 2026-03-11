@@ -16,6 +16,26 @@ import { initAI, updateAI, getAIInput, setDifficulty } from './ai.js';
 import { initRace, updateRace, raceState, formatTime, getRaceResults } from './race.js';
 
 /* ═══════════════════════  STATE  ═══════════════════════ */
+
+/** Recursively dispose all geometries and materials in a Three.js object hierarchy */
+function disposeObject(obj) {
+  if (!obj) return;
+  if (obj.geometry) obj.geometry.dispose();
+  if (obj.material) {
+    if (Array.isArray(obj.material)) {
+      for (const m of obj.material) { m.dispose(); if (m.map) m.map.dispose(); }
+    } else {
+      obj.material.dispose();
+      if (obj.material.map) obj.material.map.dispose();
+    }
+  }
+  if (obj.children) {
+    for (let i = obj.children.length - 1; i >= 0; i--) {
+      disposeObject(obj.children[i]);
+    }
+  }
+}
+
 let gameState = 'TITLE';          // TITLE | TRACK_SELECT | CHAR_SELECT | DIFF_SELECT | COUNTDOWN | RACING | PAUSED | RACE_FINISH | RESULTS
 let trackData = null, trackDef = null;
 let playerKart = null, allKarts = [];
@@ -156,6 +176,7 @@ function fixedUpdate(dt) {
 
 /* ═══════════════════════  VISUAL UPDATE  ═══════════════════════ */
 function visualUpdate(dt) {
+  if (!playerKart) return;
   updateCamera(camera, playerKart, input, dt);
   updateParticles(dt);
   for (const k of allKarts) {
@@ -474,8 +495,14 @@ async function startRace() {
   /* clean previous track */
   if (trackData) {
     clearItems(scene);
-    for (const k of allKarts) scene.remove(k.mesh);
-    if (trackData.group) scene.remove(trackData.group);
+    for (const k of allKarts) {
+      disposeObject(k.mesh);
+      scene.remove(k.mesh);
+    }
+    if (trackData.group) {
+      disposeObject(trackData.group);
+      scene.remove(trackData.group);
+    }
     allKarts = []; playerKart = null; trackData = null;
   }
 
@@ -544,8 +571,14 @@ function quitToMenu() {
   getAudio().then(a => { a.stopEngine(); a.stopMusic(); });
   if (trackData) {
     clearItems(scene);
-    for (const k of allKarts) scene.remove(k.mesh);
-    if (trackData.group) scene.remove(trackData.group);
+    for (const k of allKarts) {
+      disposeObject(k.mesh);
+      scene.remove(k.mesh);
+    }
+    if (trackData.group) {
+      disposeObject(trackData.group);
+      scene.remove(trackData.group);
+    }
     allKarts = []; playerKart = null; trackData = null;
   }
   hudEl.classList.remove('active');

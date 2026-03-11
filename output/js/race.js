@@ -181,11 +181,15 @@ function updatePositions(allKarts, trackData) {
   const numCheckpoints = trackData.checkpoints.length;
 
   for (const kart of allKarts) {
-    // Compute fraction to next checkpoint
+    // Compute fraction to next checkpoint — reuse cached nearest from physics if available
     let fraction = 0;
     if (numCheckpoints > 0 && trackData.centerCurve) {
-      const nearest = findNearestSplinePoint(trackData.centerCurve, kart.position.x, kart.position.z, 50);
-      fraction = nearest.t;
+      if (kart._cachedNearest) {
+        fraction = kart._cachedNearest.t;
+      } else {
+        const nearest = findNearestSplinePoint(trackData.centerCurve, kart.position.x, kart.position.z, 50);
+        fraction = nearest.t;
+      }
     }
     kart.checkpointFraction = fraction;
     kart.raceProgress = (kart.currentLap * numCheckpoints) + kart.lastCheckpoint + 1 + fraction;

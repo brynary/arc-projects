@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import { clamp } from './utils.js';
-import { findNearestSplinePoint, isOnRoad, getRoadY } from './track.js';
+import { findNearestSplinePoint } from './track.js';
 
 const _pushVec = new THREE.Vector3();
 
@@ -12,6 +12,13 @@ const _pushVec = new THREE.Vector3();
 export function updatePhysics(karts, trackData, dt) {
   for (const kart of karts) {
     if (kart.frozenTimer > 0) continue;
+
+    // Compute nearest spline point ONCE per kart per frame
+    if (trackData && trackData.centerCurve) {
+      kart._cachedNearest = findNearestSplinePoint(
+        trackData.centerCurve, kart.position.x, kart.position.z, 50
+      );
+    }
 
     // Ground detection & surface type
     updateGroundDetection(kart, trackData);
@@ -33,11 +40,21 @@ export function updatePhysics(karts, trackData, dt) {
 function updateGroundDetection(kart, trackData) {
   if (!trackData || !trackData.centerCurve) return;
 
-  const onRoad = isOnRoad(trackData, kart.position.x, kart.position.z);
+  const nearest = kart._cachedNearest;
+  if (!nearest) return;
+
+  // Check if on road using cached nearest point and width
+  const idx = nearest.t * (trackData.samples.length - 1);
+  const i0 = Math.floor(idx);
+  const i1 = Math.min(i0 + 1, trackData.samples.length - 1);
+  const frac = idx - i0;
+  const width = trackData.samples[i0].width * (1 - frac) + trackData.samples[i1].width * frac;
+  const onRoad = nearest.distance < width / 2;
+
   kart.surfaceType = onRoad ? 'road' : 'offroad';
 
-  // Get road Y height
-  const roadY = getRoadY(trackData, kart.position.x, kart.position.z);
+  // Get road Y height from cached point
+  const roadY = nearest.point.y;
 
   // Ground snapping
   if (kart.position.y <= roadY + 0.5 && kart.verticalVelocity <= 0) {
@@ -56,8 +73,9 @@ function checkWallCollisions(kart, trackData) {
   const kartZ = kart.position.z;
   const kartRadius = 2.5;
 
-  // Find nearby walls via sector lookup
-  const nearest = findNearestSplinePoint(trackData.centerCurve, kartX, kartZ, 50);
+  // Use cached nearest spline point for sector lookup
+  const nearest = kart._cachedNearest;
+  if (!nearest) return;
   const sectorIdx = Math.floor(nearest.t * trackData.sectors.length);
 
   // Check current sector ± 1

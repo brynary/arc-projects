@@ -19,6 +19,7 @@ export const cameraState = {
 };
 
 export function updateCamera(camera, kart, input, dt) {
+  if (!kart) return;
   lookBehind = input.isDown('lookBehind');
 
   // Drift camera shift

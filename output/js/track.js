@@ -274,70 +274,71 @@ function addWallSegment(p1, p2, height, thickness, mat, meshes, collisionWalls, 
 }
 
 function mergeWallGeometries(wallData, mat) {
-  const geometries = [];
-  for (const w of wallData) {
-    const geo = new THREE.BoxGeometry(w.thickness, w.height, w.len);
-    const m = new THREE.Matrix4();
-    m.compose(
-      new THREE.Vector3(w.cx, w.cy, w.cz),
-      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, w.angle, 0)),
-      new THREE.Vector3(1, 1, 1)
+  // Single-pass merge: compute total size, then fill arrays directly
+  const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+  const basePositions = boxGeo.attributes.position.array;
+  const baseNormals = boxGeo.attributes.normal.array;
+  const baseIndex = boxGeo.index ? Array.from(boxGeo.index.array) : [];
+  const vertsPerBox = basePositions.length / 3;
+  const indicesPerBox = baseIndex.length;
+
+  const totalVerts = wallData.length * vertsPerBox;
+  const totalIndices = wallData.length * indicesPerBox;
+
+  const positions = new Float32Array(totalVerts * 3);
+  const normals = new Float32Array(totalVerts * 3);
+  const indices = new Uint32Array(totalIndices);
+
+  const _m = new THREE.Matrix4();
+  const _v = new THREE.Vector3();
+  const _n = new THREE.Vector3();
+  const _normalMatrix = new THREE.Matrix3();
+
+  for (let w = 0; w < wallData.length; w++) {
+    const wd = wallData[w];
+    _m.compose(
+      new THREE.Vector3(wd.cx, wd.cy, wd.cz),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, wd.angle, 0)),
+      new THREE.Vector3(wd.thickness, wd.height, wd.len)
     );
-    geo.applyMatrix4(m);
-    geometries.push(geo);
+    _normalMatrix.getNormalMatrix(_m);
+
+    const vOffset = w * vertsPerBox;
+    const pOffset = vOffset * 3;
+    const iOffset = w * indicesPerBox;
+
+    // Transform positions and normals
+    for (let i = 0; i < vertsPerBox; i++) {
+      _v.set(basePositions[i * 3], basePositions[i * 3 + 1], basePositions[i * 3 + 2]);
+      _v.applyMatrix4(_m);
+      positions[pOffset + i * 3] = _v.x;
+      positions[pOffset + i * 3 + 1] = _v.y;
+      positions[pOffset + i * 3 + 2] = _v.z;
+
+      _n.set(baseNormals[i * 3], baseNormals[i * 3 + 1], baseNormals[i * 3 + 2]);
+      _n.applyMatrix3(_normalMatrix).normalize();
+      normals[pOffset + i * 3] = _n.x;
+      normals[pOffset + i * 3 + 1] = _n.y;
+      normals[pOffset + i * 3 + 2] = _n.z;
+    }
+
+    // Offset indices
+    for (let i = 0; i < indicesPerBox; i++) {
+      indices[iOffset + i] = baseIndex[i] + vOffset;
+    }
   }
 
-  // Batch merge in chunks to avoid memory issues
-  const batchSize = 500;
-  let merged = geometries[0];
-  for (let i = 1; i < geometries.length; i++) {
-    if (i % batchSize === 0) {
-      // Do nothing special, just keep merging
-    }
-    merged = mergeTwo(merged, geometries[i]);
-  }
+  boxGeo.dispose();
+
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  merged.setIndex(new THREE.BufferAttribute(indices, 1));
 
   const mesh = new THREE.Mesh(merged, mat);
   mesh.castShadow = false;
   mesh.receiveShadow = true;
   return mesh;
-}
-
-function mergeTwo(g1, g2) {
-  const positions1 = g1.attributes.position.array;
-  const positions2 = g2.attributes.position.array;
-  const normals1 = g1.attributes.normal.array;
-  const normals2 = g2.attributes.normal.array;
-
-  const newPositions = new Float32Array(positions1.length + positions2.length);
-  newPositions.set(positions1);
-  newPositions.set(positions2, positions1.length);
-
-  const newNormals = new Float32Array(normals1.length + normals2.length);
-  newNormals.set(normals1);
-  newNormals.set(normals2, normals1.length);
-
-  const idx1 = g1.index ? Array.from(g1.index.array) : [];
-  const idx2 = g2.index ? Array.from(g2.index.array) : [];
-
-  if (idx1.length === 0) {
-    for (let i = 0; i < positions1.length / 3; i++) idx1.push(i);
-  }
-  if (idx2.length === 0) {
-    for (let i = 0; i < positions2.length / 3; i++) idx2.push(i);
-  }
-
-  const offset = positions1.length / 3;
-  const newIndices = new Uint32Array(idx1.length + idx2.length);
-  for (let i = 0; i < idx1.length; i++) newIndices[i] = idx1[i];
-  for (let i = 0; i < idx2.length; i++) newIndices[idx1.length + i] = idx2[i] + offset;
-
-  const merged = new THREE.BufferGeometry();
-  merged.setAttribute('position', new THREE.BufferAttribute(newPositions, 3));
-  merged.setAttribute('normal', new THREE.BufferAttribute(newNormals, 3));
-  merged.setIndex(new THREE.BufferAttribute(newIndices, 1));
-
-  return merged;
 }
 
 function buildGround(trackDef) {

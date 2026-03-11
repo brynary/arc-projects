@@ -40,6 +40,9 @@ export function initParticles(scene) {
   scene.add(instancedMesh);
 }
 
+// Reusable Color object for spawning particles — avoids per-spawn allocation
+const _spawnColor = new THREE.Color();
+
 /**
  * Spawn a particle.
  */
@@ -47,13 +50,16 @@ export function spawnParticle(x, y, z, vx, vy, vz, color, life = 0.3, size = 0.3
   if (particlePool.length === 0) return;
 
   const idx = particlePool.pop();
+  _spawnColor.set(color);
   activeParticles.push({
     idx,
     x, y, z,
     vx, vy, vz,
     life,
     maxLife: life,
-    color: new THREE.Color(color),
+    r: _spawnColor.r,
+    g: _spawnColor.g,
+    b: _spawnColor.b,
     size,
   });
 }
@@ -93,7 +99,8 @@ export function updateParticles(dt) {
     dummyMatrix.compose(dummyPos, dummyQuat, dummyScale);
 
     instancedMesh.setMatrixAt(p.idx, dummyMatrix);
-    instancedMesh.setColorAt(p.idx, p.color);
+    dummyColor.setRGB(p.r, p.g, p.b);
+    instancedMesh.setColorAt(p.idx, dummyColor);
   }
 
   instancedMesh.instanceMatrix.needsUpdate = true;
