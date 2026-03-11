@@ -193,7 +193,7 @@ If all pass:\n\
     }
 
     // =========================================================================
-    // Phase 4b: Iterative Improvement (20 iterations)
+    // Phase 4b: Iterative Improvement (100 iterations)
     // =========================================================================
 
     subgraph cluster_improve {
@@ -217,10 +217,10 @@ If all pass:\n\
             shape=parallelogram,
             label="Check Counter",
             max_retries=25,
-            script="COUNT=$(cat .workflow/improve_counter 2>/dev/null || echo 0); COUNT=$((COUNT + 1)); echo $COUNT > .workflow/improve_counter; if [ $COUNT -lt 20 ]; then echo \"$COUNT/20 — continue\"; else echo 0 > .workflow/improve_counter; echo \"$COUNT/20 — done\"; exit 1; fi"
+            script="COUNT=$(cat .workflow/improve_counter 2>/dev/null || echo 0); COUNT=$((COUNT + 1)); echo $COUNT > .workflow/improve_counter; if [ $COUNT -lt 100 ]; then echo \"$COUNT/100 — continue\"; else echo 0 > .workflow/improve_counter; echo \"$COUNT/100 — done\"; exit 1; fi"
         ]
 
-        gate_improve_done [shape=diamond, label="20 Done?"]
+        gate_improve_done [shape=diamond, label="100 Done?"]
     }
 
     // =========================================================================
@@ -326,7 +326,7 @@ Respond with:\n\
     pick_improvement -> improve_game -> check_improve_counter -> gate_improve_done
 
     gate_improve_done -> pick_improvement [condition="outcome=success", label="Continue"]
-    gate_improve_done -> review_fanout    [condition="outcome=fail", label="20 Done"]
+    gate_improve_done -> review_fanout    [condition="outcome=fail", label="100 Done"]
     gate_improve_done -> review_fanout
 
     // Review fanout
