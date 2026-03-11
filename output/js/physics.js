@@ -24,11 +24,11 @@ export function updatePhysics(karts, trackData, dt) {
     // Ground detection & surface type
     updateGroundDetection(kart, trackData);
 
-    // Wall collisions
-    checkWallCollisions(kart, trackData);
+    // Wall collisions (accumulated to prevent jitter in corners)
+    checkWallCollisionsAccumulated(kart, trackData);
   }
 
-  // Kart-to-kart collisions
+  // Kart-to-kart collisions (with Y-level filtering)
   for (let i = 0; i < karts.length; i++) {
     for (let j = i + 1; j < karts.length; j++) {
       if (karts[i].frozenTimer > 0 || karts[j].frozenTimer > 0) continue;
@@ -67,11 +67,18 @@ function updateGroundDetection(kart, trackData) {
   }
 }
 
-function checkWallCollisions(kart, trackData) {
+/**
+ * Accumulated wall collision: gather all penetrating walls first, then resolve
+ * as a combined push. This prevents jitter when a kart sits in a corner where
+ * two walls meet — sequential resolve would push out of wall A into wall B
+ * and vice versa, causing oscillation.
+ */
+function checkWallCollisionsAccumulated(kart, trackData) {
   if (!trackData || !trackData.collisionWalls) return;
 
   const kartX = kart.position.x;
   const kartZ = kart.position.z;
+  const kartY = kart.position.y;
   const kartRadius = 2.5;
 
   // Use cached nearest spline point for sector lookup
@@ -86,10 +93,23 @@ function checkWallCollisions(kart, trackData) {
     sectorsToCheck.push(trackData.sectors[idx]);
   }
 
+  // Phase 1: Collect all collisions
+  let pushNx = 0, pushNz = 0;
+  let maxOverlap = 0;
+  let hitCount = 0;
+  let worstWall = null;
+  let worstCollision = null;
+
   for (const sector of sectorsToCheck) {
     for (const wallIdx of sector.wallIndices) {
       const wall = trackData.collisionWalls[wallIdx];
       if (!wall) continue;
+
+      // Y-level filter: skip walls whose vertical extent doesn't overlap with kart
+      // Wall spans from wall.y to wall.y + wall.height; kart is at kartY ± ~2
+      const wallBottom = wall.y - 0.5;
+      const wallTop = wall.y + wall.height + 0.5;
+      if (kartY < wallBottom - 2 || kartY > wallTop + 2) continue;
 
       const collision = checkCircleLineSegment(
         kartX, kartZ, kartRadius,
@@ -97,8 +117,36 @@ function checkWallCollisions(kart, trackData) {
       );
 
       if (collision) {
-        resolveWallCollision(kart, wall, collision);
+        // Accumulate push direction (weighted by overlap)
+        pushNx += collision.nx * collision.overlap;
+        pushNz += collision.nz * collision.overlap;
+        hitCount++;
+
+        // Track the worst (deepest) collision for heading response
+        if (collision.overlap > maxOverlap) {
+          maxOverlap = collision.overlap;
+          worstWall = wall;
+          worstCollision = collision;
+        }
       }
+    }
+  }
+
+  // Phase 2: Apply combined push
+  if (hitCount > 0) {
+    // Normalize the accumulated push direction
+    const pushLen = Math.sqrt(pushNx * pushNx + pushNz * pushNz);
+    if (pushLen > 0.001) {
+      const nx = pushNx / pushLen;
+      const nz = pushNz / pushLen;
+      // Push distance is the maximum overlap (not sum, to avoid over-push)
+      kart.position.x += nx * maxOverlap * 1.1;
+      kart.position.z += nz * maxOverlap * 1.1;
+    }
+
+    // Apply heading response based on worst collision only
+    if (worstCollision) {
+      resolveWallHeading(kart, worstCollision);
     }
   }
 }
@@ -131,10 +179,11 @@ function checkCircleLineSegment(cx, cz, r, x1, z1, x2, z2) {
   return null;
 }
 
-function resolveWallCollision(kart, wall, collision) {
-  // Push kart out of wall
-  kart.position.x += collision.nx * collision.overlap * 1.1;
-  kart.position.z += collision.nz * collision.overlap * 1.1;
+/**
+ * Apply heading correction and speed penalty from a wall hit.
+ * Position push is already handled by the accumulated resolver.
+ */
+function resolveWallHeading(kart, collision) {
 
   // Compute collision angle
   const heading = kart.rotation;
@@ -183,11 +232,17 @@ function checkKartCollision(kartA, kartB) {
   const dx = kartB.position.x - kartA.position.x;
   const dz = kartB.position.z - kartA.position.z;
   const dy = kartB.position.y - kartA.position.y;
-  const distSq = dx * dx + dz * dz + dy * dy;
+
+  // Y-level filter: karts on different elevation levels shouldn't collide.
+  // This prevents false collisions on multi-level tracks like Volcano Peak
+  // where karts on switchbacks above/below each other are close in XZ.
+  if (Math.abs(dy) > 4) return;
+
+  const distSqXZ = dx * dx + dz * dz;
   const minDist = 5; // kart collision radius sum
 
-  if (distSq < minDist * minDist && distSq > 0.01) {
-    const dist = Math.sqrt(distSq);
+  if (distSqXZ < minDist * minDist && distSqXZ > 0.01) {
+    const dist = Math.sqrt(distSqXZ);
     const overlap = minDist - dist;
     const nx = dx / dist;
     const nz = dz / dist;
