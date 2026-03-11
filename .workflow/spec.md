@@ -140,7 +140,7 @@ Expose `window.render_game_to_text()` returning a JSON string with:
 - `track`: name of current track
 - Coordinate system note: Y-up, Z-forward from start line
 
-Expose `window.advanceTime(ms)` to step the game loop deterministically for Playwright-based automated testing.
+Expose `window.advanceTime(ms)` to step the game loop deterministically for Playwright-based automated testing. Implementation: runs the game loop repeatedly in 16.67ms increments until the total elapsed time reaches `ms`. Each step calls the same update logic as the normal game loop. Returns the final `render_game_to_text()` output.
 
 ---
 
@@ -150,14 +150,14 @@ Expose `window.advanceTime(ms)` to step the game loop deterministically for Play
 
 | Parameter | Value |
 |---|---|
-| Max speed (road) | 45 units/s |
-| Max speed (off-road) | 27 units/s (60% of road) |
-| Off-road penalty during boost | 50% of normal penalty (so ~36 units/s floor) |
-| Acceleration (0 to max) | ~2.5 seconds |
+| Max speed (road) | 40 + (Speed stat × 2) units/s (range: 42–50; stat 3 = 46) |
+| Max speed (off-road) | 60% of character max speed |
+| Off-road penalty during boost | 50% of normal penalty (off-road cap = 80% of max) |
+| Acceleration (0 to max) | ~2.5s at stat 3 (see §4.5 for per-character values) |
 | Braking deceleration | 2× acceleration rate |
-| Reverse max speed | 15 units/s |
-| Turn rate at max speed | 2.0 rad/s |
-| Turn rate at low speed | 3.5 rad/s |
+| Reverse max speed | 33% of character max speed |
+| Turn rate at max speed | 2.0 rad/s (modified by Handling stat) |
+| Turn rate at low speed | 3.5 rad/s (modified by Handling stat) |
 
 Turn rate interpolates linearly between low-speed and max-speed values. Steering is responsive with no input lag — the kart's facing changes the frame the key is pressed.
 
@@ -208,10 +208,11 @@ Drifting is the core skill mechanic. It is initiated by holding a drift key whil
 ### 4.4 Off-Road
 
 - Grass, dirt, sand — any surface outside the road mesh counts as off-road
-- Speed is capped at 60% of max (27 units/s baseline)
-- During active boost: off-road penalty is 50% (cap is 80% of max = 36 units/s)
+- Speed is capped at 60% of character's max speed (e.g., 27.6 units/s for stat 3)
+- During active boost: off-road penalty is halved (cap is 80% of character max)
 - Visual: kart kicks up dust particles, engine pitch drops
 - Acceleration is also reduced by 40% off-road
+- Off-road detection: each ground surface is tagged as "road" or "off-road". The kart samples surface type at its XZ position via point-in-polygon test against road segments.
 
 ### 4.5 Kart Stats Influence
 
@@ -222,7 +223,9 @@ Character stats modify the base parameters:
 | Speed (1-5) | Max speed: 40 + (stat × 2) = 42-50 units/s |
 | Acceleration (1-5) | Time to max: 3.2s at 1, 1.8s at 5 |
 | Handling (1-5) | Turn rate bonus: ±15% per point from center (3) |
-| Weight (1-5) | Collision push resistance: heavy karts push light karts. Drift initiation requires slightly more speed at high weight |
+| Weight (1-5) | Collision push resistance: heavy karts push light karts. Drift initiation threshold: 60% + (weight - 3) × 3% of max speed (Weight 1 = 54%, Weight 5 = 66%) |
+
+**Note on stat totals:** Character stat totals are intentionally unequal (Brix 13, Zippy 12, Chunk 13, Pixel 14). Weight is a mixed stat — beneficial for collisions but detrimental for drift initiation threshold — so raw totals do not indicate balance. Zippy's low weight and high handling make drift-chaining viable, compensating for the lower total.
 
 ---
 
@@ -465,6 +468,15 @@ Item distribution depends on the racer's current position:
 
 Leaders get more defensive items (Slick Puddle to protect their lead). Trailers get more offensive items (Spark Bomb to disrupt leaders). Turbo Cell is equally distributed — everyone likes speed.
 
+### 7.1.1 Item General Rules
+
+- Items cannot be used during countdown (inputs locked until "GO!").
+- Items CAN be used during post-respawn invincibility; invincibility only prevents receiving damage.
+- A kart currently in a stun/spin state (from any source) is immune to additional stun effects until the current one expires. Subsequent hits are wasted. This prevents chain-locking.
+- Spinning/stunned karts remain solid for kart-to-kart collisions (can act as roadblocks).
+- Item box collision: sphere with radius 2 units centered on the box. Kart center must enter to collect.
+- Item boxes respawn individually 10 seconds after collection (visual: fade in over 0.5 seconds).
+
 ### 7.2 Item 1: Spark Bomb
 
 **Visual Appearance:** A small glowing yellow cube with electric arcs crackling around it, trailing golden sparks when thrown.
@@ -498,8 +510,9 @@ Leaders get more defensive items (Slick Puddle to protect their lead). Trailers 
   - Steering effectiveness reduced to 25% during slide
   - Speed maintained (no speed loss — it's a slide, not a stop)
   - Does NOT cancel active drift (you can drift through a puddle, though the slide makes it harder)
-- Puddle persists for 10 seconds, then fades out over 1 second
+- Puddle persists for 10 seconds total (fully active for 9 seconds, fades over final 1 second; still affects karts during fade)
 - Puddle can affect multiple racers
+- Maximum 8 active Slick Puddles on the track at once (globally across all racers). If a new puddle is dropped when 8 exist, the oldest is removed immediately.
 - Visual: green ripple effect on affected kart, slight trail of green particles
 - Audio: wet squelch on deploy, slippery slide sound on contact
 
@@ -601,7 +614,7 @@ MENU → COUNTDOWN → RACING → FINISHED → RESULTS → MENU
 2. **COUNTDOWN**: Camera sweeps from above, "3... 2... 1... GO!" over 3.5 seconds. Karts visible on the starting grid. Inputs locked until "GO!".
 3. **RACING**: Active gameplay. Physics, AI, items all running.
 4. **PAUSED**: Overlay with resume/restart/quit. Physics frozen. Timer frozen.
-5. **FINISHED**: Player crosses the finish line on lap 3. Camera pulls back to show finish. Remaining CPUs finish on fast-forward (2× speed) or after 15 seconds, whichever comes first.
+5. **FINISHED**: Player crosses the finish line on lap 3. Camera pulls back to show finish. Remaining CPUs finish on fast-forward (2× speed) or after 15 seconds, whichever comes first. If the player finishes last (4th), skip directly to the results screen after the finish overlay.
 6. **RESULTS**: Final standings, times, return to menu.
 
 ### 9.3 Lap Tracking
@@ -617,8 +630,11 @@ Position (1st-4th) is determined by:
 1. Number of laps completed (more = higher position)
 2. Number of checkpoints passed in current lap (more = higher position)
 3. Distance to next checkpoint (closer = higher position)
+4. **Tiebreaker**: If two racers are equal on all above, the one with higher current speed is ranked higher. If still tied, the one processed first in the update loop is ahead.
 
 This provides smooth, continuous position updates rather than jerky position changes only at checkpoints.
+
+**Finished racers:** Once a racer crosses the finish line on lap 3, their final position is locked based on finish order. If two racers finish on the same frame, the one closer to the finish line (by sub-frame interpolation) is ranked higher.
 
 ### 9.5 Starting Grid
 
@@ -668,8 +684,8 @@ Default selection: Standard.
 
 ### 10.5 Options (Below Difficulty)
 
-- **Mirror Mode**: Toggle ON/OFF (default OFF). When on, the track is horizontally mirrored — all left turns become right turns and vice versa. Implemented by negating the X-component of all track spline points and geometry.
-- **Allow Clones**: Toggle ON/OFF (default ON). When ON, CPU opponents can be any character including the player's choice. When OFF, each character appears only once.
+- **Mirror Mode**: Toggle ON/OFF (default OFF). When on, the track is horizontally mirrored — all left turns become right turns and vice versa. Implemented by negating the X-component of all track spline points, geometry, AI racing splines, drift zones, and hazard positions.
+- **Allow Clones**: Toggle ON/OFF (default ON). When ON, each CPU independently picks from all 4 characters (duplicates between CPUs and with the player are allowed — e.g., 3 Brix opponents is possible). When OFF, all 4 racers must be unique characters.
 
 ### 10.6 Start Race
 
@@ -982,6 +998,8 @@ This approach keeps the codebase self-contained with no external 3D model files.
 - Checkpoints are numbered sequentially around the track.
 - A racer must pass through checkpoints in order; skipping one means the lap won't count.
 - The finish line is checkpoint 0 (also the final checkpoint for lap completion).
+- **Detection**: Each checkpoint is a rectangular plane perpendicular to the track direction at its placement point, spanning the full track width + 2 units margin on each side, 10 units tall. Crossing is detected by testing whether the kart's center point changed from the front side to the back side of the plane between the previous and current frame (sign change of dot product with plane normal).
+- **Crystal Caverns bridge checkpoint**: A checkpoint is placed at the start of the Rickety Bridge so that falling off always respawns at the bridge entrance.
 
 ### 18.2 Respawn Conditions
 
@@ -1081,7 +1099,7 @@ The implementation is complete when:
 
 1. **Playable Race**: A player can select a track, character, and difficulty, then race 3 laps against 3 CPU opponents and see results.
 2. **Two Tracks**: Both Sunset Circuit and Crystal Caverns are fully playable with correct layouts, hazards, and visual themes.
-3. **Four Characters**: All four characters are selectable with visually distinct voxel kart models and stats that noticeably affect gameplay.
+3. **Four Characters**: All four characters are selectable with visually distinct voxel kart models and stats that noticeably affect gameplay. Verifiable: Brix (Speed 4, max 48) must have at least 8% higher top speed than Zippy (Speed 2, max 44). Pixel (Handling 5) must have at least 40% tighter turn radius than Brix (Handling 2) at the same speed.
 4. **Three Items**: Spark Bomb, Slick Puddle, and Turbo Cell all function as specified with position-weighted distribution.
 5. **Drifting**: Drift-charge boost system works with all 3 tiers at the specified durations.
 6. **AI**: CPU opponents follow racing splines, use items, drift, and respond to difficulty settings.
