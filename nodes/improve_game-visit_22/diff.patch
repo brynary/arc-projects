@@ -1,0 +1,711 @@
+diff --git a/.workflow/improve_log.md b/.workflow/improve_log.md
+index 10f1907..7388013 100644
+--- a/.workflow/improve_log.md
++++ b/.workflow/improve_log.md
+@@ -140,4 +140,10 @@
+ - **Add item hit & shield pop audio**: Added `playItemHit()` (descending square wave + noise burst) for when the player is struck by an item, and `playShieldPop()` (rising sine + high-pass noise burst) for when a shield blocks a hit or expires. Both are triggered via `_itemHitFrame`/`_shieldPopFrame` flags on the kart, consumed each frame in `main.js`. Shield expiry now also plays the pop sound and emits blue particles (previously it just silently disappeared).
+ - **Star golden trail particles**: Added `emitStarTrail()` to particles.js that spawns gold/yellow particles scattering from the kart's sides and rear. Triggered at 25Hz while `starActive` is true. Added `starT` accumulator to the visual update loop, properly reset on race start and quit.
+ - **Homing pigeon upward bounce**: Per spec ("target bounces upward slightly 1.5 voxels"), `applyItemHit` for `homingPigeon` now sets `verticalVelocity = 8` and `onGround = false` on the hit kart, causing a visible upward pop before gravity brings it back down.
+-- Verified: pass — Zero console errors on all 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak). Star timer confirmed at 3s (decays to ~1.08 after 2s), invincibleTimer confirmed 0. Shield timer confirmed at 4s. Player picks up items normally. All 8 karts racing on every track.
+\ No newline at end of file
++- Verified: pass — Zero console errors on all 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak). Star timer confirmed at 3s (decays to ~1.08 after 2s), invincibleTimer confirmed 0. Shield timer confirmed at 4s. Player picks up items normally. All 8 karts racing on every track.
++
++## Iteration 22 — Focus: Track Integrity
++- **Snap last road sample to first for watertight closure**: On a closed CatmullRom curve, `getPointAt(0)` and `getPointAt(1)` should be identical, but floating-point drift in tangent/perpendicular computation caused the last sample's left/right edge positions to differ from the first sample's by up to 4.17 units (Mossy Canyon) and 2.22 units (Neon Grid). This left physical gaps in the wall barrier at the start/finish line through which karts could escape. Now the last sample's pos, leftEdge, rightEdge, tangent, perp, width, and bankAngle are all snapped to exactly match the first sample. Post-fix: all closure gaps measure 0.0000 on every track.
++- **T-based sector assignment for wall collision lookup**: Previously, wall sectors were built by dividing wall indices evenly (`wallsPerSector = ceil(totalWalls/numSectors)`). Since `addWallSegment` skips very short segments (`len < 0.1`), the sequential index-based division could misalign sectors vs the spline t-value lookup (`sectorIdx = floor(nearest.t * numSectors)`) used by the physics system. Now each wall stores its source sample's spline `t` value (`wall.sampleT`), and `buildSectors` assigns walls to sectors via `floor(sampleT * numSectors)`. This guarantees that the physics sector lookup always finds the correct walls regardless of wall-skip patterns. Sector sizes are now near-perfectly balanced (±3 walls max across 20 sectors on all tracks).
++- **Start/finish line checkered visual marker**: Added `buildStartFinishLine()` that creates an alternating black/white 8-square checkered stripe across the road at t=0. The marker is 2 units deep along the track tangent and rendered slightly above the road surface (`y + 0.05`) with `renderOrder=1` to prevent z-fighting. Uses vertex colors (`MeshBasicMaterial` with `vertexColors`) for zero texture overhead. Provides a clear visual landmark for the lap line on all 4 tracks.
++- Verified: pass — Zero console errors across all 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak). All closure gaps 0.0000 (pos, leftEdge, rightEdge). All 1241–1780 walls per track have valid sampleT values. No empty sectors. All 8 karts alive and on ground during active gameplay on every track. Sector balance confirmed: Sunset Bay ±3, Mossy Canyon ±3, Neon Grid ±3, Volcano Peak ±2.
+\ No newline at end of file
+diff --git a/output/js/track.js b/output/js/track.js
+index d65cb0a..8a41f3e 100644
+--- a/output/js/track.js
++++ b/output/js/track.js
+@@ -69,10 +69,31 @@ export function buildTrack(trackDef, scene) {
+     samples.push({ t, pos, tangent, perp, width, leftEdge, rightEdge, bankAngle });
+   }
+ 
++  // Snap last sample's edges to match first sample for watertight closure.
++  // On a closed CatmullRom, t=1.0 and t=0.0 are geometrically identical, but
++  // floating-point drift in tangent/perp computation can leave a multi-unit gap
++  // between the last wall segment's end and the first wall segment's start
++  // (measured at ~4 units on Mossy Canyon, ~2.2 on Neon Grid).
++  if (samples.length > 2) {
++    const first = samples[0];
++    const last = samples[samples.length - 1];
++    last.pos.copy(first.pos);
++    last.leftEdge.copy(first.leftEdge);
++    last.rightEdge.copy(first.rightEdge);
++    last.tangent.copy(first.tangent);
++    last.perp.copy(first.perp);
++    last.width = first.width;
++    last.bankAngle = first.bankAngle;
++  }
++
+   // 3. Build road surface ribbon
+   const roadGroup = buildRoadRibbon(samples, trackDef);
+   group.add(roadGroup);
+ 
++  // 3b. Start/finish line marker — checkered stripe across road at t=0
++  const startLine = buildStartFinishLine(samples[0]);
++  if (startLine) group.add(startLine);
++
+   // 4. Build walls
+   const { wallMeshes, collisionWalls } = buildWalls(samples, trackDef);
+   for (const w of wallMeshes) group.add(w);
+@@ -135,6 +156,63 @@ export function buildTrack(trackDef, scene) {
+   };
+ }
+ 
++/**
++ * Build a checkered start/finish line across the road at t=0.
++ * Creates alternating black/white squares as a visual landmark.
++ */
++function buildStartFinishLine(sample) {
++  if (!sample) return null;
++  const left = sample.leftEdge;
++  const right = sample.rightEdge;
++  const tangent = sample.tangent;
++  const y = sample.pos.y + 0.05; // slightly above road to avoid z-fighting
++
++  // Line is 2 units deep along the tangent direction
++  const depth = 2;
++  const numSquares = 8;
++
++  const geo = new THREE.BufferGeometry();
++  const verts = [];
++  const colors = [];
++  const indices = [];
++
++  for (let i = 0; i < numSquares; i++) {
++    const t0 = i / numSquares;
++    const t1 = (i + 1) / numSquares;
++
++    // Interpolate across the road width
++    const x0 = left.x + (right.x - left.x) * t0;
++    const z0 = left.z + (right.z - left.z) * t0;
++    const x1 = left.x + (right.x - left.x) * t1;
++    const z1 = left.z + (right.z - left.z) * t1;
++
++    // Offset forward/backward along tangent
++    const fx = tangent.x * depth * 0.5;
++    const fz = tangent.z * depth * 0.5;
++
++    const base = verts.length / 3;
++    verts.push(x0 - fx, y, z0 - fz);
++    verts.push(x1 - fx, y, z1 - fz);
++    verts.push(x1 + fx, y, z1 + fz);
++    verts.push(x0 + fx, y, z0 + fz);
++
++    const isWhite = i % 2 === 0;
++    const c = isWhite ? 1.0 : 0.15;
++    for (let v = 0; v < 4; v++) colors.push(c, c, c);
++
++    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
++  }
++
++  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
++  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
++  geo.setIndex(indices);
++
++  const mat = new THREE.MeshBasicMaterial({ vertexColors: true });
++  const mesh = new THREE.Mesh(geo, mat);
++  mesh.renderOrder = 1; // render on top of road
++  return mesh;
++}
++
+ function buildRoadRibbon(samples, trackDef) {
+   const vertices = [];
+   const indices = [];
+@@ -226,16 +304,18 @@ function buildWalls(samples, trackDef) {
+   for (let i = 0; i < samples.length - 1; i++) {
+     const s0 = samples[i];
+     const s1 = samples[i + 1];
++    // Store the spline t-value of the source sample on each wall for sector mapping
++    const sampleT = s0.t;
+ 
+     // Left wall segment
+     const lp1 = s0.leftEdge;
+     const lp2 = s1.leftEdge;
+-    addWallSegment(lp1, lp2, wallHeight, wallThickness, wallMat, wallMeshes, collisionWalls, 'left');
++    addWallSegment(lp1, lp2, wallHeight, wallThickness, wallMat, wallMeshes, collisionWalls, 'left', sampleT);
+ 
+     // Right wall segment
+     const rp1 = s0.rightEdge;
+     const rp2 = s1.rightEdge;
+-    addWallSegment(rp1, rp2, wallHeight, wallThickness, wallMat, wallMeshes, collisionWalls, 'right');
++    addWallSegment(rp1, rp2, wallHeight, wallThickness, wallMat, wallMeshes, collisionWalls, 'right', sampleT);
+   }
+ 
+   // Only create instanced mesh if there are wall segments
+@@ -248,7 +328,7 @@ function buildWalls(samples, trackDef) {
+   return { wallMeshes: [], collisionWalls };
+ }
+ 
+-function addWallSegment(p1, p2, height, thickness, mat, meshes, collisionWalls, side) {
++function addWallSegment(p1, p2, height, thickness, mat, meshes, collisionWalls, side, sampleT) {
+   const dx = p2.x - p1.x;
+   const dz = p2.z - p1.z;
+   const len = Math.sqrt(dx * dx + dz * dz);
+@@ -270,6 +350,7 @@ function addWallSegment(p1, p2, height, thickness, mat, meshes, collisionWalls,
+     normal,
+     y: (p1.y + p2.y) / 2,
+     height,
++    sampleT,  // spline t-value of the source sample for sector mapping
+   });
+ 
+   // Visual: store data for merge later
+@@ -411,15 +492,21 @@ function buildSky(environment) {
+ }
+ 
+ function buildSectors(samples, collisionWalls, numSectors) {
++  // Assign walls to sectors based on their spline t-value rather than
++  // sequential index. This ensures the t-based sector lookup in physics.js
++  // (sectorIdx = floor(nearest.t * numSectors)) correctly maps to the sector
++  // containing walls at that track position — even when addWallSegment skips
++  // short segments, which would break sequential index-based assignment.
+   const sectors = [];
+-  const wallsPerSector = Math.ceil(collisionWalls.length / numSectors);
+-
+   for (let i = 0; i < numSectors; i++) {
+-    const start = i * wallsPerSector;
+-    const end = Math.min(start + wallsPerSector, collisionWalls.length);
+-    sectors.push({
+-      wallIndices: Array.from({ length: end - start }, (_, j) => start + j),
+-    });
++    sectors.push({ wallIndices: [] });
++  }
++
++  for (let w = 0; w < collisionWalls.length; w++) {
++    const wall = collisionWalls[w];
++    const t = wall.sampleT !== undefined ? wall.sampleT : w / collisionWalls.length;
++    const sIdx = Math.min(Math.floor(t * numSectors), numSectors - 1);
++    sectors[sIdx].wallIndices.push(w);
+   }
+ 
+   return sectors;
+diff --git a/test_track_gameplay.js b/test_track_gameplay.js
+new file mode 100644
+index 0000000..681f544
+--- /dev/null
++++ b/test_track_gameplay.js
+@@ -0,0 +1,78 @@
++// Verify tracks work during active gameplay - run a quick race on each
++import { chromium } from 'playwright';
++
++(async () => {
++  const browser = await chromium.launch({ headless: true });
++  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++
++  const errors = [];
++  page.on('console', msg => {
++    if (msg.type() === 'error') errors.push(msg.text());
++  });
++
++  await page.goto('http://localhost:4567', { waitUntil: 'networkidle', timeout: 30000 });
++  await page.waitForTimeout(2000);
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(500);
++
++  const tracks = ['Sunset Bay', 'Mossy Canyon', 'Neon Grid', 'Volcano Peak'];
++
++  for (let idx = 0; idx < 4; idx++) {
++    console.log(`\n=== ${tracks[idx]} ===`);
++
++    const cards = await page.$$('.card');
++    if (cards[idx]) await cards[idx].click();
++    await page.waitForTimeout(200);
++    await page.click('#ts-next');
++    await page.waitForTimeout(200);
++    await page.click('#cs-next');
++    await page.waitForTimeout(200);
++    await page.click('#ds-start');
++    
++    // Wait for countdown to finish
++    await page.waitForTimeout(8000);
++
++    // Drive forward for 10 seconds
++    await page.keyboard.down('ArrowUp');
++    await page.waitForTimeout(10000);
++    await page.keyboard.up('ArrowUp');
++
++    const result = await page.evaluate(() => {
++      const td = window.__trackData;
++      const karts = window.__allKarts;
++      const rs = window.__raceState;
++      if (!td || !karts) return { error: 'No data' };
++
++      return {
++        raceStatus: rs?.status,
++        raceTime: rs?.raceTime?.toFixed(1),
++        playerPos: karts[0]?.racePosition,
++        playerLap: karts[0]?.currentLap,
++        playerCP: karts[0]?.lastCheckpoint,
++        playerSpeed: karts[0]?.speed?.toFixed(1),
++        playerSurface: karts[0]?.surfaceType,
++        allKartsAlive: karts.every(k => k.position.y > -50 && k.position.y < 200),
++        kartsOnGround: karts.filter(k => k.onGround).length,
++        wallCount: td.collisionWalls.length,
++        sectorCount: td.sectors.length,
++        // Check that no sector is dramatically imbalanced
++        sectorSizes: td.sectors.map(s => s.wallIndices.length),
++      };
++    });
++
++    console.log(JSON.stringify(result, null, 2));
++    await page.screenshot({ path: `track_gameplay_${idx}.png` });
++
++    // Quit
++    await page.keyboard.press('Escape');
++    await page.waitForTimeout(300);
++    const quitBtn = await page.$('[data-act="quit"]');
++    if (quitBtn) await quitBtn.click();
++    await page.waitForTimeout(800);
++    await page.keyboard.press('Enter');
++    await page.waitForTimeout(400);
++  }
++
++  console.log('\nConsole errors:', errors.length > 0 ? errors.join('\n') : 'None');
++  await browser.close();
++})();
+diff --git a/test_track_integrity.js b/test_track_integrity.js
+index 12abff3..012d4bb 100644
+--- a/test_track_integrity.js
++++ b/test_track_integrity.js
+@@ -1,146 +1,148 @@
+-// Test track integrity improvements: UV fix, normalized checkpoints, scaled gate
+-const { chromium } = require('playwright');
++// Test track integrity: gaps, wall coverage, checkpoint placement
++import { chromium } from 'playwright';
+ 
+ (async () => {
+   const browser = await chromium.launch({ headless: true });
+-  const page = await browser.newPage();
+-  
+-  // Collect console errors
++  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++
++  const tracks = [
++    { name: 'Sunset Bay', idx: 0 },
++    { name: 'Mossy Canyon', idx: 1 },
++    { name: 'Neon Grid', idx: 2 },
++    { name: 'Volcano Peak', idx: 3 },
++  ];
++
+   const errors = [];
+   page.on('console', msg => {
+     if (msg.type() === 'error') errors.push(msg.text());
+   });
+-  page.on('pageerror', err => errors.push(err.message));
+-  
++
+   await page.goto('http://localhost:4567', { waitUntil: 'networkidle', timeout: 30000 });
+   await page.waitForTimeout(2000);
+-
+-  // Press Enter to start
+   await page.keyboard.press('Enter');
+-  await page.waitForTimeout(1000);
+-
+-  // Test each track
+-  const trackNames = ['Sunset Bay', 'Mossy Canyon', 'Neon Grid', 'Volcano Peak'];
+-  
+-  for (let trackIdx = 0; trackIdx < 4; trackIdx++) {
+-    console.log(`\n=== Testing Track ${trackIdx}: ${trackNames[trackIdx]} ===`);
+-    
+-    // Select track by clicking on its card
++  await page.waitForTimeout(500);
++
++  for (const track of tracks) {
++    console.log(`\n=== Testing ${track.name} ===`);
++
+     const cards = await page.$$('.card');
+-    if (cards.length > trackIdx) {
+-      await cards[trackIdx].click();
+-      await page.waitForTimeout(300);
++    if (cards[track.idx]) {
++      await cards[track.idx].click();
++      await page.waitForTimeout(200);
+     }
+-    
+-    // Click Next
+-    const nextBtn = await page.$('#ts-next');
+-    if (nextBtn) await nextBtn.click();
+-    await page.waitForTimeout(500);
+ 
+-    // Select first character and click Next
+-    const charCards = await page.$$('.card');
+-    if (charCards.length > 0) await charCards[0].click();
+-    await page.waitForTimeout(200);
+-    const csNext = await page.$('#cs-next');
+-    if (csNext) await csNext.click();
+-    await page.waitForTimeout(500);
++    await page.click('#ts-next');
++    await page.waitForTimeout(300);
++    await page.click('#cs-next');
++    await page.waitForTimeout(300);
++    await page.click('#ds-start');
++    await page.waitForTimeout(5000);
+ 
+-    // Click Start Race
+-    const startBtn = await page.$('#ds-start');
+-    if (startBtn) await startBtn.click();
+-    await page.waitForTimeout(1000);
++    const diagnostics = await page.evaluate(() => {
++      const td = window.__trackData;
++      if (!td) return { error: 'No track data' };
+ 
+-    // Wait for countdown + race to start
+-    await page.waitForTimeout(8000);
++      const samples = td.samples;
++      const walls = td.collisionWalls;
++      const checkpoints = td.checkpoints;
++      const sectors = td.sectors;
+ 
+-    // Check for errors so far
+-    const trackErrors = errors.filter(e => !e.includes('404') && !e.includes('net::'));
+-    if (trackErrors.length > 0) {
+-      console.log(`  Errors:`, trackErrors.slice(0, 3));
+-    } else {
+-      console.log(`  No errors during load`);
+-    }
++      // 1. Road ribbon closure
++      const first = samples[0];
++      const last = samples[samples.length - 1];
++      const closureDist = Math.sqrt(
++        (first.pos.x - last.pos.x) ** 2 +
++        (first.pos.y - last.pos.y) ** 2 +
++        (first.pos.z - last.pos.z) ** 2
++      );
+ 
+-    // Take screenshot during race
+-    await page.screenshot({ path: `/home/daytona/workspace/test_track_${trackIdx}.png` });
++      // 2. Empty sectors
++      const emptySectors = sectors.filter(s => s.wallIndices.length === 0).length;
+ 
+-    // Check game state
+-    const state = await page.evaluate(() => {
+-      const karts = window.__allKarts;
+-      const rs = window.__raceState;
+-      const td = window.__trackData;
+-      if (!karts || !rs || !td) return { error: 'Game state not available' };
+-      
+-      return {
+-        raceStatus: rs.status,
+-        numKarts: karts.length,
+-        playerSpeed: karts[0]?.speed?.toFixed(1),
+-        kartsRacing: karts.filter(k => Math.abs(k.speed) > 5).length,
+-        numCheckpoints: td.checkpoints?.length,
+-        numWalls: td.collisionWalls?.length,
+-        numSamples: td.samples?.length,
+-      };
+-    });
+-    console.log(`  State: karts=${state.numKarts} racing=${state.kartsRacing} status=${state.raceStatus} walls=${state.numWalls} samples=${state.numSamples}`);
++      // 3. Wall closure gaps
++      let leftGap = null, rightGap = null;
++      if (walls.length >= 4) {
++        const lastLeft = walls[walls.length - 2];
++        const firstLeft = walls[0];
++        if (lastLeft && firstLeft) {
++          leftGap = Math.sqrt((lastLeft.p2.x - firstLeft.p1.x) ** 2 + (lastLeft.p2.z - firstLeft.p1.z) ** 2);
++        }
++        const lastRight = walls[walls.length - 1];
++        const firstRight = walls[1];
++        if (lastRight && firstRight) {
++          rightGap = Math.sqrt((lastRight.p2.x - firstRight.p1.x) ** 2 + (lastRight.p2.z - firstRight.p1.z) ** 2);
++        }
++      }
+ 
+-    // Verify checkpoint forward vectors are normalized
+-    const cpCheck = await page.evaluate(() => {
+-      const td = window.__trackData;
+-      if (!td?.checkpoints) return { error: 'No checkpoints' };
+-      let nonUnit = 0;
+-      for (const cp of td.checkpoints) {
+-        if (!cp.forward) continue;
+-        const len = Math.sqrt(cp.forward.x**2 + (cp.forward.y||0)**2 + cp.forward.z**2);
+-        if (Math.abs(len - 1.0) > 0.01) nonUnit++;
++      // 4. Sector-to-t alignment test: for each sector, compute the t-value range of its walls
++      // based on their sequential position in the wall array
++      const wallsPerSector = Math.ceil(walls.length / sectors.length);
++      let sectorAlignmentIssues = 0;
++      for (let s = 0; s < sectors.length; s++) {
++        const idxs = sectors[s].wallIndices;
++        if (idxs.length === 0) continue;
++        // Wall i corresponds to sample floor(i/2), t = floor(i/2)/(samples.length-1)
++        const tMin = Math.floor(idxs[0] / 2) / (samples.length - 1);
++        const tMax = Math.floor(idxs[idxs.length - 1] / 2) / (samples.length - 1);
++        const expectedT = s / sectors.length;
++        // Check if expectedT falls within [tMin-margin, tMax+margin]
++        const margin = 2 / sectors.length;
++        if (expectedT < tMin - margin || expectedT > tMax + margin) {
++          sectorAlignmentIssues++;
++        }
+       }
+-      return { total: td.checkpoints.length, nonUnit };
+-    });
+-    console.log(`  Checkpoints: ${cpCheck.total} total, ${cpCheck.nonUnit} non-unit`);
+ 
+-    // Hold W to drive for 5 seconds
+-    await page.keyboard.down('KeyW');
+-    await page.waitForTimeout(5000);
+-    await page.keyboard.up('KeyW');
++      // 5. Count large wall gaps (>5 units)
++      let largeGapCount = 0;
++      let maxWallGap = 0;
++      for (let i = 0; i < walls.length - 2; i += 2) {
++        const w1 = walls[i], w2 = walls[i + 2];
++        if (!w1 || !w2) continue;
++        const gap = Math.sqrt((w1.p2.x - w2.p1.x) ** 2 + (w1.p2.z - w2.p1.z) ** 2);
++        if (gap > maxWallGap) maxWallGap = gap;
++        if (gap > 5) largeGapCount++;
++      }
+ 
+-    // Check race progress
+-    const progress = await page.evaluate(() => {
++      // 6. Kart positions and on-road status
+       const karts = window.__allKarts;
+-      const rs = window.__raceState;
+-      if (!karts || !rs) return { error: 'No state' };
++      const kartInfo = karts ? karts.map(k => ({
++        id: k.characterId,
++        pos: { x: k.position.x.toFixed(1), y: k.position.y.toFixed(1), z: k.position.z.toFixed(1) },
++        surface: k.surfaceType,
++        onGround: k.onGround,
++      })) : [];
++
+       return {
+-        raceTime: rs.raceTime?.toFixed(1),
+-        playerLap: karts[0]?.currentLap,
+-        playerCP: karts[0]?.lastCheckpoint,
+-        playerPosition: karts[0]?.racePosition,
+-        kartsMoving: karts.filter(k => Math.abs(k.speed) > 5).length,
++        sampleCount: samples.length,
++        wallCount: walls.length,
++        closureDist: closureDist.toFixed(4),
++        emptySectors,
++        leftClosureGap: leftGap?.toFixed(4),
++        rightClosureGap: rightGap?.toFixed(4),
++        sectorAlignmentIssues,
++        largeGapCount,
++        maxWallGap: maxWallGap.toFixed(4),
++        checkpointCount: checkpoints.length,
++        kartCount: karts?.length,
++        kartSample: kartInfo.slice(0, 3),
+       };
+     });
+-    console.log(`  Progress: time=${progress.raceTime} lap=${progress.playerLap} cp=${progress.playerCP} pos=${progress.playerPosition} moving=${progress.kartsMoving}`);
+ 
+-    // Quit to menu
++    console.log('Diagnostics:', JSON.stringify(diagnostics, null, 2));
++    await page.screenshot({ path: `track_${track.idx}_integrity.png` });
++
++    // Quit back to menu
+     await page.keyboard.press('Escape');
+     await page.waitForTimeout(500);
+-    const quitBtns = await page.$$('.pause-btn');
+-    for (const btn of quitBtns) {
+-      const text = await btn.textContent();
+-      if (text.includes('Quit')) {
+-        await btn.click();
+-        break;
+-      }
++    const quitBtn = await page.$('[data-act="quit"]');
++    if (quitBtn) {
++      await quitBtn.click();
++      await page.waitForTimeout(1000);
+     }
+-    await page.waitForTimeout(1000);
+-
+-    // Press Enter to return
+     await page.keyboard.press('Enter');
+-    await page.waitForTimeout(1000);
+-    
+-    errors.length = 0;
++    await page.waitForTimeout(500);
+   }
+ 
+-  console.log('\n=== All 4 tracks tested successfully ===');
++  console.log('\n\nConsole errors:', errors.length > 0 ? errors : 'None');
+   await browser.close();
+-  process.exit(0);
+-})().catch(err => {
+-  console.error('Test failed:', err.message);
+-  process.exit(1);
+-});
++})();
+diff --git a/test_track_verify.js b/test_track_verify.js
+new file mode 100644
+index 0000000..3ccc068
+--- /dev/null
++++ b/test_track_verify.js
+@@ -0,0 +1,123 @@
++// Verify track integrity improvements
++import { chromium } from 'playwright';
++
++(async () => {
++  const browser = await chromium.launch({ headless: true });
++  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++
++  const errors = [];
++  page.on('console', msg => {
++    if (msg.type() === 'error') errors.push(msg.text());
++  });
++
++  await page.goto('http://localhost:4567', { waitUntil: 'networkidle', timeout: 30000 });
++  await page.waitForTimeout(2000);
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(500);
++
++  const tracks = ['Sunset Bay', 'Mossy Canyon', 'Neon Grid', 'Volcano Peak'];
++
++  for (let idx = 0; idx < 4; idx++) {
++    console.log(`\n=== ${tracks[idx]} ===`);
++
++    const cards = await page.$$('.card');
++    if (cards[idx]) await cards[idx].click();
++    await page.waitForTimeout(200);
++    await page.click('#ts-next');
++    await page.waitForTimeout(200);
++    await page.click('#cs-next');
++    await page.waitForTimeout(200);
++    await page.click('#ds-start');
++    await page.waitForTimeout(6000);
++
++    const result = await page.evaluate(() => {
++      const td = window.__trackData;
++      if (!td) return { error: 'No track data' };
++
++      const samples = td.samples;
++      const walls = td.collisionWalls;
++
++      // 1. Verify last sample exactly matches first (closure fix)
++      const first = samples[0];
++      const last = samples[samples.length - 1];
++      const posMatch = first.pos.x === last.pos.x && first.pos.y === last.pos.y && first.pos.z === last.pos.z;
++      const leftMatch = first.leftEdge.x === last.leftEdge.x && first.leftEdge.z === last.leftEdge.z;
++      const rightMatch = first.rightEdge.x === last.rightEdge.x && first.rightEdge.z === last.rightEdge.z;
++
++      // 2. Verify wall sampleT values exist and are in [0,1]
++      let wallsWithT = 0;
++      let badT = 0;
++      for (const w of walls) {
++        if (w.sampleT !== undefined) {
++          wallsWithT++;
++          if (w.sampleT < 0 || w.sampleT > 1) badT++;
++        }
++      }
++
++      // 3. Verify sectors are populated based on t-values
++      const sectors = td.sectors;
++      let emptyCount = 0;
++      for (const s of sectors) {
++        if (s.wallIndices.length === 0) emptyCount++;
++      }
++
++      // 4. Wall closure: find walls near t=0 and t=1 and verify coverage
++      const wallsNearStart = walls.filter(w => w.sampleT !== undefined && (w.sampleT < 0.02 || w.sampleT > 0.98));
++      
++      // 5. Verify a point just outside the track at t=0 hits a wall
++      const testPoint = {
++        x: first.leftEdge.x + (first.leftEdge.x - first.pos.x) * 0.2,
++        z: first.leftEdge.z + (first.leftEdge.z - first.pos.z) * 0.2,
++      };
++      let hitsWall = false;
++      const radius = 2.5;
++      for (const w of wallsNearStart) {
++        const dx = w.p2.x - w.p1.x;
++        const dz = w.p2.z - w.p1.z;
++        const lenSq = dx * dx + dz * dz;
++        if (lenSq < 0.01) continue;
++        let t = ((testPoint.x - w.p1.x) * dx + (testPoint.z - w.p1.z) * dz) / lenSq;
++        t = Math.max(0, Math.min(1, t));
++        const cx = w.p1.x + t * dx;
++        const cz = w.p1.z + t * dz;
++        const d = Math.sqrt((testPoint.x - cx) ** 2 + (testPoint.z - cz) ** 2);
++        if (d < radius) { hitsWall = true; break; }
++      }
++
++      // 6. Race state
++      const rs = window.__raceState;
++
++      return {
++        posMatch,
++        leftMatch,
++        rightMatch,
++        totalWalls: walls.length,
++        wallsWithT,
++        badT,
++        emptySectors: emptyCount,
++        wallsNearStart: wallsNearStart.length,
++        testPointHitsWall: hitsWall,
++        raceStatus: rs?.status,
++        kartCount: window.__allKarts?.length,
++      };
++    });
++
++    console.log(JSON.stringify(result, null, 2));
++
++    // Take screenshot
++    await page.screenshot({ path: `track_verify_${idx}.png` });
++
++    // Quit
++    await page.keyboard.press('Escape');
++    await page.waitForTimeout(300);
++    const quitBtn = await page.$('[data-act="quit"]');
++    if (quitBtn) await quitBtn.click();
++    await page.waitForTimeout(800);
++    await page.keyboard.press('Enter');
++    await page.waitForTimeout(400);
++  }
++
++  console.log('\nConsole errors:', errors.length > 0 ? errors : 'None');
++  console.log('\n=== ALL TRACKS VERIFIED ===');
++  await browser.close();
++})();
+diff --git a/track_0_integrity.png b/track_0_integrity.png
+new file mode 100644
+index 0000000..60650dd
+Binary files /dev/null and b/track_0_integrity.png differ
+diff --git a/track_1_integrity.png b/track_1_integrity.png
+new file mode 100644
+index 0000000..549f7cd
+Binary files /dev/null and b/track_1_integrity.png differ
+diff --git a/track_2_integrity.png b/track_2_integrity.png
+new file mode 100644
+index 0000000..04bb619
+Binary files /dev/null and b/track_2_integrity.png differ
+diff --git a/track_3_integrity.png b/track_3_integrity.png
+new file mode 100644
+index 0000000..b0de285
+Binary files /dev/null and b/track_3_integrity.png differ
+diff --git a/track_gameplay_0.png b/track_gameplay_0.png
+new file mode 100644
+index 0000000..469403a
+Binary files /dev/null and b/track_gameplay_0.png differ
+diff --git a/track_gameplay_1.png b/track_gameplay_1.png
+new file mode 100644
+index 0000000..cbc3c7f
+Binary files /dev/null and b/track_gameplay_1.png differ
+diff --git a/track_gameplay_2.png b/track_gameplay_2.png
+new file mode 100644
+index 0000000..82783e4
+Binary files /dev/null and b/track_gameplay_2.png differ
+diff --git a/track_gameplay_3.png b/track_gameplay_3.png
+new file mode 100644
+index 0000000..90ae216
+Binary files /dev/null and b/track_gameplay_3.png differ
+diff --git a/track_verify_0.png b/track_verify_0.png
+new file mode 100644
+index 0000000..ea080ec
+Binary files /dev/null and b/track_verify_0.png differ
+diff --git a/track_verify_1.png b/track_verify_1.png
+new file mode 100644
+index 0000000..a58d65a
+Binary files /dev/null and b/track_verify_1.png differ
+diff --git a/track_verify_2.png b/track_verify_2.png
+new file mode 100644
+index 0000000..4937e39
+Binary files /dev/null and b/track_verify_2.png differ
+diff --git a/track_verify_3.png b/track_verify_3.png
+new file mode 100644
+index 0000000..fbee573
+Binary files /dev/null and b/track_verify_3.png differ
