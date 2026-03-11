@@ -1,6 +1,6 @@
 # Improve Game — Iteration Focus
 
-You are in the iterative improvement phase. Each iteration targets a randomly selected focus area to polish the game.
+You are in the iterative improvement phase. Each iteration targets a randomly selected focus area to polish the game. The priority is making the game feel rock solid — if it doesn't work properly, it can't be fun.
 
 ## Setup
 
@@ -11,95 +11,95 @@ You are in the iterative improvement phase. Each iteration targets a randomly se
 
 ## Focus Areas
 
-### 0 — Bug Hunting
-- Find and fix crashes, null reference errors, and unhandled exceptions
-- Fix rendering glitches: z-fighting, texture bleeding, missing faces
-- Fix physics breakdowns: karts falling through track, stuck on walls, infinite speed
-- Fix item malfunctions: items not despawning, effects not ending, wrong targets
-- Check browser console for errors and warnings, fix all of them
-- Test edge cases: all 4 tracks, all 8 characters, simultaneous item usage
-- Verify race start countdown, lap counting, and finish detection are correct
+### 0 — Crash & Error Fixes
+- Check browser console for ALL errors and warnings, fix every one
+- Find and fix null/undefined reference errors and unhandled exceptions
+- Fix race conditions: objects accessed before initialization, events firing out of order
+- Fix resource cleanup: listeners not removed, intervals not cleared, objects not disposed
+- Test all 4 tracks and all 8 characters — every combination must load without errors
+- Verify the full race lifecycle: menu → select → countdown → race → finish → results → menu
+- Fix any state that leaks between races (old karts visible, stale timers, ghost objects)
 
-### 1 — Visual Polish
-- Improve lighting: add ambient occlusion feel, better directional light angles
-- Enhance color palette: more vibrant track themes, better contrast
-- Add environmental props: trees, rocks, signs, barriers with voxel style
-- Improve voxel detail on characters and karts: more expressive designs
-- Add visual variety between tracks: unique color schemes, props, skybox tints
-- Ensure art style consistency: all assets share the same voxel aesthetic
-- Polish particle effects: better colors, sizes, and lifetimes
+### 1 — Camera System
+- Camera must follow the player kart at a fixed, sensible offset behind and above
+- Camera must not clip through track geometry, walls, or other objects
+- Camera must rotate smoothly to follow kart heading — no snapping or jitter
+- Camera must handle tight corners without losing sight of the kart
+- Camera must transition cleanly between states: menu, countdown, racing, finish
+- Fix camera behavior at race start: should be in position before countdown begins
+- Camera should not behave differently across tracks — consistent feel everywhere
 
-### 2 — Driving Feel
+### 2 — Collision & Physics
+- Karts must not pass through walls, barriers, or track boundaries under any conditions
+- Karts must not fall through the track surface or get stuck inside geometry
+- Wall collisions must deflect the kart cleanly — no sticking, no vibrating, no teleporting
+- Kart-to-kart collisions must be stable: no overlapping, no launching into the air
+- Items must collide reliably with their targets — no passing through karts
+- Track boundary detection must work on all 4 tracks with no gaps or escape routes
+- Physics must be framerate-independent: same behavior at 30fps and 60fps
+
+### 3 — Race Flow & State
+- Race countdown must play correctly every time: 3, 2, 1, GO with proper timing
+- Lap detection must be accurate: no false laps from reversing, no missed laps
+- Position tracking must update correctly throughout the race
+- Race must end reliably after 3 laps for all racers with correct final positions
+- Results screen must show accurate times and positions matching what happened
+- Restarting a race or returning to menu must fully reset all state
+- Handle edge cases: what if player stops moving, reverses, or goes off-track
+
+### 4 — Driving Feel
 - Tune acceleration curves: snappy start, satisfying top speed buildup
 - Improve steering response: tight at low speed, stable at high speed
 - Refine drift entry: clear threshold, satisfying snap into drift angle
-- Add drift charge feedback: visual/audio cues for boost level building
-- Smooth camera follow: reduce jitter, add slight lag for speed sensation
-- Improve wall/boundary deflection: bounce off cleanly, don't stick or stop dead
-- Tune boost feel: dramatic speed increase with camera FOV punch
+- Drift must not cause erratic behavior: no spinning out, no speed exploits
+- Wall/boundary deflection must feel fair: bounce off cleanly, lose some speed, keep racing
+- Boost must feel dramatic but controllable: speed increase without losing the kart
+- All driving parameters must feel consistent across all 4 tracks
 
-### 3 — Track Design
-- Refine track geometry: smooth curves, consistent width, no awkward angles
-- Improve corner design: visible apex markers, appropriate banking
-- Add landmarks: each track section should be visually recognizable
-- Fix boundary issues: no shortcuts, no out-of-bounds escapes
-- Enhance track hazards: clear visual warnings, fair but challenging
-- Ensure all 4 tracks feel distinct: different themes, layouts, difficulty
-- Add trackside detail: fencing, spectator areas, vegetation
+### 5 — AI Reliability
+- AI karts must complete all 3 laps on every track without getting stuck
+- AI must not drive through walls, off track edges, or into dead ends
+- AI must navigate every corner on every track — no recurring stuck points
+- AI must maintain stable spacing: no clumping, no karts stopping randomly
+- AI must cross the finish line and register proper race completion
+- AI karts must be visible and rendered correctly throughout the entire race
+- Fix any AI behavior that looks broken: spinning in circles, driving backward, oscillating
 
-### 4 — Item Balance
-- Tune item distribution by position: better items for trailing racers
-- Adjust effect durations: not too long to be frustrating, long enough to matter
-- Improve item visual feedback: clear pickup, activation, and hit indicators
-- Balance offense vs defense: shields and dodges should counter attacks fairly
-- Ensure no single item dominates: each item should have a clear use case
-- Add audio feedback for item events: pickup, use, hit, and expiration
-- Test item interactions: what happens when multiple items collide
+### 6 — Track Integrity
+- Verify track geometry is watertight: no holes, gaps, or missing faces in the surface
+- Track boundaries must form a complete enclosure — no escape routes anywhere
+- Track width must be consistent and sufficient for multiple karts side by side
+- Verify checkpoint/lap-line placement works correctly for all racing lines
+- Fix any geometry that causes physics issues: bad normals, degenerate triangles, sharp edges
+- All 4 tracks must be completable by both player and AI without encountering bugs
+- Track hazards must be fair: clearly visible, avoidable, and consistent in behavior
 
-### 5 — AI Behavior
-- Smoother AI racing lines: follow track curves naturally, don't zigzag
-- Differentiate difficulty levels: easy AI makes mistakes, hard AI is precise
-- Smarter item usage: AI should use items at effective moments
-- Natural overtaking: AI should attempt passes, not just ram through
-- Subtle rubber-banding: trailing AI speeds up slightly, leading AI is beatable
-- AI should react to hazards and items: dodge, brake, take alternate paths
-- Ensure AI completes races reliably: no getting stuck or going wrong way
+### 7 — Item Systems
+- Items must spawn, collect, activate, and despawn without errors
+- Item effects must end reliably: no permanent speed changes, infinite shields, or stuck states
+- Item visual indicators must appear and disappear in sync with the actual effect
+- Tune distribution by position: better items for trailing racers, weaker for leaders
+- Balance effect durations: impactful but not frustrating
+- Test simultaneous item usage: multiple karts using items at the same time must not crash
+- Audio feedback for item events: pickup, use, hit, and expiration sounds
 
-### 6 — Audio & Sound
-- Better engine pitch modulation: pitch rises with speed smoothly
-- Add spatial audio: sounds louder from nearby karts, directional
-- Add ambient track sounds: wind, crowd, environment-appropriate effects
-- UI click sounds: menu navigation, button presses, selection changes
-- Music variation: different intensity for race start, mid-race, final lap
-- Volume balance: no single sound should overpower others
-- Add sound for key moments: countdown beeps, lap completion, race finish
-
-### 7 — Menu & UX
-- Polish menu transitions: smooth fades or slides between screens
-- Improve character select: show character model preview, name, stats
-- Improve track select: show track preview image or minimap
-- Better results screen: show positions, times, highlight winner
-- Add loading state feedback: progress indicator or tips during loads
-- Button hover/active states: clear visual feedback on interaction
-- Consistent UI styling: fonts, colors, spacing match across all screens
-
-### 8 — Performance
-- Reduce draw calls: merge static geometries where possible
-- Use instanced meshes for repeated objects (trees, barriers, pickups)
-- Add LOD for distant objects: simpler geometry far from camera
+### 8 — Performance & Stability
+- Identify and fix frame drops: profile the render loop, optimize hot paths
+- Reduce draw calls: merge static geometries, use instanced meshes for repeated objects
 - Object pooling for particles and projectiles: reuse instead of create/destroy
-- Identify and fix frame drops: profile render loop, optimize hot paths
-- Reduce texture memory: atlas small textures, compress where possible
-- Ensure 60fps target on mid-range hardware
+- Fix memory leaks: objects not garbage collected, growing arrays, accumulating event listeners
+- Game must maintain smooth framerate throughout the entire race — no hitches or stutters
+- Test that performance doesn't degrade over time or across multiple races
+- Ensure consistent frame pacing: no micro-stutters even when framerate is high
 
-### 9 — Juice & Effects
-- Screen shake on impacts: brief, proportional to collision force
-- Speed lines at high velocity: subtle streaks at screen edges
-- Drift spark arcs: visible sparks from wheels during drift
-- Boost flame trails: dramatic fire/energy behind kart during boost
-- Victory celebration particles: confetti or fireworks at race end
-- Squash-and-stretch on pickups: bouncy collection animation
-- Hit reaction effects: flash, spin, or bounce when struck by items
+### 9 — Visual & Audio Polish
+- Improve lighting: better directional light angles, ambient fill, shadow quality
+- Enhance color palette: more vibrant track themes, better contrast between elements
+- Add environmental props: trackside detail with voxel style consistency
+- Engine sound must modulate smoothly with speed — no pops, clicks, or abrupt changes
+- Add audio for key moments: countdown beeps, lap completion chime, race finish fanfare
+- UI click sounds for menu navigation and button presses
+- Ensure art style consistency: all assets share the same voxel aesthetic
 
 ## Instructions
 
