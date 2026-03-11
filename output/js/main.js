@@ -7,7 +7,7 @@ import { FIXED_DT } from './utils.js';
 import { createKart, updateKart, placeKart } from './kart.js';
 import { updatePhysics } from './physics.js';
 import { updateDrift, getDriftSparkColor, getDriftProgress } from './drift.js';
-import { updateCamera, resetCamera, cameraState } from './camera.js';
+import { updateCamera, resetCamera, cameraState, setCameraTrackData } from './camera.js';
 import { buildTrack, findNearestSplinePoint } from './track.js';
 import { characters } from './characters.js';
 import { initParticles, updateParticles, emitDriftSparks, emitBoostFlame, emitDust } from './particles.js';
@@ -568,6 +568,9 @@ async function startRace() {
   trackDef = mod.trackDefinition;
   trackData = buildTrack(trackDef, scene);
 
+  /* provide track data to camera for wall anti-clip + height floor */
+  setCameraTrackData(trackData);
+
   /* cache minimap data (track is static) */
   buildMinimapCache(trackData);
 
@@ -647,6 +650,7 @@ function quitToMenu() {
   getAudio().then(a => { a.stopEngine(); a.stopMusic(); });
   raceEpoch++;
   autoFinishTimer = 0;
+  setCameraTrackData(null);
   if (trackData) {
     clearItems(scene);
     for (const k of allKarts) {

@@ -19,6 +19,12 @@ export function updatePhysics(karts, trackData, dt) {
       kart._cachedNearest = findNearestSplinePoint(
         trackData.centerCurve, kart.position.x, kart.position.z, 50, kart.position.y
       );
+      // Store player sector index on trackData for camera wall anti-clip
+      if (kart.isPlayer && kart._cachedNearest) {
+        trackData._lastPlayerSector = Math.floor(
+          kart._cachedNearest.t * (trackData.sectors?.length || 20)
+        );
+      }
     }
 
     // Ground detection & surface type
