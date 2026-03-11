@@ -45,6 +45,7 @@ let currentDifficulty = 'standard', mirrorMode = false, allowClones = false;
 let pausedFrom = '';
 let sparkT = 0, boostT = 0, dustT = 0, starT = 0;
 let prevPlayerLap = 0;
+let _lightThrottle = 0;  // throttle directional light updates to ~15Hz
 let raceEpoch = 0;         // incremented on every race start / quit — guards stale setTimeouts
 let autoFinishTimer = 0;   // countdown after player finishes to auto-DNF remaining AI
 const AUTO_FINISH_TIMEOUT = 30; // seconds after player finish to force-end race
@@ -67,10 +68,12 @@ const menuEl   = document.getElementById('menu-overlay');
 const hudEl    = document.getElementById('hud-overlay');
 let pauseEl, resultsEl;
 
-/* audio module — lazily imported */
+/* audio module — lazily imported, then cached synchronously */
 let audio = null;
+let _audioSync = null;  // synchronous reference after first load — avoids Promise overhead per frame
 async function getAudio() {
   if (!audio) audio = await import('./audio.js');
+  _audioSync = audio;
   return audio;
 }
 
@@ -128,7 +131,7 @@ function fixedUpdate(dt) {
   if (ev.countdownTick === 0 && ev.raceStarted) {
     showCountdownNum(0);
     gameState = 'RACING';
-    getAudio().then(a => { a.playCountdownGo(); a.startMusic(trackDef.name); });
+    if (_audioSync) { _audioSync.playCountdownGo(); _audioSync.startMusic(trackDef.name); }
     const epoch = raceEpoch;
     setTimeout(() => { if (raceEpoch !== epoch) return; const c = document.querySelector('.hud-countdown'); if(c) c.classList.remove('show'); }, 700);
 
@@ -145,7 +148,7 @@ function fixedUpdate(dt) {
       // Start monitoring the start boost window (0.3s) via raceState.startBoostWindow
     }
   }
-  if (ev.countdownTick > 0) getAudio().then(a => a.playCountdownBeep());
+  if (ev.countdownTick > 0 && _audioSync) _audioSync.playCountdownBeep();
 
   // Track early accelerate during the visible 3-2-1 countdown for start boost penalty
   // Only check once the first number (3) has appeared, not during the initial flyover
@@ -165,18 +168,18 @@ function fixedUpdate(dt) {
   }
 
   if (ev.lapCompleted && ev.lapCompleted.kart === playerKart) {
-    getAudio().then(a => a.playLapComplete());
+    if (_audioSync) _audioSync.playLapComplete();
     showLapSplit(ev.lapCompleted.lap);
     if (ev.lapCompleted.lap === 2) {
       showFinalLapBanner();
-      getAudio().then(a => { a.playFinalLap(); a.setMusicTempo(1.15); });
+      if (_audioSync) { _audioSync.playFinalLap(); _audioSync.setMusicTempo(1.15); }
     }
   }
   if (ev.raceFinished?.isPlayer) {
     gameState = 'RACE_FINISH';
     autoFinishTimer = AUTO_FINISH_TIMEOUT;
     cameraState.mode = 'orbit'; cameraState.orbitAngle = 0; cameraState.orbitTarget = playerKart.position;
-    getAudio().then(a => { a.playRaceFinish(); a.stopEngine(); a.stopMusic(); });
+    if (_audioSync) { _audioSync.playRaceFinish(); _audioSync.stopEngine(); _audioSync.stopMusic(); }
     const epoch = raceEpoch;
     setTimeout(() => { if (raceEpoch !== epoch) return; showResults(); }, 3000);
   }
@@ -203,10 +206,10 @@ function fixedUpdate(dt) {
     if (input.justPressed('useItem') && playerKart.heldItem) {
       const it = playerKart.heldItem;
       useItem(playerKart, allKarts, trackData);
-      getAudio().then(a => a.playItemUse(it));
+      if (_audioSync) _audioSync.playItemUse(it);
     }
-    /* engine sound */
-    getAudio().then(a => a.playEngine(playerKart.speed, playerKart.topSpeed, input.isDown('accelerate') ? 1 : 0.3));
+    /* engine sound — use cached sync reference to avoid Promise overhead per frame */
+    if (_audioSync) _audioSync.playEngine(playerKart.speed, playerKart.topSpeed, input.isDown('accelerate') ? 1 : 0.3);
   }
 
   /* AI */
@@ -240,44 +243,44 @@ function fixedUpdate(dt) {
 
   /* check item pickup for player (for sound) */
   if (playerKart && playerKart.heldItem && !playerKart._prevItem) {
-    getAudio().then(a => a.playItemPickup());
+    if (_audioSync) _audioSync.playItemPickup();
   }
   if (playerKart) playerKart._prevItem = playerKart.heldItem;
 
   /* ── Audio feedback for drift, boost, and collision events ── */
-  if (playerKart) {
+  if (playerKart && _audioSync) {
     // Drift start
     if (playerKart._driftStarted) {
-      getAudio().then(a => a.playDriftStart());
+      _audioSync.playDriftStart();
       // Note: _driftStarted is consumed in kart.js after one frame
     }
     // Drift tier up
     if (playerKart._driftTierChanged > 0) {
-      getAudio().then(a => a.playDriftTierUp(playerKart._driftTierChanged));
+      _audioSync.playDriftTierUp(playerKart._driftTierChanged);
     }
     // Boost fire (from drift release or item)
     if (playerKart._boostStarted) {
-      getAudio().then(a => a.playBoostFire());
+      _audioSync.playBoostFire();
       playerKart._boostStarted = 0;
     }
     // Wall hit
     if (playerKart._wallHitFrame) {
-      getAudio().then(a => a.playWallHit());
+      _audioSync.playWallHit();
       playerKart._wallHitFrame = false;
     }
     // Kart-to-kart bump
     if (playerKart._kartBumpFrame) {
-      getAudio().then(a => a.playKartBump());
+      _audioSync.playKartBump();
       playerKart._kartBumpFrame = false;
     }
     // Item hit (player was struck by an item)
     if (playerKart._itemHitFrame) {
-      getAudio().then(a => a.playItemHit());
+      _audioSync.playItemHit();
       playerKart._itemHitFrame = false;
     }
     // Shield pop (shield blocked a hit or expired)
     if (playerKart._shieldPopFrame) {
-      getAudio().then(a => a.playShieldPop());
+      _audioSync.playShieldPop();
       playerKart._shieldPopFrame = false;
     }
   }
@@ -289,19 +292,24 @@ function visualUpdate(dt) {
   updateCamera(camera, playerKart, input, dt);
 
   // Move directional light shadow camera to follow the player kart.
-  // Without this, shadows disappear once the player moves far from origin
-  // because the shadow frustum is fixed. Update at 15Hz to avoid overhead.
-  directionalLight.position.set(
-    playerKart.position.x + 50,
-    playerKart.position.y + 80,
-    playerKart.position.z + 30
-  );
-  directionalLight.target.position.set(
-    playerKart.position.x,
-    playerKart.position.y,
-    playerKart.position.z
-  );
-  directionalLight.target.updateMatrixWorld();
+  // Without this, shadows disappear once the player moves far from origin.
+  // Throttle to every 4th frame (~15Hz at 60fps) — shadow camera doesn't need
+  // sub-frame precision, and this saves the updateMatrixWorld() + shadow recalc.
+  _lightThrottle++;
+  if (_lightThrottle >= 4) {
+    _lightThrottle = 0;
+    directionalLight.position.set(
+      playerKart.position.x + 50,
+      playerKart.position.y + 80,
+      playerKart.position.z + 30
+    );
+    directionalLight.target.position.set(
+      playerKart.position.x,
+      playerKart.position.y,
+      playerKart.position.z
+    );
+    directionalLight.target.updateMatrixWorld();
+  }
 
   updateParticles(dt);
   for (const k of allKarts) {
@@ -499,7 +507,7 @@ function pauseGame() {
   pausedFrom = gameState;
   gameState = 'PAUSED';
   pauseEl.classList.remove('hidden');
-  getAudio().then(a => a.stopEngine());
+  if (_audioSync) _audioSync.stopEngine();
 }
 function resumeGame() {
   gameState = pausedFrom || 'RACING';
@@ -734,12 +742,12 @@ async function startRace() {
 }
 
 function restartRace() {
-  getAudio().then(a => { a.stopEngine(); a.stopMusic(); });
+  if (_audioSync) { _audioSync.stopEngine(); _audioSync.stopMusic(); }
   startRace();
 }
 
 function quitToMenu() {
-  getAudio().then(a => { a.stopEngine(); a.stopMusic(); });
+  if (_audioSync) { _audioSync.stopEngine(); _audioSync.stopMusic(); }
   raceEpoch++;
   autoFinishTimer = 0;
   setCameraTrackData(null);

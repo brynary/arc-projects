@@ -44,8 +44,13 @@ export function updateCamera(camera, kart, input, dt) {
   // Base 65° → up to 75° at boost overspeed. Narrows slightly to 63° at standstill.
   const speedRatioFov = clamp(Math.abs(kart.speed) / (kart.topSpeed || 90), 0, 1.4);
   const targetFov = 63 + speedRatioFov * 8.5; // 63 → 71.5 at top speed, up to ~75 at 1.4× (boost)
-  camera.fov = lerp(camera.fov, targetFov, 1 - Math.pow(0.1, dt));
-  camera.updateProjectionMatrix();
+  const newFov = lerp(camera.fov, targetFov, 1 - Math.pow(0.1, dt));
+  // Only rebuild the projection matrix when FOV changes by more than 0.05°
+  // — avoids a full matrix recompute (~30 multiplies) on frames with negligible change
+  if (Math.abs(newFov - camera.fov) > 0.05) {
+    camera.fov = newFov;
+    camera.updateProjectionMatrix();
+  }
 
   if (cameraState.mode === 'chase') {
     updateChaseCamera(camera, kart, dt);

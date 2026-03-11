@@ -96,6 +96,11 @@ export function initItemBoxes(trackData, scene) {
 export function updateItemBoxes(dt) {
   elapsedTime += dt;
 
+  // Pre-compute shared animation values once per frame (all boxes share elapsedTime)
+  const sinTilt = Math.sin(elapsedTime * 2) * 0.1;
+  const sinBob  = Math.sin(elapsedTime * 3) * 0.3;
+  const rotDelta = 2 * dt;
+
   for (let i = 0; i < itemBoxes.length; i++) {
     const box = itemBoxes[i];
 
@@ -109,11 +114,11 @@ export function updateItemBoxes(dt) {
     }
 
     // Rotation animation
-    box.mesh.rotation.y += 2 * dt;
-    box.mesh.rotation.x = Math.sin(elapsedTime * 2) * 0.1;
+    box.mesh.rotation.y += rotDelta;
+    box.mesh.rotation.x = sinTilt;
 
     // Bobbing animation
-    box.mesh.position.y = box.baseY + Math.sin(elapsedTime * 3) * 0.3;
+    box.mesh.position.y = box.baseY + sinBob;
   }
 }
 
@@ -390,9 +395,6 @@ export function updateProjectiles(allKarts, dt) {
   // Also update shield/star timers
   updateKartTimers(allKarts, dt);
 
-  // Check star collisions (kart-kart)
-  checkStarCollisions(allKarts);
-
   for (let i = projectiles.length - 1; i >= 0; i--) {
     const proj = projectiles[i];
     proj.lifetime -= dt;
@@ -483,11 +485,6 @@ export function updateProjectiles(allKarts, dt) {
       removeProjectile(i);
     }
   }
-}
-
-function checkStarCollisions(allKarts) {
-  // Star per spec is off-road immunity + speed boost, NOT a contact weapon.
-  // No kart-to-kart collision effect from star. (Kept as no-op for caller compat.)
 }
 
 function removeProjectile(index) {
