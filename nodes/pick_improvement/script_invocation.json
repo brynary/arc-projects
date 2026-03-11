@@ -1,0 +1,5 @@
+{
+  "command": "bash workflows/kart-racer-trimodal-mini/scripts/pick-improvement.sh",
+  "language": "shell",
+  "timeout_ms": null
+}
