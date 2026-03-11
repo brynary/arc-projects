@@ -39,6 +39,7 @@ directionalLight.shadow.camera.right = 60;
 directionalLight.shadow.camera.top = 60;
 directionalLight.shadow.camera.bottom = -60;
 scene.add(directionalLight);
+scene.add(directionalLight.target);
 
 export function setFog(color, near, far) {
   scene.fog = new THREE.Fog(color, near, far);

@@ -153,6 +153,8 @@ function checkWallCollisionsAccumulated(kart, trackData) {
     // Apply heading response based on worst collision only
     if (worstCollision) {
       resolveWallHeading(kart, worstCollision);
+      // Flag for audio feedback (consumed by main.js)
+      if (kart.isPlayer) kart._wallHitFrame = true;
     }
   }
 }
@@ -277,5 +279,11 @@ function checkKartCollision(kartA, kartB) {
 
     kartA.speed *= (1 - speedLoss * modA);
     kartB.speed *= (1 - speedLoss * modB);
+
+    // Flag for audio feedback (consumed by main.js)
+    if (kartA.isPlayer || kartB.isPlayer) {
+      const pk = kartA.isPlayer ? kartA : kartB;
+      pk._kartBumpFrame = true;
+    }
   }
 }

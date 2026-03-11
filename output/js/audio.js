@@ -9,6 +9,7 @@ let noiseBuffer = null;
 // Engine state (persistent oscillator)
 let engineOsc = null;
 let engineGainNode = null;
+let engineFilter = null;
 let engineRunning = false;
 
 // Music state
@@ -50,6 +51,8 @@ export function initAudio() {
 }
 
 // ─── Utility helpers ─────────────────────────────────────────────────────────
+
+function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 
 function createNoiseSource(duration) {
   const src = ctx.createBufferSource();
@@ -108,31 +111,56 @@ function playNoiseBurst(duration, filterType, filterFreq, filterFreqEnd, volume 
 export function playEngine(speed, topSpeed, throttle) {
   if (!ctx) return;
 
-  const freq = 80 + (speed / topSpeed) * 120;
+  const speedRatio = clamp01(speed / topSpeed);
+  // Base frequency modulates with speed; add a subtle second harmonic via frequency
+  const freq = 80 + speedRatio * 120;
+  // Filter cutoff rises with speed — engine sounds brighter at high RPM
+  const filterFreq = 400 + speedRatio * 800;
   const gain = 0.12 * throttle;
 
   if (!engineRunning) {
     engineOsc = createOsc('sawtooth', freq);
+    // Low-pass filter warms up the raw sawtooth — less harsh, more engine-like
+    engineFilter = ctx.createBiquadFilter();
+    engineFilter.type = 'lowpass';
+    engineFilter.frequency.value = filterFreq;
+    engineFilter.Q.value = 2.0;
     engineGainNode = ctx.createGain();
-    engineGainNode.gain.value = gain;
-    engineOsc.connect(engineGainNode);
+    engineGainNode.gain.value = 0.001; // start near-silent to prevent click
+    engineGainNode.gain.linearRampToValueAtTime(gain, ctx.currentTime + 0.05);
+    engineOsc.connect(engineFilter);
+    engineFilter.connect(engineGainNode);
     engineGainNode.connect(sfxGain);
     engineOsc.start(ctx.currentTime);
     engineRunning = true;
   } else {
     engineOsc.frequency.setTargetAtTime(freq, ctx.currentTime, 0.03);
+    engineFilter.frequency.setTargetAtTime(filterFreq, ctx.currentTime, 0.03);
     engineGainNode.gain.setTargetAtTime(gain, ctx.currentTime, 0.03);
   }
 }
 
 export function stopEngine() {
   if (!ctx || !engineRunning) return;
-  engineOsc.stop(ctx.currentTime);
-  engineOsc.disconnect();
-  engineGainNode.disconnect();
+  // Fade out over 50ms to prevent audible click from abrupt stop
+  const fadeEnd = ctx.currentTime + 0.05;
+  engineGainNode.gain.cancelScheduledValues(ctx.currentTime);
+  engineGainNode.gain.setValueAtTime(engineGainNode.gain.value, ctx.currentTime);
+  engineGainNode.gain.linearRampToValueAtTime(0.0001, fadeEnd);
+  const osc = engineOsc;
+  const gn = engineGainNode;
+  const flt = engineFilter;
   engineOsc = null;
   engineGainNode = null;
+  engineFilter = null;
   engineRunning = false;
+  // Stop and disconnect after fade completes
+  setTimeout(() => {
+    try { osc.stop(); } catch (_) {}
+    try { osc.disconnect(); } catch (_) {}
+    try { flt.disconnect(); } catch (_) {}
+    try { gn.disconnect(); } catch (_) {}
+  }, 60);
 }
 
 // ─── Drift SFX ───────────────────────────────────────────────────────────────

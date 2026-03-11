@@ -243,12 +243,56 @@ function fixedUpdate(dt) {
     getAudio().then(a => a.playItemPickup());
   }
   if (playerKart) playerKart._prevItem = playerKart.heldItem;
+
+  /* ── Audio feedback for drift, boost, and collision events ── */
+  if (playerKart) {
+    // Drift start
+    if (playerKart._driftStarted) {
+      getAudio().then(a => a.playDriftStart());
+      // Note: _driftStarted is consumed in kart.js after one frame
+    }
+    // Drift tier up
+    if (playerKart._driftTierChanged > 0) {
+      getAudio().then(a => a.playDriftTierUp(playerKart._driftTierChanged));
+    }
+    // Boost fire (from drift release or item)
+    if (playerKart._boostStarted) {
+      getAudio().then(a => a.playBoostFire());
+      playerKart._boostStarted = 0;
+    }
+    // Wall hit
+    if (playerKart._wallHitFrame) {
+      getAudio().then(a => a.playWallHit());
+      playerKart._wallHitFrame = false;
+    }
+    // Kart-to-kart bump
+    if (playerKart._kartBumpFrame) {
+      getAudio().then(a => a.playKartBump());
+      playerKart._kartBumpFrame = false;
+    }
+  }
 }
 
 /* ═══════════════════════  VISUAL UPDATE  ═══════════════════════ */
 function visualUpdate(dt) {
   if (!playerKart) return;
   updateCamera(camera, playerKart, input, dt);
+
+  // Move directional light shadow camera to follow the player kart.
+  // Without this, shadows disappear once the player moves far from origin
+  // because the shadow frustum is fixed. Update at 15Hz to avoid overhead.
+  directionalLight.position.set(
+    playerKart.position.x + 50,
+    playerKart.position.y + 80,
+    playerKart.position.z + 30
+  );
+  directionalLight.target.position.set(
+    playerKart.position.x,
+    playerKart.position.y,
+    playerKart.position.z
+  );
+  directionalLight.target.updateMatrixWorld();
+
   updateParticles(dt);
   for (const k of allKarts) {
     if (k.isDrifting && k.driftTier > 0) { sparkT += dt; if (sparkT > 0.05) { sparkT = 0; const c = getDriftSparkColor(k); if (c) emitDriftSparks(k, c, 2); } }
