@@ -194,9 +194,18 @@ function fixedUpdate(dt) {
         if (!k.finished) {
           k.finished = true;
           k.finishTime = null; // null = DNF
+          raceState.finishedKarts.push(k);
         }
       }
+      raceState.allFinished = true;
+      raceState.status = 'finished';
     }
+  }
+
+  /* Detect natural all-finished (all karts crossed the line before auto-DNF) */
+  if (raceState.status === 'racing' && raceState.finishedKarts.length === allKarts.length) {
+    raceState.allFinished = true;
+    raceState.status = 'finished';
   }
 
   /* player */
@@ -363,7 +372,18 @@ function updateHUD() {
   if (hl) hl.textContent = `Lap ${Math.min(playerKart.currentLap+1,3)}/3`;
 
   const htm = document.getElementById('ht-main');
-  if (htm) htm.textContent = raceState.status==='racing'||raceState.status==='finished' ? formatTime(raceState.raceTime,1) : '0:00.0';
+  if (htm) {
+    // Freeze timer display at player's finish time once they've finished,
+    // instead of showing the continuously-incrementing race time (which
+    // keeps ticking for AI karts to record their finish times).
+    if (playerKart.finished && playerKart.finishTime != null) {
+      htm.textContent = formatTime(playerKart.finishTime, 1);
+    } else if (raceState.status === 'racing' || raceState.status === 'finished') {
+      htm.textContent = formatTime(raceState.raceTime, 1);
+    } else {
+      htm.textContent = '0:00.0';
+    }
+  }
 
   const hi = document.getElementById('hi');
   if (hi) hi.textContent = playerKart.heldItem ? (ITEM_ICONS[playerKart.heldItem]||'?') : '—';

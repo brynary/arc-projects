@@ -184,14 +184,17 @@ function updateCheckpoints(kart, trackData) {
     const effectiveDirDot = kart.speed >= 0 ? dirDot : -dirDot;
     if (effectiveDirDot < -0.2) return null;
 
+    const prevCP = kart.lastCheckpoint;
     kart.lastCheckpoint = nextCP;
     kart.lastCheckpointPos.set(cp.position.x, cp.position.y || 0, cp.position.z);
     if (cp.forward) {
       kart.lastCheckpointRot = Math.atan2(cp.forward.x, cp.forward.z);
     }
 
-    // Lap completion
-    if (nextCP === 0 && kart.currentLap >= 0) {
+    // Lap completion: only trigger when wrapping from the LAST checkpoint back to
+    // checkpoint 0 (a full circuit). Previously, the first crossing of checkpoint 0
+    // (from lastCheckpoint=-1) falsely counted as completing a lap.
+    if (nextCP === 0 && prevCP === numCheckpoints - 1) {
       const lapTime = raceState.raceTime - (kart.lapTimes.length > 0 ?
         kart.lapTimes.reduce((a, b) => a + b, 0) : 0);
       kart.lapTimes.push(lapTime);
