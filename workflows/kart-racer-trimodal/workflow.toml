@@ -1,0 +1,36 @@
+version = 1
+goal = "Build Fabro Racer — a 3D voxel kart racer using Three.js with 4 tracks, 8 characters, items, drifting, and CPU opponents. Output is static HTML + JS files. (Trimodal: Opus + GPT + Gemini)"
+graph = "workflow.dot"
+
+[llm]
+model = "claude-opus-4-6"
+
+[sandbox]
+provider = "daytona"
+
+[sandbox.env]
+OPENAI_API_KEY = "${env.OPENAI_API_KEY}"
+GEMINI_API_KEY = "${env.GEMINI_API_KEY}"
+
+[sandbox.daytona]
+auto_stop_interval = 60
+
+[sandbox.daytona.labels]
+project = "kart-racer-trimodal"
+
+[sandbox.daytona.snapshot]
+name = "kart-racer-v2"
+cpu = 4
+memory = 8
+disk = 10
+dockerfile = { path = "../kart-racer/Dockerfile.kart-racer" }
+
+[assets]
+include = ["output/**"]
+
+[mcp_servers.playwright]
+type = "sandbox"
+command = ["npx", "@playwright/mcp@latest", "--port", "3100", "--headless", "--browser", "chromium"]
+port = 3100
+startup_timeout_secs = 120
+tool_timeout_secs = 180
