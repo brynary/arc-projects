@@ -1,4 +1,4 @@
-// js/main.js — Entry point: game loop, state machine, initialization
+// js/main.js — Entry point: full game flow with menus, HUD, audio, pause
 
 import * as THREE from 'three';
 import { renderer, scene, camera, ambientLight, directionalLight, setFog } from './scene.js';
@@ -6,163 +6,75 @@ import { input } from './input.js';
 import { FIXED_DT } from './utils.js';
 import { createKart, updateKart, placeKart } from './kart.js';
 import { updatePhysics } from './physics.js';
-import { updateDrift, getDriftSparkColor } from './drift.js';
+import { updateDrift, getDriftSparkColor, getDriftProgress } from './drift.js';
 import { updateCamera, resetCamera, cameraState } from './camera.js';
 import { buildTrack, findNearestSplinePoint } from './track.js';
-import { characters, getCharacterById } from './characters.js';
+import { characters } from './characters.js';
 import { initParticles, updateParticles, emitDriftSparks, emitBoostFlame, emitDust } from './particles.js';
 import { initItemBoxes, updateItemBoxes, checkItemPickups, useItem, updateProjectiles, clearItems } from './items.js';
 import { initAI, updateAI, getAIInput, setDifficulty } from './ai.js';
 import { initRace, updateRace, raceState, formatTime, getRaceResults } from './race.js';
 
-// Game state
-let gameState = 'LOADING';
-let trackData = null;
-let playerKart = null;
-let allKarts = [];
-let accumulator = 0;
-let lastTime = 0;
+/* ═══════════════════════  STATE  ═══════════════════════ */
+let gameState = 'TITLE';          // TITLE | TRACK_SELECT | CHAR_SELECT | DIFF_SELECT | COUNTDOWN | RACING | PAUSED | RACE_FINISH | RESULTS
+let trackData = null, trackDef = null;
+let playerKart = null, allKarts = [];
+let accumulator = 0, lastTime = 0;
+let selectedTrackIdx = 0, selectedCharIdx = 0;
+let currentDifficulty = 'standard', mirrorMode = false, allowClones = false;
+let pausedFrom = '';
+let sparkT = 0, boostT = 0, dustT = 0;
+let prevPlayerLap = 0;
 
-// Particle emission timers
-let sparkTimer = 0;
-let boostFlameTimer = 0;
-let dustTimer = 0;
+const TRACK_FILES = ['sunsetBay','mossyCanyon','neonGrid','volcanoPeak'];
+const TRACK_META = [
+  { name:'Sunset Bay',   diff:'★',     desc:'Tropical coastal oval' },
+  { name:'Mossy Canyon',  diff:'★★',    desc:'Winding forest canyon' },
+  { name:'Neon Grid',     diff:'★★★',   desc:'Angular cyber circuit' },
+  { name:'Volcano Peak',  diff:'★★★★',  desc:'Volcanic spiral ascent' },
+];
 
-// HUD elements
-let hudEl = null;
-let positionEl = null;
-let lapEl = null;
-let timerEl = null;
-let itemEl = null;
-let countdownEl = null;
-let resultsEl = null;
+const ITEM_ICONS = {
+  fizzBomb:'💣', oilSlick:'🟣', shield:'🛡️',
+  turboPepper:'🌶️', homingPigeon:'🐦', star:'⭐',
+};
 
-// Difficulty
-let currentDifficulty = 'standard';
+/* ═══════════════════════  DOM REFS  ═══════════════════════ */
+const menuEl   = document.getElementById('menu-overlay');
+const hudEl    = document.getElementById('hud-overlay');
+let pauseEl, resultsEl;
 
-async function init() {
-  console.log('Fabro Racer — Initializing...');
+/* audio module — lazily imported */
+let audio = null;
+async function getAudio() {
+  if (!audio) audio = await import('./audio.js');
+  return audio;
+}
 
-  // Setup HUD
-  setupHUD();
-
-  // Initialize particle system
+/* ═══════════════════════  BOOT  ═══════════════════════ */
+(async function boot() {
   initParticles(scene);
-
-  // Load default track (Sunset Bay)
-  const trackModule = await import('./tracks/sunsetBay.js');
-  const trackDef = trackModule.trackDefinition;
-
-  trackData = buildTrack(trackDef, scene);
-
-  // Set environment
-  if (trackDef.environment) {
-    const env = trackDef.environment;
-    setFog(env.fogColor, env.fogNear, env.fogFar);
-    ambientLight.color.setHex(env.ambientColor || 0xffffff);
-    ambientLight.intensity = env.ambientIntensity || 0.4;
-    directionalLight.color.setHex(env.sunColor || 0xffffff);
-    directionalLight.intensity = env.sunIntensity || 0.8;
-    if (env.sunDirection) {
-      directionalLight.position.set(
-        env.sunDirection.x * 80,
-        env.sunDirection.y * 80,
-        env.sunDirection.z * 80
-      );
-    }
-  }
-
-  // Initialize item boxes
-  initItemBoxes(trackData, scene);
-
-  // Compute starting rotation from spline tangent at first start position
-  let startRot = 0;
-  if (trackData.startPositions.length > 0) {
-    const sp = trackData.startPositions[0];
-    const nearest = findNearestSplinePoint(trackData.centerCurve, sp.x, sp.z, 100);
-    startRot = Math.atan2(nearest.tangent.x, nearest.tangent.z);
-  }
-
-  // Create player kart (position 0)
-  const playerChar = characters[0]; // Bolt
-  playerKart = createKart(playerChar, true, 0);
-  if (trackData.startPositions.length > 0) {
-    placeKart(playerKart, trackData.startPositions[0], startRot);
-  } else {
-    placeKart(playerKart, { x: 0, y: 1, z: 0 }, 0);
-  }
-  scene.add(playerKart.mesh);
-  allKarts.push(playerKart);
-
-  // Create 7 CPU karts
-  const cpuChars = characters.filter(c => c.id !== playerChar.id);
-  // Shuffle CPU characters
-  for (let i = cpuChars.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [cpuChars[i], cpuChars[j]] = [cpuChars[j], cpuChars[i]];
-  }
-
-  for (let i = 0; i < 7; i++) {
-    const char = cpuChars[i % cpuChars.length];
-    const kart = createKart(char, false, i + 1);
-
-    if (trackData.startPositions.length > i + 1) {
-      placeKart(kart, trackData.startPositions[i + 1], startRot);
-    } else {
-      placeKart(kart, { x: (i + 1) * 5, y: 1, z: -10 - i * 8 }, startRot);
-    }
-
-    scene.add(kart.mesh);
-    allKarts.push(kart);
-
-    // Initialize AI
-    initAI(kart, trackData, currentDifficulty);
-  }
-
-  // Initialize race
-  setDifficulty(currentDifficulty);
-  initRace(allKarts, trackData);
-
-  // Set game state
-  gameState = 'COUNTDOWN';
-  console.log('Game ready! Race starting...');
-
-  // Reset camera
-  resetCamera(camera, playerKart);
-
-  // Start game loop
+  buildPauseOverlay();
+  buildResultsOverlay();
+  showTitle();
   lastTime = performance.now();
-  requestAnimationFrame(gameLoop);
-}
+  requestAnimationFrame(loop);
+})();
 
-function setupHUD() {
-  hudEl = document.getElementById('hud-overlay');
-  hudEl.innerHTML = `
-    <div id="hud-position" style="position:absolute;top:20px;left:20px;font-size:48px;font-weight:bold;text-shadow:2px 2px 4px #000;"></div>
-    <div id="hud-lap" style="position:absolute;top:20px;right:20px;font-size:24px;text-shadow:1px 1px 2px #000;text-align:right;"></div>
-    <div id="hud-timer" style="position:absolute;top:50px;right:20px;font-size:20px;text-shadow:1px 1px 2px #000;text-align:right;font-family:monospace;"></div>
-    <div id="hud-item" style="position:absolute;bottom:30px;right:30px;width:64px;height:64px;border:2px solid rgba(255,255,255,0.5);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:28px;background:rgba(0,0,0,0.4);"></div>
-    <div id="hud-item-hint" style="position:absolute;bottom:12px;right:40px;font-size:12px;color:rgba(255,255,255,0.5);">[E] use</div>
-    <div id="hud-countdown" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:96px;font-weight:bold;text-shadow:3px 3px 6px #000;display:none;"></div>
-    <div id="hud-results" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.85);padding:30px 50px;border-radius:16px;display:none;min-width:400px;"></div>
-  `;
-  positionEl = document.getElementById('hud-position');
-  lapEl = document.getElementById('hud-lap');
-  timerEl = document.getElementById('hud-timer');
-  itemEl = document.getElementById('hud-item');
-  countdownEl = document.getElementById('hud-countdown');
-  resultsEl = document.getElementById('hud-results');
-}
-
-function gameLoop(now) {
-  requestAnimationFrame(gameLoop);
-
+/* ═══════════════════════  GAME LOOP  ═══════════════════════ */
+function loop(now) {
+  requestAnimationFrame(loop);
   const rawDt = (now - lastTime) / 1000;
   lastTime = now;
   const dt = Math.min(Math.max(rawDt, 0.001), 0.1);
 
+  /* pause check */
+  if (input.justPressed('pause')) {
+    if (gameState === 'RACING' || gameState === 'COUNTDOWN') { pauseGame(); }
+    else if (gameState === 'PAUSED') { resumeGame(); }
+  }
+
   if (gameState === 'COUNTDOWN' || gameState === 'RACING' || gameState === 'RACE_FINISH') {
-    // Fixed timestep physics
     accumulator += dt;
     let steps = 0;
     while (accumulator >= FIXED_DT && steps < 3) {
@@ -170,297 +82,474 @@ function gameLoop(now) {
       accumulator -= FIXED_DT;
       steps++;
     }
-
-    // Visual updates at render rate
     visualUpdate(dt);
-
-    // Update HUD
-    updateHUD();
+    updateHUD(dt);
   }
 
-  // Render
   renderer.render(scene, camera);
-
-  // Reset input edge detection
   input.resetFrame();
 }
 
+/* ═══════════════════════  FIXED UPDATE  ═══════════════════════ */
 function fixedUpdate(dt) {
-  // Update race state (countdown, lap tracking, positions)
-  const raceEvents = updateRace(allKarts, trackData, dt);
+  const ev = updateRace(allKarts, trackData, dt);
 
-  // Handle race events
-  if (raceEvents.countdownTick > 0) {
-    showCountdown(raceEvents.countdownTick);
-  }
-  if (raceEvents.countdownTick === 0 && raceEvents.raceStarted) {
-    showCountdown(0); // "GO!"
+  if (ev.countdownTick > 0) showCountdownNum(ev.countdownTick);
+  if (ev.countdownTick === 0 && ev.raceStarted) {
+    showCountdownNum(0);
     gameState = 'RACING';
-    setTimeout(() => {
-      if (countdownEl) countdownEl.style.display = 'none';
-    }, 800);
+    getAudio().then(a => { a.playCountdownGo(); a.startMusic(trackDef.name); });
+    setTimeout(() => { const c = document.querySelector('.hud-countdown'); if(c) c.classList.remove('show'); }, 700);
   }
-  if (raceEvents.raceFinished && raceEvents.raceFinished.isPlayer) {
+  if (ev.countdownTick > 0) getAudio().then(a => a.playCountdownBeep());
+  if (ev.lapCompleted && ev.lapCompleted.kart === playerKart) {
+    getAudio().then(a => a.playLapComplete());
+    showLapSplit(ev.lapCompleted.lap);
+    if (ev.lapCompleted.lap === 2) {
+      showFinalLapBanner();
+      getAudio().then(a => { a.playFinalLap(); a.setMusicTempo(1.15); });
+    }
+  }
+  if (ev.raceFinished?.isPlayer) {
     gameState = 'RACE_FINISH';
-    cameraState.mode = 'orbit';
-    cameraState.orbitAngle = 0;
-    cameraState.orbitTarget = playerKart.position;
-    setTimeout(() => showResults(), 3000);
-  }
-  // If all karts finished or player finished
-  if (raceEvents.raceFinished && !raceEvents.raceFinished.isPlayer) {
-    // CPU finished — keep racing
+    cameraState.mode = 'orbit'; cameraState.orbitAngle = 0; cameraState.orbitTarget = playerKart.position;
+    getAudio().then(a => { a.playRaceFinish(); a.stopEngine(); a.stopMusic(); });
+    setTimeout(showResults, 3000);
   }
 
-  if (raceState.status !== 'racing' && gameState === 'COUNTDOWN') {
-    // During countdown, don't run game logic
-    return;
-  }
+  if (raceState.status !== 'racing' && gameState === 'COUNTDOWN') return;
 
-  // Player input
+  /* player */
   if (playerKart && !playerKart.finished) {
     updateDrift(playerKart, input, dt);
     updateKart(playerKart, input, dt);
-
-    // Player item use
     if (input.justPressed('useItem') && playerKart.heldItem) {
+      const it = playerKart.heldItem;
       useItem(playerKart, allKarts, trackData);
+      getAudio().then(a => a.playItemUse(it));
     }
+    /* engine sound */
+    getAudio().then(a => a.playEngine(playerKart.speed, playerKart.topSpeed, input.isDown('accelerate') ? 1 : 0.3));
   }
 
-  // AI karts
-  for (const kart of allKarts) {
-    if (kart.isPlayer) continue;
-    if (kart.finished) continue;
-
-    // Update AI decision-making
-    updateAI(kart, trackData, allKarts, dt);
-
-    // Get AI virtual input
-    const aiInput = getAIInput(kart);
-
-    // Run same drift and movement logic
-    updateDrift(kart, aiInput, dt);
-    updateKart(kart, aiInput, dt);
-
-    // AI item use
-    if (aiInput.isDown('useItem') && kart.heldItem) {
-      useItem(kart, allKarts, trackData);
-    }
+  /* AI */
+  for (const k of allKarts) {
+    if (k.isPlayer || k.finished) continue;
+    updateAI(k, trackData, allKarts, dt);
+    const ai = getAIInput(k);
+    updateDrift(k, ai, dt);
+    updateKart(k, ai, dt);
+    if (ai.isDown('useItem') && k.heldItem) useItem(k, allKarts, trackData);
   }
 
-  // Physics (wall collisions, ground detection, kart-kart)
   updatePhysics(allKarts, trackData, dt);
-
-  // Item system updates
   updateItemBoxes(dt);
   checkItemPickups(allKarts);
   updateProjectiles(allKarts, dt);
+
+  /* check item pickup for player (for sound) */
+  if (playerKart && playerKart.heldItem && !playerKart._prevItem) {
+    getAudio().then(a => a.playItemPickup());
+  }
+  if (playerKart) playerKart._prevItem = playerKart.heldItem;
 }
 
+/* ═══════════════════════  VISUAL UPDATE  ═══════════════════════ */
 function visualUpdate(dt) {
-  // Camera
   updateCamera(camera, playerKart, input, dt);
-
-  // Particles
   updateParticles(dt);
-
-  // Emit particles for ALL karts (player + AI)
-  for (const kart of allKarts) {
-    // Drift sparks
-    if (kart.isDrifting && kart.driftTier > 0) {
-      sparkTimer += dt;
-      if (sparkTimer > 0.05) {
-        sparkTimer = 0;
-        const color = getDriftSparkColor(kart);
-        if (color) emitDriftSparks(kart, color, 2);
-      }
-    }
-
-    // Boost flame
-    if (kart.boostActive) {
-      boostFlameTimer += dt;
-      if (boostFlameTimer > 0.06) {
-        boostFlameTimer = 0;
-        emitBoostFlame(kart, 3);
-      }
-    }
-
-    // Dust when off-road
-    if (kart.surfaceType === 'offroad' && Math.abs(kart.speed) > 10) {
-      dustTimer += dt;
-      if (dustTimer > 0.15) {
-        dustTimer = 0;
-        emitDust(kart, 1);
-      }
-    }
+  for (const k of allKarts) {
+    if (k.isDrifting && k.driftTier > 0) { sparkT += dt; if (sparkT > 0.05) { sparkT = 0; const c = getDriftSparkColor(k); if (c) emitDriftSparks(k, c, 2); } }
+    if (k.boostActive) { boostT += dt; if (boostT > 0.06) { boostT = 0; emitBoostFlame(k, 3); } }
+    if (k.surfaceType === 'offroad' && Math.abs(k.speed) > 10) { dustT += dt; if (dustT > 0.15) { dustT = 0; emitDust(k, 1); } }
   }
-
-  // Reset emission timers periodically to avoid accumulation
-  if (sparkTimer > 1) sparkTimer = 0;
-  if (boostFlameTimer > 1) boostFlameTimer = 0;
-  if (dustTimer > 1) dustTimer = 0;
+  if (sparkT > 1) sparkT = 0; if (boostT > 1) boostT = 0; if (dustT > 1) dustT = 0;
+  updateMinimap();
 }
 
-function showCountdown(num) {
-  if (!countdownEl) return;
-  countdownEl.style.display = 'block';
-  if (num > 0) {
-    countdownEl.textContent = num;
-    countdownEl.style.color = '#FFF';
-  } else {
-    countdownEl.textContent = 'GO!';
-    countdownEl.style.color = '#0F0';
-  }
-  // Animate
-  countdownEl.style.transform = 'translate(-50%, -50%) scale(1.5)';
-  countdownEl.style.transition = 'transform 0.3s ease-out, opacity 0.3s';
-  countdownEl.style.opacity = '1';
-  setTimeout(() => {
-    countdownEl.style.transform = 'translate(-50%, -50%) scale(1)';
-  }, 50);
+/* ═══════════════════════  HUD  ═══════════════════════ */
+function buildHUD() {
+  hudEl.innerHTML = `
+    <div class="hud-position" id="hp"></div>
+    <div class="hud-lap" id="hl"></div>
+    <div class="hud-timer" id="ht"><span id="ht-main"></span><div class="hud-split" id="ht-split"></div></div>
+    <div class="hud-item" id="hi">—</div>
+    <div class="hud-item-hint">[E] use</div>
+    <div class="hud-boost-bar"><div class="hud-boost-fill" id="hbf"></div></div>
+    <div class="hud-minimap"><canvas id="minimap-cv" width="130" height="130"></canvas></div>
+    <div class="hud-countdown" id="hcd"></div>
+    <div class="hud-final-lap" id="hfl">🏁 FINAL LAP 🏁</div>
+  `;
+  hudEl.classList.add('active');
 }
 
 function updateHUD() {
   if (!playerKart) return;
+  const p = playerKart.racePosition;
+  const suf = p===1?'st':p===2?'nd':p===3?'rd':'th';
+  const pc = {1:'#FFD700',2:'#C0C0C0',3:'#CD7F32'};
+  const hp = document.getElementById('hp');
+  if (hp) { hp.innerHTML = `<span style="color:${pc[p]||'#fff'}">${p}${suf}</span><span class="sub"> /8</span>`; }
 
-  // Position
-  const pos = playerKart.racePosition;
-  const suffix = pos === 1 ? 'st' : pos === 2 ? 'nd' : pos === 3 ? 'rd' : 'th';
-  const posColors = { 1: '#FFD700', 2: '#C0C0C0', 3: '#CD7F32' };
-  positionEl.textContent = `${pos}${suffix}`;
-  positionEl.style.color = posColors[pos] || '#FFF';
-  positionEl.innerHTML += `<span style="font-size:20px;color:#AAA;"> /8</span>`;
+  const hl = document.getElementById('hl');
+  if (hl) hl.textContent = `Lap ${Math.min(playerKart.currentLap+1,3)}/3`;
 
-  // Lap
-  const lap = Math.min(playerKart.currentLap + 1, 3);
-  lapEl.textContent = `Lap ${lap}/3`;
+  const htm = document.getElementById('ht-main');
+  if (htm) htm.textContent = raceState.status==='racing'||raceState.status==='finished' ? formatTime(raceState.raceTime,1) : '0:00.0';
 
-  // Timer
-  if (raceState.status === 'racing' || raceState.status === 'finished') {
-    timerEl.textContent = formatTime(raceState.raceTime, 1);
-  } else {
-    timerEl.textContent = '0:00.0';
+  const hi = document.getElementById('hi');
+  if (hi) hi.textContent = playerKart.heldItem ? (ITEM_ICONS[playerKart.heldItem]||'?') : '—';
+
+  /* boost bar */
+  const bf = document.getElementById('hbf');
+  if (bf) {
+    if (playerKart.isDrifting) {
+      const prog = getDriftProgress(playerKart);
+      bf.style.width = (prog * 100) + '%';
+      const tc = {0:'#666',1:'#4488FF',2:'#FF8800',3:'#FF44FF'};
+      bf.style.background = tc[playerKart.driftTier] || '#666';
+    } else if (playerKart.boostActive) {
+      bf.style.width = ((playerKart.boostTimer / playerKart.boostDuration) * 100) + '%';
+      bf.style.background = '#FF6600';
+    } else { bf.style.width = '0%'; }
   }
+}
 
-  // Item
-  const itemIcons = {
-    fizzBomb: '💣', oilSlick: '🟣', shield: '🛡️',
-    turboPepper: '🌶️', homingPigeon: '🐦', star: '⭐',
-  };
-  if (playerKart.heldItem) {
-    itemEl.textContent = itemIcons[playerKart.heldItem] || '?';
-  } else {
-    itemEl.textContent = '—';
+function showCountdownNum(n) {
+  const el = document.getElementById('hcd');
+  if (!el) return;
+  el.textContent = n > 0 ? n : 'GO!';
+  el.style.color = n > 0 ? '#fff' : '#0f0';
+  el.classList.remove('show','pop');
+  void el.offsetWidth;          // force reflow
+  el.classList.add('show','pop');
+  setTimeout(() => el.classList.remove('pop'), 60);
+}
+
+function showLapSplit(lap) {
+  const el = document.getElementById('ht-split');
+  if (!el || !playerKart.lapTimes.length) return;
+  const t = playerKart.lapTimes[playerKart.lapTimes.length - 1];
+  el.textContent = `Lap ${lap}: ${formatTime(t, 2)}`;
+  el.style.opacity = '1';
+  setTimeout(() => { el.style.opacity = '0'; }, 3000);
+}
+
+function showFinalLapBanner() {
+  const el = document.getElementById('hfl');
+  if (!el) return;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+/* ═══════════════════════  MINIMAP  ═══════════════════════ */
+let minimapFrame = 0;
+function updateMinimap() {
+  minimapFrame++;
+  if (minimapFrame % 2 !== 0) return;  // 30 Hz
+  const cv = document.getElementById('minimap-cv');
+  if (!cv || !trackData?.centerCurve) return;
+  const ctx = cv.getContext('2d');
+  const W = 130, H = 130;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(0, 0, W, H);
+
+  /* compute bounding box of track */
+  const pts = [];
+  for (let i = 0; i <= 60; i++) {
+    const p = trackData.centerCurve.getPointAt(i / 60);
+    pts.push(p);
   }
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of pts) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); }
+  const pad = 12;
+  const scaleX = (W - pad * 2) / (maxX - minX || 1);
+  const scaleZ = (H - pad * 2) / (maxZ - minZ || 1);
+  const sc = Math.min(scaleX, scaleZ);
+  const offX = (W - (maxX - minX) * sc) / 2;
+  const offZ = (H - (maxZ - minZ) * sc) / 2;
+  const tx = x => (x - minX) * sc + offX;
+  const tz = z => (z - minZ) * sc + offZ;
+
+  /* draw track */
+  ctx.strokeStyle = 'rgba(200,200,200,0.5)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let i = 0; i <= 60; i++) {
+    const p = pts[i] || pts[0];
+    if (i === 0) ctx.moveTo(tx(p.x), tz(p.z));
+    else ctx.lineTo(tx(p.x), tz(p.z));
+  }
+  ctx.closePath(); ctx.stroke();
+
+  /* draw karts */
+  const charColors = {};
+  for (const c of characters) charColors[c.id] = '#' + c.color.toString(16).padStart(6, '0');
+
+  for (const k of allKarts) {
+    ctx.beginPath();
+    ctx.arc(tx(k.position.x), tz(k.position.z), k.isPlayer ? 4 : 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = k.isPlayer ? '#fff' : (charColors[k.characterId] || '#888');
+    ctx.fill();
+    if (k.isPlayer) { ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 1.5; ctx.stroke(); }
+  }
+}
+
+/* ═══════════════════════  PAUSE  ═══════════════════════ */
+function buildPauseOverlay() {
+  pauseEl = document.createElement('div');
+  pauseEl.className = 'pause-overlay hidden';
+  pauseEl.innerHTML = `<div class="pause-panel"><h2>⏸ PAUSED</h2>
+    <button class="pause-btn" data-act="resume">Resume</button>
+    <button class="pause-btn" data-act="restart">Restart Race</button>
+    <button class="pause-btn" data-act="quit">Quit to Menu</button>
+    <div style="margin-top:16px">
+      <div class="vol-row"><span>SFX</span><input type="range" min="0" max="100" value="80" id="vol-sfx"><span id="vol-sfx-v">80</span></div>
+      <div class="vol-row"><span>Music</span><input type="range" min="0" max="100" value="60" id="vol-mus"><span id="vol-mus-v">60</span></div>
+    </div>
+  </div>`;
+  document.body.appendChild(pauseEl);
+  pauseEl.addEventListener('click', e => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    getAudio().then(a => a.playMenuConfirm());
+    if (btn.dataset.act === 'resume') resumeGame();
+    else if (btn.dataset.act === 'restart') { resumeGame(); restartRace(); }
+    else if (btn.dataset.act === 'quit') { resumeGame(); quitToMenu(); }
+  });
+  pauseEl.querySelector('#vol-sfx')?.addEventListener('input', e => {
+    const v = +e.target.value;
+    document.getElementById('vol-sfx-v').textContent = v;
+    getAudio().then(a => a.setSFXVolume(v));
+  });
+  pauseEl.querySelector('#vol-mus')?.addEventListener('input', e => {
+    const v = +e.target.value;
+    document.getElementById('vol-mus-v').textContent = v;
+    getAudio().then(a => a.setMusicVolume(v));
+  });
+}
+
+function pauseGame() {
+  pausedFrom = gameState;
+  gameState = 'PAUSED';
+  pauseEl.classList.remove('hidden');
+  getAudio().then(a => a.stopEngine());
+}
+function resumeGame() {
+  gameState = pausedFrom || 'RACING';
+  pauseEl.classList.add('hidden');
+}
+
+/* ═══════════════════════  RESULTS  ═══════════════════════ */
+function buildResultsOverlay() {
+  resultsEl = document.createElement('div');
+  resultsEl.className = 'results-panel hidden';
+  resultsEl.id = 'results-panel';
+  document.body.appendChild(resultsEl);
 }
 
 function showResults() {
-  if (!resultsEl) return;
   gameState = 'RESULTS';
-
-  const results = getRaceResults(allKarts);
-
-  let html = '<h2 style="text-align:center;margin-bottom:16px;font-size:28px;">🏁 Race Results 🏁</h2>';
-  html += '<table style="width:100%;border-collapse:collapse;font-size:18px;">';
-  html += '<tr style="border-bottom:1px solid #444;"><th style="padding:8px;text-align:left;">#</th><th style="text-align:left;">Racer</th><th style="text-align:right;">Time</th></tr>';
-
-  for (const r of results) {
-    const posColors = { 1: '#FFD700', 2: '#C0C0C0', 3: '#CD7F32' };
-    const color = posColors[r.position] || '#FFF';
-    const bg = r.isPlayer ? 'rgba(255,255,255,0.1)' : 'transparent';
-    const time = r.finishTime ? formatTime(r.finishTime, 3) : 'DNF';
-    const suffix = r.position === 1 ? 'st' : r.position === 2 ? 'nd' : r.position === 3 ? 'rd' : 'th';
-    html += `<tr style="background:${bg};border-bottom:1px solid #333;">`;
-    html += `<td style="padding:6px 8px;color:${color};font-weight:bold;">${r.position}${suffix}</td>`;
-    html += `<td style="padding:6px 8px;">${r.name}${r.isPlayer ? ' ★' : ''}</td>`;
-    html += `<td style="padding:6px 8px;text-align:right;font-family:monospace;">${time}</td>`;
-    html += '</tr>';
+  const res = getRaceResults(allKarts);
+  let html = '<h2>🏁 Race Results 🏁</h2><table class="results-table"><tr><th>#</th><th>Racer</th><th style="text-align:right">Time</th></tr>';
+  for (const r of res) {
+    const cls = r.isPlayer ? 'player-row' : '';
+    const pcls = r.position===1?'pos-gold':r.position===2?'pos-silver':r.position===3?'pos-bronze':'';
+    const suf = r.position===1?'st':r.position===2?'nd':r.position===3?'rd':'th';
+    const t = r.finishTime ? formatTime(r.finishTime, 3) : 'DNF';
+    html += `<tr class="${cls}"><td class="${pcls}" style="font-weight:700">${r.position}${suf}</td><td>${r.name}${r.isPlayer?' ★':''}</td><td style="text-align:right;font-family:monospace">${t}</td></tr>`;
   }
-  html += '</table>';
-  html += '<p style="text-align:center;margin-top:16px;font-size:14px;color:#888;">Press Enter to restart</p>';
-
+  html += '</table><div style="text-align:center;margin-top:16px"><button class="menu-btn" id="res-again">Race Again</button><button class="menu-btn" style="background:linear-gradient(135deg,#888,#555);margin-top:8px" id="res-menu">Main Menu</button></div>';
   resultsEl.innerHTML = html;
-  resultsEl.style.display = 'block';
+  resultsEl.classList.remove('hidden');
+  document.getElementById('res-again')?.addEventListener('click', () => { resultsEl.classList.add('hidden'); restartRace(); });
+  document.getElementById('res-menu')?.addEventListener('click', () => { resultsEl.classList.add('hidden'); quitToMenu(); });
+}
 
-  // Listen for restart
-  const restartHandler = (e) => {
+/* ═══════════════════════  MENUS  ═══════════════════════ */
+function showTitle() {
+  gameState = 'TITLE';
+  hudEl.classList.remove('active');
+  menuEl.classList.remove('hidden');
+  menuEl.innerHTML = `<div class="menu-panel" style="text-align:center">
+    <div class="menu-title">FABRO RACER</div>
+    <div class="menu-subtitle">Press ENTER to Start</div>
+  </div>`;
+  const handler = async (e) => {
     if (e.code === 'Enter') {
-      window.removeEventListener('keydown', restartHandler);
-      restartRace();
+      window.removeEventListener('keydown', handler);
+      const a = await getAudio(); a.initAudio(); a.playMenuConfirm();
+      showTrackSelect();
     }
   };
-  window.addEventListener('keydown', restartHandler);
+  window.addEventListener('keydown', handler);
 }
 
-function restartRace() {
-  // Hide results
-  resultsEl.style.display = 'none';
-  countdownEl.style.display = 'none';
+function showTrackSelect() {
+  gameState = 'TRACK_SELECT';
+  menuEl.innerHTML = `<div class="menu-panel">
+    <div class="menu-section-title">Select Track</div>
+    <div class="card-row" id="track-cards"></div>
+    <button class="menu-btn" id="ts-next">Next →</button>
+  </div>`;
+  const row = document.getElementById('track-cards');
+  TRACK_META.forEach((t, i) => {
+    const c = document.createElement('div');
+    c.className = 'card' + (i === selectedTrackIdx ? ' selected' : '');
+    c.innerHTML = `<div class="card-name">${t.name}</div><div class="card-detail">${t.diff}</div><div class="card-detail">${t.desc}</div>`;
+    c.addEventListener('click', () => {
+      selectedTrackIdx = i;
+      row.querySelectorAll('.card').forEach(cc => cc.classList.remove('selected'));
+      c.classList.add('selected');
+      getAudio().then(a => a.playMenuNav());
+    });
+    row.appendChild(c);
+  });
+  document.getElementById('ts-next').addEventListener('click', () => { getAudio().then(a => a.playMenuConfirm()); showCharSelect(); });
+}
 
-  // Remove old karts from scene
-  for (const kart of allKarts) {
-    scene.remove(kart.mesh);
+function showCharSelect() {
+  gameState = 'CHAR_SELECT';
+  menuEl.innerHTML = `<div class="menu-panel">
+    <div class="menu-section-title">Select Character</div>
+    <div class="card-row" id="char-cards"></div>
+    <button class="menu-btn" id="cs-next">Next →</button>
+  </div>`;
+  const row = document.getElementById('char-cards');
+  characters.forEach((ch, i) => {
+    const hex = '#' + ch.color.toString(16).padStart(6, '0');
+    const c = document.createElement('div');
+    c.className = 'card' + (i === selectedCharIdx ? ' selected' : '');
+    c.innerHTML = `<div class="color-swatch" style="background:${hex}"></div><div class="card-name">${ch.name}</div>` +
+      statRow('Spd', ch.stats.speed) + statRow('Acc', ch.stats.accel) + statRow('Hnd', ch.stats.handling) + statRow('Wgt', ch.stats.weight);
+    c.addEventListener('click', () => {
+      selectedCharIdx = i;
+      row.querySelectorAll('.card').forEach(cc => cc.classList.remove('selected'));
+      c.classList.add('selected');
+      getAudio().then(a => a.playMenuNav());
+    });
+    row.appendChild(c);
+  });
+  document.getElementById('cs-next').addEventListener('click', () => { getAudio().then(a => a.playMenuConfirm()); showDiffSelect(); });
+}
+
+function statRow(label, val) {
+  let pips = '';
+  for (let i = 1; i <= 5; i++) pips += `<div class="stat-pip${i<=val?' filled':''}"></div>`;
+  return `<div style="display:flex;align-items:center;gap:4px;font-size:11px;color:#aaa;justify-content:center"><span style="width:28px;text-align:right">${label}</span><div class="stat-bar">${pips}</div></div>`;
+}
+
+function showDiffSelect() {
+  gameState = 'DIFF_SELECT';
+  menuEl.innerHTML = `<div class="menu-panel">
+    <div class="menu-section-title">Difficulty</div>
+    <div class="diff-row">
+      <button class="diff-btn${currentDifficulty==='chill'?' selected':''}" data-d="chill">Chill 😌</button>
+      <button class="diff-btn${currentDifficulty==='standard'?' selected':''}" data-d="standard">Standard 🏁</button>
+      <button class="diff-btn${currentDifficulty==='mean'?' selected':''}" data-d="mean">Mean 😈</button>
+    </div>
+    <div class="toggle-row">
+      <label><input type="checkbox" id="tog-mirror" ${mirrorMode?'checked':''}> Mirror Mode</label>
+      <label><input type="checkbox" id="tog-clones" ${allowClones?'checked':''}> Allow Clones</label>
+    </div>
+    <button class="menu-btn" id="ds-start">🏁 Start Race</button>
+  </div>`;
+  document.querySelectorAll('.diff-btn').forEach(b => b.addEventListener('click', () => {
+    currentDifficulty = b.dataset.d;
+    document.querySelectorAll('.diff-btn').forEach(bb => bb.classList.remove('selected'));
+    b.classList.add('selected');
+    getAudio().then(a => a.playMenuNav());
+  }));
+  document.getElementById('tog-mirror')?.addEventListener('change', e => { mirrorMode = e.target.checked; });
+  document.getElementById('tog-clones')?.addEventListener('change', e => { allowClones = e.target.checked; });
+  document.getElementById('ds-start').addEventListener('click', () => { getAudio().then(a => a.playMenuConfirm()); startRace(); });
+}
+
+/* ═══════════════════════  RACE SETUP  ═══════════════════════ */
+async function startRace() {
+  menuEl.classList.add('hidden');
+  buildHUD();
+
+  /* clean previous track */
+  if (trackData) {
+    clearItems(scene);
+    for (const k of allKarts) scene.remove(k.mesh);
+    if (trackData.group) scene.remove(trackData.group);
+    allKarts = []; playerKart = null; trackData = null;
   }
 
-  // Clear items
-  clearItems(scene);
+  /* load track */
+  const mod = await import(`./tracks/${TRACK_FILES[selectedTrackIdx]}.js`);
+  trackDef = mod.trackDefinition;
+  trackData = buildTrack(trackDef, scene);
 
-  // Reset state
-  allKarts = [];
-  playerKart = null;
-  accumulator = 0;
-  gameState = 'LOADING';
-  cameraState.mode = 'chase';
+  /* environment */
+  const env = trackDef.environment || {};
+  setFog(env.fogColor || 0x87ceeb, env.fogNear || 100, env.fogFar || 500);
+  ambientLight.color.setHex(env.ambientColor || 0xffffff); ambientLight.intensity = env.ambientIntensity || 0.4;
+  directionalLight.color.setHex(env.sunColor || 0xffffff); directionalLight.intensity = env.sunIntensity || 0.8;
+  if (env.sunDirection) directionalLight.position.set(env.sunDirection.x*80, env.sunDirection.y*80, env.sunDirection.z*80);
 
-  // Reinitialize
-  reinit();
-}
-
-async function reinit() {
-  // Re-init item boxes
   initItemBoxes(trackData, scene);
 
+  /* start rotation */
   let startRot = 0;
   if (trackData.startPositions.length > 0) {
     const sp = trackData.startPositions[0];
-    const nearest = findNearestSplinePoint(trackData.centerCurve, sp.x, sp.z, 100);
-    startRot = Math.atan2(nearest.tangent.x, nearest.tangent.z);
+    const n = findNearestSplinePoint(trackData.centerCurve, sp.x, sp.z, 100);
+    startRot = Math.atan2(n.tangent.x, n.tangent.z);
   }
 
-  // Create player kart
-  const playerChar = characters[0];
-  playerKart = createKart(playerChar, true, 0);
-  if (trackData.startPositions.length > 0) {
-    placeKart(playerKart, trackData.startPositions[0], startRot);
-  }
+  /* player kart */
+  const pChar = characters[selectedCharIdx];
+  playerKart = createKart(pChar, true, 0);
+  placeKart(playerKart, trackData.startPositions[0] || {x:0,y:1,z:0}, startRot);
   scene.add(playerKart.mesh);
   allKarts.push(playerKart);
+  prevPlayerLap = 0;
 
-  // Create 7 CPU karts
-  const cpuChars = characters.filter(c => c.id !== playerChar.id);
-  for (let i = cpuChars.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [cpuChars[i], cpuChars[j]] = [cpuChars[j], cpuChars[i]];
+  /* CPU karts */
+  let cpuPool;
+  if (allowClones) {
+    cpuPool = Array.from({length:7}, () => characters[Math.floor(Math.random()*characters.length)]);
+  } else {
+    cpuPool = characters.filter(c => c.id !== pChar.id);
+    for (let i = cpuPool.length - 1; i > 0; i--) { const j = Math.floor(Math.random()*(i+1)); [cpuPool[i],cpuPool[j]] = [cpuPool[j],cpuPool[i]]; }
+    cpuPool = cpuPool.slice(0, 7);
   }
 
+  setDifficulty(currentDifficulty);
   for (let i = 0; i < 7; i++) {
-    const char = cpuChars[i % cpuChars.length];
-    const kart = createKart(char, false, i + 1);
-    if (trackData.startPositions.length > i + 1) {
-      placeKart(kart, trackData.startPositions[i + 1], startRot);
-    }
-    scene.add(kart.mesh);
-    allKarts.push(kart);
-    initAI(kart, trackData, currentDifficulty);
+    const ch = cpuPool[i % cpuPool.length];
+    const k = createKart(ch, false, i + 1);
+    placeKart(k, trackData.startPositions[i+1] || {x:(i+1)*5,y:1,z:-10-i*8}, startRot);
+    scene.add(k.mesh);
+    allKarts.push(k);
+    initAI(k, trackData, currentDifficulty);
   }
 
   initRace(allKarts, trackData);
   gameState = 'COUNTDOWN';
+  accumulator = 0;
   resetCamera(camera, playerKart);
 }
 
-// Start the game
-init().catch(err => {
-  console.error('Failed to initialize:', err);
-});
+function restartRace() {
+  getAudio().then(a => { a.stopEngine(); a.stopMusic(); });
+  startRace();
+}
+
+function quitToMenu() {
+  getAudio().then(a => { a.stopEngine(); a.stopMusic(); });
+  if (trackData) {
+    clearItems(scene);
+    for (const k of allKarts) scene.remove(k.mesh);
+    if (trackData.group) scene.remove(trackData.group);
+    allKarts = []; playerKart = null; trackData = null;
+  }
+  hudEl.classList.remove('active');
+  resultsEl?.classList.add('hidden');
+  cameraState.mode = 'chase';
+  showTitle();
+}
