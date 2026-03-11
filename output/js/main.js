@@ -99,8 +99,15 @@ function loop(now) {
 
   if (gameState === 'COUNTDOWN' || gameState === 'RACING' || gameState === 'RACE_FINISH') {
     accumulator += dt;
+    // Safety valve: if accumulator grows excessively (tab was backgrounded, etc.),
+    // clamp it to avoid a burst of catch-up frames that would stall the renderer.
+    if (accumulator > 0.2) accumulator = FIXED_DT * 4;
     let steps = 0;
-    while (accumulator >= FIXED_DT && steps < 3) {
+    // Cap at 8 steps to cover dt up to 0.133s (~7.5fps). The dt cap of 0.1s needs
+    // ceil(0.1 / (1/60)) = 6 steps, so 8 gives headroom for variance.
+    // Previous cap of 3 caused the game to run in slow motion at low framerates
+    // (e.g., 10fps → only 50% real-time).
+    while (accumulator >= FIXED_DT && steps < 8) {
       fixedUpdate(FIXED_DT);
       accumulator -= FIXED_DT;
       steps++;

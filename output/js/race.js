@@ -61,8 +61,8 @@ export function updateRace(allKarts, trackData, dt) {
   const events = {
     countdownTick: 0,
     raceStarted: false,
-    lapCompleted: null,  // { kart, lap }
-    raceFinished: null,  // kart that finished
+    lapCompleted: null,  // { kart, lap } — prioritizes player over AI
+    raceFinished: null,  // kart that finished — prioritizes player over AI
   };
 
   if (raceState.status === 'countdown') {
@@ -116,14 +116,20 @@ export function updateRace(allKarts, trackData, dt) {
 
       const cpEvent = updateCheckpoints(kart, trackData);
       if (cpEvent === 'lap') {
-        events.lapCompleted = { kart, lap: kart.currentLap };
+        // Prioritize player events: if player already recorded, don't overwrite
+        if (!events.lapCompleted || kart.isPlayer) {
+          events.lapCompleted = { kart, lap: kart.currentLap };
+        }
 
         // Check for race finish (3 laps)
         if (kart.currentLap >= TOTAL_LAPS) {
           kart.finished = true;
           kart.finishTime = raceState.raceTime;
           raceState.finishedKarts.push(kart);
-          events.raceFinished = kart;
+          // Prioritize player: don't overwrite player's finish event with AI's
+          if (!events.raceFinished || kart.isPlayer) {
+            events.raceFinished = kart;
+          }
         }
       }
     }
@@ -223,7 +229,13 @@ function updatePositions(allKarts, trackData) {
   for (let i = 0; i < allKarts.length; i++) _sortBuffer[i] = allKarts[i];
 
   _sortBuffer.sort((a, b) => {
-    if (a.finished && b.finished) return a.finishTime - b.finishTime;
+    if (a.finished && b.finished) {
+      // DNF karts (finishTime === null) sort after timed finishers
+      if (a.finishTime === null && b.finishTime === null) return 0;
+      if (a.finishTime === null) return 1;
+      if (b.finishTime === null) return -1;
+      return a.finishTime - b.finishTime;
+    }
     if (a.finished) return -1;
     if (b.finished) return 1;
     return b.raceProgress - a.raceProgress;
@@ -251,7 +263,13 @@ export function formatTime(seconds, decimals = 1) {
  */
 export function getRaceResults(allKarts) {
   return [...allKarts].sort((a, b) => {
-    if (a.finished && b.finished) return a.finishTime - b.finishTime;
+    if (a.finished && b.finished) {
+      // DNF karts (finishTime === null) sort after timed finishers
+      if (a.finishTime === null && b.finishTime === null) return 0;
+      if (a.finishTime === null) return 1;
+      if (b.finishTime === null) return -1;
+      return a.finishTime - b.finishTime;
+    }
     if (a.finished) return -1;
     if (b.finished) return 1;
     return b.raceProgress - a.raceProgress;
