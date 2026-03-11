@@ -203,7 +203,7 @@ If all pass:\n\
             shape=parallelogram,
             label="Pick Focus",
             max_retries=25,
-            script="FOCUS=$(od -An -N1 -tu1 /dev/urandom | awk 'NF{print $1 % 10}'); echo $FOCUS > .workflow/improve_focus; echo \"Focus: $FOCUS\""
+            script="bash workflows/kart-racer/scripts/pick-improvement.sh"
         ]
 
         improve_game [
