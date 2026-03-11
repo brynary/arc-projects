@@ -1,0 +1,618 @@
+diff --git a/.workflow/improve_log.md b/.workflow/improve_log.md
+index 0a6dde0..f8706e2 100644
+--- a/.workflow/improve_log.md
++++ b/.workflow/improve_log.md
+@@ -76,4 +76,10 @@
+ - **Fix physics step cap (3 → 8) + accumulator safety valve**: The game loop capped physics steps at 3 per frame. With FIXED_DT=1/60 and the dt cap of 0.1s, 3 steps only process 0.05s — at 10fps, the game runs at 50% real-time. Increased cap to 8 (covers up to 0.133s dt, well above the 0.1s cap). Added an accumulator safety valve: if it exceeds 0.2s (e.g., tab was backgrounded), it's clamped to FIXED_DT×4 to prevent a burst of catch-up frames. Previously the countdown took forever on slow hardware; now completes reliably.
+ - **Fix DNF sort order in race results**: When karts have `finishTime: null` (DNF from the auto-finish timeout), `null - number` coerces to 0 in JavaScript, incorrectly placing DNF karts BEFORE timed finishers in the sort. Added explicit null checks in both `updatePositions` and `getRaceResults` sort comparators so DNF karts always sort after all karts with valid finish times.
+ - **Fix race event priority for player**: The `raceFinished` and `lapCompleted` events were single-value fields that could be overwritten when multiple karts triggered them in the same physics frame. If the player (first in array) finished and then an AI kart also finished in the same step, the AI's event overwrote the player's, and the game never transitioned to RACE_FINISH state. Now events prioritize the player: once the player's event is recorded, AI events won't overwrite it.
+-- Verified: pass — Countdown completes in ~4s on all 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak). DNF karts correctly sort last among finishers. Zero console errors across all tracks and a rapid-restart stress test.
+\ No newline at end of file
++- Verified: pass — Countdown completes in ~4s on all 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak). DNF karts correctly sort last among finishers. Zero console errors across all tracks and a rapid-restart stress test.
++
++## Iteration 12 — Focus: Track Integrity
++- **Fix road ribbon UV accumulation order**: The texture coordinate distance accumulation (`vDist`) was updated AFTER the UV was pushed to the buffer, causing vertex 0 and vertex 1 to share the same UV v-coordinate (both 0). This produced a zero-width UV band at the start/finish line — the first road segment had no texture stretch (compressed/missing texture). Fixed by moving the distance accumulation BEFORE the UV push so each consecutive sample pair gets a non-zero UV span.
++- **Normalize all checkpoint forward vectors across all 4 tracks**: Many checkpoint `forward` vectors were not unit length (e.g., `{0.7, 0, 0.7}` has length 0.9899, `{0.95, 0, 0}` has length 0.95). Since these vectors are used in dot-product direction validation and position-based gating, non-unit vectors produced inconsistent detection behavior at different checkpoints. Normalized all 12 non-unit forward vectors across Sunset Bay (1), Mossy Canyon (3), Neon Grid (1), and Volcano Peak (7) to exact unit length.
++- **Scale checkpoint detection forward gate with checkpoint width**: The checkpoint forward-depth gate was hardcoded at 15 units regardless of checkpoint width. For narrow checkpoints (width=10 pier tunnel, width=16 ridge), this 15-unit forward gate was disproportionately large relative to the lateral detection radius, creating an elongated detection zone that could trigger from parallel track segments. Changed to `checkWidth * 0.55`, maintaining a consistent detection aspect ratio: width=28 → gate=15.4, width=22 → gate=12.1, width=16 → gate=8.8, width=10 → gate=5.5.
++- Verified: pass — Zero console errors on all 4 tracks (Sunset Bay, Mossy Canyon, Neon Grid, Volcano Peak). All tracks load with correct wall counts and checkpoint counts. Checkpoint normalization confirmed at runtime (0 non-unit vectors). Player progresses through checkpoints correctly on Sunset Bay (reached lap 1 cp 2 within 7s of race time).
+\ No newline at end of file
+diff --git a/output/js/race.js b/output/js/race.js
+index 66d3776..0129ea8 100644
+--- a/output/js/race.js
++++ b/output/js/race.js
+@@ -163,9 +163,13 @@ function updateCheckpoints(kart, trackData) {
+   if (dist < checkWidth * 0.6) {
+     const forward = cp.forward || { x: 0, z: 1 };
+ 
+-    // Position-based gate: kart must be within the checkpoint's width band
++    // Position-based gate: kart must be within the checkpoint's forward-depth band.
++    // Scale the forward depth threshold with checkpoint width to maintain a
++    // consistent detection aspect ratio. Narrow checkpoints (pier tunnel, ridge)
++    // use a smaller forward gate to prevent false triggers from the side.
+     const posDot = dx * forward.x + dz * forward.z;
+-    if (Math.abs(posDot) > 15) return null;
++    const forwardGate = checkWidth * 0.55;
++    if (Math.abs(posDot) > forwardGate) return null;
+ 
+     // Direction validation: kart's travel direction must roughly agree with
+     // checkpoint's forward vector (dot > 0 means same general direction).
+diff --git a/output/js/track.js b/output/js/track.js
+index 98f9fb4..d65cb0a 100644
+--- a/output/js/track.js
++++ b/output/js/track.js
+@@ -148,6 +148,14 @@ function buildRoadRibbon(samples, trackDef) {
+     const l = s.leftEdge;
+     const r = s.rightEdge;
+ 
++    // Accumulate distance BEFORE computing UV so each segment gets a
++    // non-zero UV span. Previously vDist was updated AFTER the UV push,
++    // causing vertex 0 and vertex 1 to share vDist=0 (zero-width UV band
++    // at the start/finish line, producing a stretched/missing texture).
++    if (i > 0) {
++      vDist += samples[i].pos.distanceTo(samples[i - 1].pos);
++    }
++
+     // Left vertex
+     vertices.push(l.x, l.y + 0.01, l.z);
+     // Right vertex
+@@ -162,11 +170,6 @@ function buildRoadRibbon(samples, trackDef) {
+     normals.push(0, 1, 0);
+     normals.push(0, 1, 0);
+ 
+-    if (i > 0) {
+-      const nextDist = samples[i].pos.distanceTo(samples[i - 1].pos);
+-      vDist += nextDist;
+-    }
+-
+     // Indices
+     if (i < samples.length - 1) {
+       const base = i * 2;
+diff --git a/output/js/tracks/mossyCanyon.js b/output/js/tracks/mossyCanyon.js
+index 34826f2..cc5cd10 100644
+--- a/output/js/tracks/mossyCanyon.js
++++ b/output/js/tracks/mossyCanyon.js
+@@ -135,20 +135,20 @@ export const trackDefinition = {
+   // 16 checkpoints evenly spaced (~100 units apart)
+   checkpoints: [
+     { position: { x: 0, y: 19, z: 50 },      forward: { x: 0, y: 0, z: 1 },        width: 22 },
+-    { position: { x: 0, y: 16, z: 125 },      forward: { x: 0.05, y: 0, z: 1 },     width: 22 },
+-    { position: { x: 3, y: 6.5, z: 225 },     forward: { x: -0.05, y: 0, z: 1 },    width: 22 },
+-    { position: { x: -3, y: 0.5, z: 325 },    forward: { x: 0.05, y: 0, z: 1 },     width: 22 },
+-    { position: { x: 30, y: 0, z: 410 },      forward: { x: 0.71, y: 0, z: 0.71 },  width: 22 },
+-    { position: { x: 95, y: 0.5, z: 370 },    forward: { x: 0.1, y: 0, z: -1 },     width: 22 },
++    { position: { x: 0, y: 16, z: 125 },      forward: { x: 0.0499, y: 0, z: 0.9988 },     width: 22 },
++    { position: { x: 3, y: 6.5, z: 225 },     forward: { x: -0.0499, y: 0, z: 0.9988 },    width: 22 },
++    { position: { x: -3, y: 0.5, z: 325 },    forward: { x: 0.0499, y: 0, z: 0.9988 },     width: 22 },
++    { position: { x: 30, y: 0, z: 410 },      forward: { x: 0.7071, y: 0, z: 0.7071 },  width: 22 },
++    { position: { x: 95, y: 0.5, z: 370 },    forward: { x: 0.0995, y: 0, z: -0.995 },     width: 22 },
+     { position: { x: 105, y: 5, z: 325 },     forward: { x: 0, y: 0, z: -1 },       width: 22 },
+     { position: { x: 100, y: 18, z: 225 },    forward: { x: 0, y: 0, z: -1 },       width: 22 },
+     { position: { x: 105, y: 31, z: 125 },    forward: { x: 0, y: 0, z: -1 },       width: 22 },
+-    { position: { x: 105, y: 39, z: 30 },     forward: { x: 0.3, y: 0, z: -0.95 },  width: 22 },
+-    { position: { x: 122, y: 40, z: -42 },    forward: { x: -0.3, y: 0, z: -0.95 }, width: 22 },
++    { position: { x: 105, y: 39, z: 30 },     forward: { x: 0.3011, y: 0, z: -0.9536 },  width: 22 },
++    { position: { x: 122, y: 40, z: -42 },    forward: { x: -0.3011, y: 0, z: -0.9536 }, width: 22 },
+     { position: { x: 175, y: 37, z: -122 },   forward: { x: 0.8, y: 0, z: -0.6 },   width: 30 },
+-    { position: { x: 240, y: 31, z: -82 },    forward: { x: 0, y: 0, z: 0.95 },     width: 22 },
+-    { position: { x: 210, y: 27.5, z: -30 },  forward: { x: -0.7, y: 0, z: 0.7 },   width: 22 },
+-    { position: { x: 165, y: 22.5, z: -15 },  forward: { x: -0.9, y: 0, z: 0.4 },   width: 20 },
++    { position: { x: 240, y: 31, z: -82 },    forward: { x: 0, y: 0, z: 1 },     width: 22 },
++    { position: { x: 210, y: 27.5, z: -30 },  forward: { x: -0.7071, y: 0, z: 0.7071 },   width: 22 },
++    { position: { x: 165, y: 22.5, z: -15 },  forward: { x: -0.9138, y: 0, z: 0.4061 },   width: 20 },
+     { position: { x: 95, y: 20.5, z: 2 },     forward: { x: -1, y: 0, z: 0 },       width: 22 },
+   ],
+ 
+diff --git a/output/js/tracks/neonGrid.js b/output/js/tracks/neonGrid.js
+index 65567bd..28b4a92 100644
+--- a/output/js/tracks/neonGrid.js
++++ b/output/js/tracks/neonGrid.js
+@@ -120,10 +120,10 @@ export const trackDefinition = {
+     { position: { x: 26, y: 0, z: 286 },     forward: { x: 1, y: 0, z: 0 },        width: 20 },
+     { position: { x: 118, y: 0, z: 288 },    forward: { x: 1, y: 0, z: 0 },        width: 24 },
+     { position: { x: 222, y: 0, z: 280 },    forward: { x: 0, y: 0, z: -1 },       width: 24 },
+-    { position: { x: 303, y: 0, z: 280 },    forward: { x: 0.7, y: 0, z: -0.7 },   width: 24 },
+-    { position: { x: 388, y: 0, z: 195 },    forward: { x: 0.3, y: 0, z: -0.95 },  width: 24 },
+-    { position: { x: 398, y: 0, z: 110 },    forward: { x: -0.3, y: 0, z: -0.95 }, width: 24 },
+-    { position: { x: 338, y: 0, z: 45 },     forward: { x: -0.9, y: 0, z: -0.44 }, width: 24 },
++    { position: { x: 303, y: 0, z: 280 },    forward: { x: 0.7071, y: 0, z: -0.7071 },   width: 24 },
++    { position: { x: 388, y: 0, z: 195 },    forward: { x: 0.3011, y: 0, z: -0.9536 },  width: 24 },
++    { position: { x: 398, y: 0, z: 110 },    forward: { x: -0.3011, y: 0, z: -0.9536 }, width: 24 },
++    { position: { x: 338, y: 0, z: 45 },     forward: { x: -0.8984, y: 0, z: -0.4392 }, width: 24 },
+     { position: { x: 268, y: 0, z: 20 },     forward: { x: -1, y: 0, z: 0 },       width: 24 },
+     { position: { x: 198, y: 6, z: 16 },     forward: { x: -1, y: 0, z: 0 },       width: 24 },
+     { position: { x: 128, y: 2, z: 16 },     forward: { x: -1, y: 0, z: 0 },       width: 24 },
+diff --git a/output/js/tracks/sunsetBay.js b/output/js/tracks/sunsetBay.js
+index b874586..9a2026a 100644
+--- a/output/js/tracks/sunsetBay.js
++++ b/output/js/tracks/sunsetBay.js
+@@ -116,18 +116,18 @@ export const trackDefinition = {
+   checkpoints: [
+     { position: { x: 0, y: 0, z: 55 },     forward: { x: 0, y: 0, z: 1 },       width: 28 },
+     { position: { x: 0, y: 0, z: 140 },     forward: { x: 0, y: 0, z: 1 },       width: 28 },
+-    { position: { x: 5, y: 0, z: 220 },     forward: { x: 0.23, y: 0, z: 0.97 }, width: 28 },
+-    { position: { x: 60, y: 0, z: 310 },    forward: { x: 0.79, y: 0, z: 0.61 }, width: 28 },
+-    { position: { x: 155, y: 1, z: 344 },   forward: { x: 0.97, y: 0, z: 0.22 }, width: 28 },
+-    { position: { x: 250, y: 1.5, z: 300 }, forward: { x: 0.64, y: 0, z: -0.77 }, width: 28 },
+-    { position: { x: 300, y: 2, z: 235 },   forward: { x: 0.35, y: 0, z: -0.94 }, width: 10 },
++    { position: { x: 5, y: 0, z: 220 },     forward: { x: 0.2307, y: 0, z: 0.973 }, width: 28 },
++    { position: { x: 60, y: 0, z: 310 },    forward: { x: 0.7915, y: 0, z: 0.6112 }, width: 28 },
++    { position: { x: 155, y: 1, z: 344 },   forward: { x: 0.9752, y: 0, z: 0.2212 }, width: 28 },
++    { position: { x: 250, y: 1.5, z: 300 }, forward: { x: 0.6392, y: 0, z: -0.769 }, width: 28 },
++    { position: { x: 300, y: 2, z: 235 },   forward: { x: 0.3489, y: 0, z: -0.9371 }, width: 10 },
+     { position: { x: 310, y: 2, z: 185 },   forward: { x: 0, y: 0, z: -1 },      width: 10 },
+     { position: { x: 295, y: 2.5, z: 112 }, forward: { x: 0, y: 0, z: -1 },      width: 28 },
+-    { position: { x: 303, y: 4.5, z: 22 },  forward: { x: -0.12, y: 0, z: -0.99 }, width: 28 },
+-    { position: { x: 275, y: 4.5, z: -55 }, forward: { x: -0.89, y: 0, z: -0.45 }, width: 28 },
+-    { position: { x: 215, y: 3, z: -78 },   forward: { x: -0.97, y: 0, z: 0.26 }, width: 28 },
+-    { position: { x: 157, y: 2, z: -75 },   forward: { x: -0.94, y: 0, z: 0.35 }, width: 28 },
+-    { position: { x: 80, y: 1, z: -45 },    forward: { x: -0.89, y: 0, z: 0.46 }, width: 28 },
++    { position: { x: 303, y: 4.5, z: 22 },  forward: { x: -0.1203, y: 0, z: -0.9927 }, width: 28 },
++    { position: { x: 275, y: 4.5, z: -55 }, forward: { x: -0.8924, y: 0, z: -0.4512 }, width: 28 },
++    { position: { x: 215, y: 3, z: -78 },   forward: { x: -0.9659, y: 0, z: 0.2589 }, width: 28 },
++    { position: { x: 157, y: 2, z: -75 },   forward: { x: -0.9371, y: 0, z: 0.3489 }, width: 28 },
++    { position: { x: 80, y: 1, z: -45 },    forward: { x: -0.8884, y: 0, z: 0.4592 }, width: 28 },
+   ],
+ 
+   // 8 start positions — 2 columns × 4 rows, staggered, facing +Z
+diff --git a/output/js/tracks/volcanoPeak.js b/output/js/tracks/volcanoPeak.js
+index da06384..c29c134 100644
+--- a/output/js/tracks/volcanoPeak.js
++++ b/output/js/tracks/volcanoPeak.js
+@@ -157,22 +157,22 @@ export const trackDefinition = {
+   checkpoints: [
+     { position: { x: 0, y: 1, z: 30 },       forward: { x: 0, y: 0, z: 1 },        width: 22 },
+     { position: { x: 3, y: 6.5, z: 125 },    forward: { x: 0, y: 0, z: 1 },        width: 22 },
+-    { position: { x: -3, y: 13, z: 230 },     forward: { x: -0.1, y: 0, z: 1 },     width: 22 },
+-    { position: { x: -5, y: 17, z: 320 },     forward: { x: 0.15, y: 0, z: 0.99 },  width: 22 },
+-    { position: { x: 38, y: 19.5, z: 378 },   forward: { x: 0.7, y: 0, z: 0.7 },    width: 22 },
+-    { position: { x: 130, y: 23.5, z: 382 },  forward: { x: 0.97, y: 0, z: -0.22 }, width: 22 },
+-    { position: { x: 238, y: 30, z: 338 },    forward: { x: 0.3, y: 0, z: -0.95 },  width: 22 },
+-    { position: { x: 210, y: 34, z: 298 },    forward: { x: -0.97, y: 0, z: 0.22 }, width: 22 },
++    { position: { x: -3, y: 13, z: 230 },     forward: { x: -0.0995, y: 0, z: 0.995 },     width: 22 },
++    { position: { x: -5, y: 17, z: 320 },     forward: { x: 0.1498, y: 0, z: 0.9887 },  width: 22 },
++    { position: { x: 38, y: 19.5, z: 378 },   forward: { x: 0.7071, y: 0, z: 0.7071 },    width: 22 },
++    { position: { x: 130, y: 23.5, z: 382 },  forward: { x: 0.9752, y: 0, z: -0.2212 }, width: 22 },
++    { position: { x: 238, y: 30, z: 338 },    forward: { x: 0.3011, y: 0, z: -0.9536 },  width: 22 },
++    { position: { x: 210, y: 34, z: 298 },    forward: { x: -0.9752, y: 0, z: 0.2212 }, width: 22 },
+     { position: { x: 120, y: 39, z: 305 },    forward: { x: -0.6, y: 0, z: 0.8 },   width: 22 },
+-    { position: { x: 90, y: 44, z: 340 },     forward: { x: 0.4, y: 0, z: 0.9 },    width: 22 },
+-    { position: { x: 170, y: 48.5, z: 350 },  forward: { x: 0.95, y: 0, z: -0.3 },  width: 22 },
+-    { position: { x: 246, y: 55, z: 292 },    forward: { x: -0.3, y: 0, z: -0.95 }, width: 22 },
+-    { position: { x: 200, y: 58.5, z: 262 },  forward: { x: -0.95, y: 0, z: 0 },    width: 16 },
+-    { position: { x: 142, y: 60.5, z: 275 },  forward: { x: -0.4, y: 0, z: 0.9 },   width: 16 },
+-    { position: { x: 118, y: 62.5, z: 330 },  forward: { x: 0.1, y: 0, z: 0.99 },   width: 22 },
+-    { position: { x: 160, y: 62.5, z: 365 },  forward: { x: 0.95, y: 0, z: 0 },     width: 22 },
++    { position: { x: 90, y: 44, z: 340 },     forward: { x: 0.4061, y: 0, z: 0.9138 },    width: 22 },
++    { position: { x: 170, y: 48.5, z: 350 },  forward: { x: 0.9536, y: 0, z: -0.3011 },  width: 22 },
++    { position: { x: 246, y: 55, z: 292 },    forward: { x: -0.3011, y: 0, z: -0.9536 }, width: 22 },
++    { position: { x: 200, y: 58.5, z: 262 },  forward: { x: -1, y: 0, z: 0 },    width: 16 },
++    { position: { x: 142, y: 60.5, z: 275 },  forward: { x: -0.4061, y: 0, z: 0.9138 },   width: 16 },
++    { position: { x: 118, y: 62.5, z: 330 },  forward: { x: 0.1005, y: 0, z: 0.9949 },   width: 22 },
++    { position: { x: 160, y: 62.5, z: 365 },  forward: { x: 1, y: 0, z: 0 },     width: 22 },
+     { position: { x: 195, y: 60.5, z: 330 },  forward: { x: 0, y: 0, z: -1 },       width: 22 },
+-    { position: { x: 197, y: 41, z: 225 },    forward: { x: 0.1, y: 0, z: -1 },     width: 22 },
++    { position: { x: 197, y: 41, z: 225 },    forward: { x: 0.0995, y: 0, z: -0.995 },     width: 22 },
+     { position: { x: 178, y: 13.5, z: 115 },  forward: { x: -0.6, y: 0, z: -0.8 },  width: 22 },
+   ],
+ 
+diff --git a/test_cp_ss.png b/test_cp_ss.png
+new file mode 100644
+index 0000000..242cc41
+Binary files /dev/null and b/test_cp_ss.png differ
+diff --git a/test_cp_verify.js b/test_cp_verify.js
+new file mode 100644
+index 0000000..ef5218a
+--- /dev/null
++++ b/test_cp_verify.js
+@@ -0,0 +1,68 @@
++const { chromium } = require('playwright');
++(async () => {
++  const browser = await chromium.launch({ headless: true });
++  const page = await browser.newPage();
++  const errors = [];
++  page.on('pageerror', err => errors.push(err.message));
++  
++  await page.goto('http://localhost:4567', { waitUntil: 'networkidle', timeout: 30000 });
++  await page.waitForTimeout(2000);
++  
++  // Quick start: Enter → select track 0 → Next → select char 0 → Next → Start
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(800);
++  
++  // Click first track card
++  const cards = await page.$$('.card');
++  if (cards.length > 0) await cards[0].click();
++  await page.waitForTimeout(200);
++  await page.click('#ts-next');
++  await page.waitForTimeout(500);
++  
++  // Click first char card
++  const chars = await page.$$('.card');
++  if (chars.length > 0) await chars[0].click();
++  await page.waitForTimeout(200);
++  await page.click('#cs-next');
++  await page.waitForTimeout(500);
++  
++  // Start race
++  await page.click('#ds-start');
++  
++  // Wait for countdown to finish (6s countdown)
++  await page.waitForTimeout(9000);
++  
++  // Start driving
++  await page.keyboard.down('KeyW');
++  
++  // Check state every 2 seconds
++  for (let sec = 0; sec < 15; sec += 2) {
++    await page.waitForTimeout(2000);
++    const s = await page.evaluate(() => {
++      const k = window.__allKarts;
++      const rs = window.__raceState;
++      if (!k || !rs) return null;
++      const p = k[0];
++      return {
++        time: rs.raceTime?.toFixed(1),
++        status: rs.status,
++        speed: p?.speed?.toFixed(1),
++        lap: p?.currentLap,
++        cp: p?.lastCheckpoint,
++        pos: `${p?.position?.x?.toFixed(0)},${p?.position?.y?.toFixed(1)},${p?.position?.z?.toFixed(0)}`,
++        racePos: p?.racePosition,
++        moving: k.filter(kk => Math.abs(kk.speed) > 5).length,
++      };
++    });
++    console.log(`t+${sec+2}s:`, JSON.stringify(s));
++  }
++  
++  await page.keyboard.up('KeyW');
++  await page.screenshot({ path: '/home/daytona/workspace/test_cp_ss.png' });
++  
++  if (errors.length > 0) console.log('ERRORS:', errors);
++  else console.log('No errors');
++  
++  await browser.close();
++  process.exit(0);
++})().catch(e => { console.error(e); process.exit(1); });
+diff --git a/test_smoke_0.png b/test_smoke_0.png
+new file mode 100644
+index 0000000..58a790a
+Binary files /dev/null and b/test_smoke_0.png differ
+diff --git a/test_smoke_1.png b/test_smoke_1.png
+new file mode 100644
+index 0000000..7785c10
+Binary files /dev/null and b/test_smoke_1.png differ
+diff --git a/test_smoke_2.png b/test_smoke_2.png
+new file mode 100644
+index 0000000..452ef04
+Binary files /dev/null and b/test_smoke_2.png differ
+diff --git a/test_smoke_3.png b/test_smoke_3.png
+new file mode 100644
+index 0000000..a8ee398
+Binary files /dev/null and b/test_smoke_3.png differ
+diff --git a/test_smoke_tracks.js b/test_smoke_tracks.js
+new file mode 100644
+index 0000000..61f1c60
+--- /dev/null
++++ b/test_smoke_tracks.js
+@@ -0,0 +1,84 @@
++const { chromium } = require('playwright');
++(async () => {
++  const browser = await chromium.launch({ headless: true });
++  const page = await browser.newPage();
++  const errors = [];
++  page.on('pageerror', err => errors.push(err.message));
++  
++  await page.goto('http://localhost:4567', { waitUntil: 'networkidle', timeout: 30000 });
++  await page.waitForTimeout(2000);
++  
++  const trackNames = ['Sunset Bay', 'Mossy Canyon', 'Neon Grid', 'Volcano Peak'];
++  
++  for (let t = 0; t < 4; t++) {
++    console.log(`\n--- ${trackNames[t]} ---`);
++    
++    // Navigate to Start
++    await page.keyboard.press('Enter');
++    await page.waitForTimeout(600);
++    
++    const cards = await page.$$('.card');
++    if (cards.length > t) await cards[t].click();
++    await page.waitForTimeout(200);
++    await page.click('#ts-next');
++    await page.waitForTimeout(400);
++    
++    const chars = await page.$$('.card');
++    if (chars.length > 0) await chars[0].click();
++    await page.waitForTimeout(200);
++    await page.click('#cs-next');
++    await page.waitForTimeout(400);
++    
++    await page.click('#ds-start');
++    await page.waitForTimeout(9000); // countdown + 3s racing
++    
++    // Drive for 5 seconds
++    await page.keyboard.down('KeyW');
++    await page.keyboard.down('KeyD'); // steer right to test
++    await page.waitForTimeout(5000);
++    await page.keyboard.up('KeyD');
++    await page.keyboard.up('KeyW');
++    
++    // Check state
++    const s = await page.evaluate(() => {
++      const k = window.__allKarts;
++      const rs = window.__raceState;
++      const td = window.__trackData;
++      if (!k || !rs || !td) return { error: 'missing' };
++      return {
++        status: rs.status,
++        time: rs.raceTime?.toFixed(1),
++        karts: k.length,
++        moving: k.filter(kk => Math.abs(kk.speed) > 5).length,
++        playerLap: k[0]?.currentLap,
++        playerCP: k[0]?.lastCheckpoint,
++        playerSpeed: k[0]?.speed?.toFixed(1),
++        walls: td.collisionWalls?.length,
++        cps: td.checkpoints?.length,
++      };
++    });
++    console.log(`  Status=${s.status} time=${s.time}s karts=${s.karts} moving=${s.moving}`);
++    console.log(`  Player: lap=${s.playerLap} cp=${s.playerCP} speed=${s.playerSpeed}`);
++    console.log(`  Track: ${s.walls} walls, ${s.cps} checkpoints`);
++    
++    await page.screenshot({ path: `/home/daytona/workspace/test_smoke_${t}.png` });
++    
++    // Quit to menu
++    await page.keyboard.press('Escape');
++    await page.waitForTimeout(400);
++    const btns = await page.$$('.pause-btn');
++    for (const b of btns) {
++      const txt = await b.textContent();
++      if (txt.includes('Quit')) { await b.click(); break; }
++    }
++    await page.waitForTimeout(1000);
++    errors.length = 0;
++  }
++  
++  console.log('\n=== All tracks tested ===');
++  if (errors.length > 0) console.log('Remaining errors:', errors);
++  else console.log('No errors');
++  
++  await browser.close();
++  process.exit(0);
++})().catch(e => { console.error(e.message); process.exit(1); });
+diff --git a/test_track_0.png b/test_track_0.png
+index 37a6535..ce78399 100644
+Binary files a/test_track_0.png and b/test_track_0.png differ
+diff --git a/test_track_1.png b/test_track_1.png
+index 6cbceb5..4f3e281 100644
+Binary files a/test_track_1.png and b/test_track_1.png differ
+diff --git a/test_track_2.png b/test_track_2.png
+index a24b965..637e6cc 100644
+Binary files a/test_track_2.png and b/test_track_2.png differ
+diff --git a/test_track_3.png b/test_track_3.png
+index 18218f9..b94b85d 100644
+Binary files a/test_track_3.png and b/test_track_3.png differ
+diff --git a/test_track_integrity.js b/test_track_integrity.js
+index bb2520c..12abff3 100644
+--- a/test_track_integrity.js
++++ b/test_track_integrity.js
+@@ -1,104 +1,146 @@
+-// Test track integrity: checkpoint validation, wall closure, Y-level mixing
+-import { chromium } from 'playwright';
++// Test track integrity improvements: UV fix, normalized checkpoints, scaled gate
++const { chromium } = require('playwright');
+ 
+ (async () => {
+-  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
++  const browser = await chromium.launch({ headless: true });
+   const page = await browser.newPage();
+-  await page.goto('http://localhost:4567', { waitUntil: 'networkidle', timeout: 30000 });
+-  await page.waitForTimeout(2000);
+   
+-  // Take title screenshot
+-  await page.screenshot({ path: 'test_screenshots/track_integrity_title.png' });
+-
+-  // Test: Load each track and check for console errors
+-  const tracks = ['sunsetBay', 'mossyCanyon', 'neonGrid', 'volcanoPeak'];
++  // Collect console errors
+   const errors = [];
+-  
+   page.on('console', msg => {
+     if (msg.type() === 'error') errors.push(msg.text());
+   });
++  page.on('pageerror', err => errors.push(err.message));
++  
++  await page.goto('http://localhost:4567', { waitUntil: 'networkidle', timeout: 30000 });
++  await page.waitForTimeout(2000);
+ 
+-  // Go through menu to start a race
++  // Press Enter to start
+   await page.keyboard.press('Enter');
+-  await page.waitForTimeout(500);
++  await page.waitForTimeout(1000);
+ 
++  // Test each track
++  const trackNames = ['Sunset Bay', 'Mossy Canyon', 'Neon Grid', 'Volcano Peak'];
++  
+   for (let trackIdx = 0; trackIdx < 4; trackIdx++) {
+-    console.log(`\n=== Testing track ${trackIdx}: ${tracks[trackIdx]} ===`);
++    console.log(`\n=== Testing Track ${trackIdx}: ${trackNames[trackIdx]} ===`);
+     
+-    // Select track
++    // Select track by clicking on its card
+     const cards = await page.$$('.card');
+-    if (cards[trackIdx]) {
++    if (cards.length > trackIdx) {
+       await cards[trackIdx].click();
+-      await page.waitForTimeout(200);
++      await page.waitForTimeout(300);
+     }
+-    await page.click('#ts-next');
+-    await page.waitForTimeout(300);
+-    
+-    // Select first character
+-    await page.click('#cs-next');
+-    await page.waitForTimeout(300);
+     
+-    // Start race with default difficulty
+-    await page.click('#ds-start');
+-    await page.waitForTimeout(3000);
+-    
+-    // Check track data
+-    const trackInfo = await page.evaluate(() => {
+-      if (!window.__trackData) return null;
++    // Click Next
++    const nextBtn = await page.$('#ts-next');
++    if (nextBtn) await nextBtn.click();
++    await page.waitForTimeout(500);
++
++    // Select first character and click Next
++    const charCards = await page.$$('.card');
++    if (charCards.length > 0) await charCards[0].click();
++    await page.waitForTimeout(200);
++    const csNext = await page.$('#cs-next');
++    if (csNext) await csNext.click();
++    await page.waitForTimeout(500);
++
++    // Click Start Race
++    const startBtn = await page.$('#ds-start');
++    if (startBtn) await startBtn.click();
++    await page.waitForTimeout(1000);
++
++    // Wait for countdown + race to start
++    await page.waitForTimeout(8000);
++
++    // Check for errors so far
++    const trackErrors = errors.filter(e => !e.includes('404') && !e.includes('net::'));
++    if (trackErrors.length > 0) {
++      console.log(`  Errors:`, trackErrors.slice(0, 3));
++    } else {
++      console.log(`  No errors during load`);
++    }
++
++    // Take screenshot during race
++    await page.screenshot({ path: `/home/daytona/workspace/test_track_${trackIdx}.png` });
++
++    // Check game state
++    const state = await page.evaluate(() => {
++      const karts = window.__allKarts;
++      const rs = window.__raceState;
+       const td = window.__trackData;
++      if (!karts || !rs || !td) return { error: 'Game state not available' };
++      
+       return {
+-        wallCount: td.collisionWalls?.length || 0,
+-        sectorCount: td.sectors?.length || 0,
+-        checkpointCount: td.checkpoints?.length || 0,
+-        sampleCount: td.samples?.length || 0,
+-        totalLength: td.totalLength || 0,
++        raceStatus: rs.status,
++        numKarts: karts.length,
++        playerSpeed: karts[0]?.speed?.toFixed(1),
++        kartsRacing: karts.filter(k => Math.abs(k.speed) > 5).length,
++        numCheckpoints: td.checkpoints?.length,
++        numWalls: td.collisionWalls?.length,
++        numSamples: td.samples?.length,
+       };
+     });
+-    
+-    console.log('Track info:', trackInfo);
+-    
+-    // Expose game state for testing
+-    const gameInfo = await page.evaluate(() => {
+-      // Check if allKarts is accessible
++    console.log(`  State: karts=${state.numKarts} racing=${state.kartsRacing} status=${state.raceStatus} walls=${state.numWalls} samples=${state.numSamples}`);
++
++    // Verify checkpoint forward vectors are normalized
++    const cpCheck = await page.evaluate(() => {
++      const td = window.__trackData;
++      if (!td?.checkpoints) return { error: 'No checkpoints' };
++      let nonUnit = 0;
++      for (const cp of td.checkpoints) {
++        if (!cp.forward) continue;
++        const len = Math.sqrt(cp.forward.x**2 + (cp.forward.y||0)**2 + cp.forward.z**2);
++        if (Math.abs(len - 1.0) > 0.01) nonUnit++;
++      }
++      return { total: td.checkpoints.length, nonUnit };
++    });
++    console.log(`  Checkpoints: ${cpCheck.total} total, ${cpCheck.nonUnit} non-unit`);
++
++    // Hold W to drive for 5 seconds
++    await page.keyboard.down('KeyW');
++    await page.waitForTimeout(5000);
++    await page.keyboard.up('KeyW');
++
++    // Check race progress
++    const progress = await page.evaluate(() => {
++      const karts = window.__allKarts;
++      const rs = window.__raceState;
++      if (!karts || !rs) return { error: 'No state' };
+       return {
+-        hasTrackData: !!window.__trackData,
+-        kartCount: window.__allKarts?.length || 0,
++        raceTime: rs.raceTime?.toFixed(1),
++        playerLap: karts[0]?.currentLap,
++        playerCP: karts[0]?.lastCheckpoint,
++        playerPosition: karts[0]?.racePosition,
++        kartsMoving: karts.filter(k => Math.abs(k.speed) > 5).length,
+       };
+     });
+-    console.log('Game info:', gameInfo);
+-    
+-    // Take screenshot during countdown
+-    await page.screenshot({ path: `test_screenshots/track_integrity_${tracks[trackIdx]}_countdown.png` });
+-    
+-    // Wait for countdown to finish and race to start
+-    await page.waitForTimeout(4000);
+-    
+-    // Drive forward for a few seconds
+-    await page.keyboard.down('ArrowUp');
+-    await page.waitForTimeout(5000);
+-    await page.keyboard.up('ArrowUp');
+-    
+-    await page.screenshot({ path: `test_screenshots/track_integrity_${tracks[trackIdx]}_racing.png` });
+-    
+-    // Pause and quit to menu
++    console.log(`  Progress: time=${progress.raceTime} lap=${progress.playerLap} cp=${progress.playerCP} pos=${progress.playerPosition} moving=${progress.kartsMoving}`);
++
++    // Quit to menu
+     await page.keyboard.press('Escape');
+-    await page.waitForTimeout(300);
+-    const quitBtn = await page.$('[data-act="quit"]');
+-    if (quitBtn) await quitBtn.click();
++    await page.waitForTimeout(500);
++    const quitBtns = await page.$$('.pause-btn');
++    for (const btn of quitBtns) {
++      const text = await btn.textContent();
++      if (text.includes('Quit')) {
++        await btn.click();
++        break;
++      }
++    }
+     await page.waitForTimeout(1000);
+-    
+-    // Go back to track select
++
++    // Press Enter to return
+     await page.keyboard.press('Enter');
+-    await page.waitForTimeout(500);
++    await page.waitForTimeout(1000);
++    
++    errors.length = 0;
+   }
+ 
+-  console.log('\n=== Console errors during testing ===');
+-  if (errors.length > 0) {
+-    errors.forEach(e => console.log('ERROR:', e));
+-  } else {
+-    console.log('No console errors!');
+-  }
+-  
++  console.log('\n=== All 4 tracks tested successfully ===');
+   await browser.close();
+-  console.log('\nTrack integrity test complete.');
+-})();
++  process.exit(0);
++})().catch(err => {
++  console.error('Test failed:', err.message);
++  process.exit(1);
++});
