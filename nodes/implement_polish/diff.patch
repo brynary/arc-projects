@@ -1,0 +1,2435 @@
+diff --git a/.workflow/implementation-polish.md b/.workflow/implementation-polish.md
+new file mode 100644
+index 0000000..cdaf4a0
+--- /dev/null
++++ b/.workflow/implementation-polish.md
+@@ -0,0 +1,146 @@
++# Implementation Log: UI, Audio, Polish (Phases 7-8)
++
++## Status: ✅ COMPLETE
++
++## Phase 7: Menus & HUD
++
++### Enhanced Menu System (in main.js)
++- **Title screen**: "FABRO RACER MINI" with pulsing START RACE button, CSS animations
++- **Track selection**: 2 track cards with name, description, difficulty stars. Left/Right arrows + Enter/click. Esc to go back.
++- **Character selection**: 4 character cards with stat bars (Speed/Accel/Handling/Weight as filled/empty blocks using `.stat-bar` CSS). Left/Right + Enter.
++- **Options screen** (NEW): 
++  - 3 difficulty buttons: Chill / Standard / Mean with descriptions
++  - Mirror Mode toggle (CSS toggle switch)
++  - Allow Clones toggle (CSS toggle switch)
++  - START RACE button
++- All menu screens use CSS classes (`.menu-screen`, `.select-card`, `.menu-btn`, `.diff-btn`, `.toggle-row`) for consistent styling
++- Keyboard AND click navigation throughout
++
++### HUD System (in main.js)
++- **Position indicator**: `hud-position` class, color-coded (gold/silver/bronze/white), font-weight:900
++- **Lap counter**: `hud-lap` class, centered top
++- **Race timer**: `hud-timer` class with mm:ss.fff format
++- **Speed display**: `hud-speed` class, bottom-left, cyan when boosting
++- **Item slot**: `hud-item-slot` class, 60×60px box, shows ⚡/💧/▲ with color coding
++- **Drift bar**: `hud-drift-bar` + `hud-drift-fill`, color changes by tier (blue→orange→pink)
++- **FINAL LAP banner**: Animated slide-down banner showing "🏁 FINAL LAP! 🏁" for 3 seconds when entering lap 3
++- **Controls hint**: Compact control reference at bottom-left
++- **Minimap**: 150×150 canvas in bottom-right showing track outline + colored racer dots
++
++### Minimap (`output/js/minimap.js` — 95 lines)
++- Samples track curve at 200 points for 2D outline
++- Auto-scales to fit 140×140px with 5px margin, maintains aspect ratio
++- Draws white track polyline (2px)
++- Player = white dot (5px), CPUs = red/blue/green dots (4px)
++- Updates every frame with `minimap.update(allKarts, playerKart)`
++- Semi-transparent black background with rounded corners
++
++### Pause Menu
++- ESC opens pause overlay with `pause-overlay` class
++- Resume / Restart / Quit buttons with hover effects
++- Audio suspends on pause, resumes on unpause
++
++### Results Screen
++- `results-overlay` with `results-table` CSS
++- Player row highlighted with `.player-row` class
++- Best lap time shown
++- Race Again + Back to Menu buttons
++
++### CSS Stylesheet (`output/css/style.css` — 429 lines)
++- Animations: `pulse`, `slideDown`, `fadeIn`, `countdownPop`
++- Menu styles: `.menu-screen`, `.menu-title`, `.menu-btn`, `.menu-hint`
++- Card styles: `.select-card`, `.card-row` with hover/selected states
++- Difficulty: `.diff-btn` with selected state glow
++- Toggle switches: `.toggle-row`, `.toggle-switch` with on/off states
++- HUD: `.hud-position`, `.hud-lap`, `.hud-timer`, `.hud-speed`, `.hud-item-slot`, `.hud-drift-bar`, `.final-lap-banner`
++- Countdown: `.countdown-number`, `.countdown-go` with pop animation
++- Pause: `.pause-overlay`, `.pause-btn`
++- Results: `.results-overlay`, `.results-table`, `.player-row`
++- Minimap: `.minimap-container`, `.minimap-canvas`
++
++## Phase 8: Audio & Visual Polish
++
++### Audio System (`output/js/audio.js` — 667 lines)
++- `createAudioManager()` with lazy AudioContext creation (autoplay policy compliant)
++- Master gain → music gain + sfx gain (separate volume controls)
++- 1-second white noise buffer created once, reused for all noise-based sounds
++
++#### Engine Sound (continuous)
++- Two sawtooth oscillators (base + 1.5× harmonic at 30% volume)
++- 6Hz LFO vibrato
++- Pitch mapped to speed (80-220Hz), drops 20% off-road, +50Hz when boosting
++- Volume scales 0.05-0.15 with speed
++
++#### SFX (procedural one-shots)
++- **Countdown beeps**: 440Hz sine (3,2,1), 880Hz sine (GO!)
++- **Boost**: Bandpass noise sweep 500→2000Hz
++- **Item pickup**: Ascending chime (800→1000→1200Hz)
++- **Spark Bomb**: White noise burst + 600Hz sine ping
++- **Slick Puddle**: Low-pass filtered noise at 300Hz
++- **Turbo Cell**: Triangle arpeggio C5→E5→G5
++- **Wall Hit**: 100Hz sine thud
++- **Drift**: Sustained bandpass noise (2000-4000Hz) with fade
++
++#### Music (procedural lookahead scheduler)
++- **Sunset Circuit** (120 BPM, C major): Square bass, triangle pentatonic melody, hi-hat noise
++- **Crystal Caverns** (100 BPM, A minor): Sawtooth+lowpass bass, sine arpeggios, low percussion
++- requestAnimationFrame loop schedules notes ~0.15s ahead
++- Auto-disconnect on node end
++
++### Visual Polish
++- Countdown pop animation with CSS scale transform
++- Final lap banner with slide-down + fade animation
++- Kart visual tilt during drift (z-rotation)
++- Invincibility blinking (mesh.visible toggling at 10Hz)
++- Position color transitions (gold→silver→bronze→white)
++- Speed display color changes (white→cyan when boosting)
++
++### Textures Generated (via imagegen)
++- `output/textures/menu-bg.png` — Character select background
++- `output/textures/skybox-tropical.png` — Sunset Circuit skybox
++- `output/textures/skybox-snow.png` — Crystal Caverns skybox
++
++## Integration (main.js — 440 lines, rewritten)
++- Imports audio.js and minimap.js
++- Audio init on first menu interaction (autoplay policy)
++- Engine sound starts on countdown, updates each racing frame
++- Countdown beeps synchronized with timer
++- Item use SFX triggered on player item use
++- Music starts per-track, stops on results
++- Audio suspends on pause, resumes on unpause
++- Minimap created during initHUD, updated each racing frame
++- Clean teardown of all systems (audio, items, AI, minimap) on menu return
++
++## Verified Behaviors
++| Test | Result |
++|---|---|
++| Zero console errors on load | ✅ |
++| Title screen with START button | ✅ |
++| Track select with 2 cards | ✅ |
++| Character select with 4 cards + stat bars | ✅ |
++| Options: 3 difficulty buttons | ✅ |
++| Options: Mirror Mode toggle | ✅ |
++| Options: Allow Clones toggle | ✅ |
++| Options: Start Race button | ✅ |
++| Countdown 3→2→1→GO transition | ✅ |
++| HUD position indicator visible | ✅ |
++| HUD lap counter visible | ✅ |
++| HUD race timer visible | ✅ |
++| HUD speed display visible | ✅ |
++| HUD item slot visible | ✅ |
++| HUD controls hint visible | ✅ |
++| Minimap canvas present | ✅ |
++| 3 AI karts racing | ✅ |
++| Pause menu (ESC) | ✅ |
++| Resume from pause | ✅ |
++| Audio system loaded | ✅ |
++
++## File Summary
++| File | Lines | Purpose |
++|---|---|---|
++| js/main.js | ~440 | Rewritten with full menu flow + audio integration |
++| js/audio.js | ~667 | Procedural audio system |
++| js/minimap.js | ~95 | Track minimap renderer |
++| css/style.css | ~429 | Full CSS with animations + all UI styles |
++| **Phase 7-8 new total** | **~1,631** | |
++| **Project total** | **~5,964** | across 18 JS files + CSS + HTML |
+diff --git a/output/css/style.css b/output/css/style.css
+index cb3499d..1137100 100644
+--- a/output/css/style.css
++++ b/output/css/style.css
+@@ -68,3 +68,363 @@ html, body {
+ .hidden {
+   display: none !important;
+ }
++
++/* ── Animations ────────────────────────────────────────────────────── */
++@keyframes pulse {
++  0%, 100% { opacity: 1; transform: scale(1); }
++  50% { opacity: 0.7; transform: scale(1.05); }
++}
++
++@keyframes slideDown {
++  from { transform: translateY(-100%); opacity: 0; }
++  to { transform: translateY(0); opacity: 1; }
++}
++
++@keyframes fadeIn {
++  from { opacity: 0; }
++  to { opacity: 1; }
++}
++
++@keyframes countdownPop {
++  0% { transform: scale(0.5); opacity: 0; }
++  50% { transform: scale(1.2); opacity: 1; }
++  100% { transform: scale(1); opacity: 0.8; }
++}
++
++/* ── Menu Styles ───────────────────────────────────────────────────── */
++#menu-container {
++  z-index: var(--z-menu);
++}
++
++.menu-screen {
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  justify-content: center;
++  height: 100vh;
++  animation: fadeIn 0.3s ease-out;
++}
++
++.menu-title {
++  font-size: 52px;
++  letter-spacing: 8px;
++  text-transform: uppercase;
++  margin-bottom: 12px;
++  text-shadow: 3px 3px 6px #000, 0 0 30px var(--accent-cyan);
++  text-align: center;
++}
++
++.menu-subtitle {
++  font-size: 18px;
++  opacity: 0.6;
++  margin-bottom: 40px;
++}
++
++.menu-btn {
++  font-size: 22px;
++  padding: 14px 48px;
++  border: 2px solid var(--accent-cyan);
++  border-radius: 8px;
++  cursor: pointer;
++  transition: background 0.2s, transform 0.1s;
++  background: transparent;
++  color: #fff;
++  pointer-events: auto;
++  text-shadow: none;
++}
++.menu-btn:hover {
++  background: rgba(0,221,255,0.15);
++  transform: scale(1.05);
++}
++.menu-btn.secondary {
++  border-color: rgba(255,255,255,0.4);
++}
++.menu-btn.secondary:hover {
++  background: rgba(255,255,255,0.1);
++}
++
++.menu-hint {
++  font-size: 13px;
++  opacity: 0.4;
++  margin-top: 20px;
++}
++
++/* Track / Character cards */
++.card-row {
++  display: flex;
++  gap: 24px;
++  flex-wrap: wrap;
++  justify-content: center;
++}
++
++.select-card {
++  padding: 20px;
++  border: 3px solid rgba(255,255,255,0.15);
++  border-radius: 12px;
++  cursor: pointer;
++  transition: border-color 0.2s, background 0.2s, transform 0.15s;
++  background: rgba(0,0,0,0.4);
++  pointer-events: auto;
++}
++.select-card:hover {
++  background: rgba(255,255,255,0.08);
++  transform: translateY(-2px);
++}
++.select-card.selected {
++  background: rgba(255,255,255,0.12);
++  box-shadow: 0 0 15px rgba(0,221,255,0.3);
++}
++
++.stat-bar {
++  display: inline-block;
++  width: 10px;
++  height: 10px;
++  margin-right: 2px;
++  border-radius: 2px;
++}
++.stat-bar.filled { background: var(--accent-cyan); }
++.stat-bar.empty  { background: rgba(255,255,255,0.15); }
++
++/* Difficulty buttons */
++.diff-btn {
++  padding: 12px 24px;
++  border: 2px solid rgba(255,255,255,0.3);
++  border-radius: 8px;
++  cursor: pointer;
++  transition: all 0.2s;
++  text-align: center;
++  min-width: 160px;
++  pointer-events: auto;
++  background: transparent;
++  color: #fff;
++}
++.diff-btn:hover { background: rgba(255,255,255,0.08); }
++.diff-btn.selected {
++  border-color: var(--accent-cyan);
++  background: rgba(0,221,255,0.12);
++  box-shadow: 0 0 10px rgba(0,221,255,0.2);
++}
++
++/* Toggle switches */
++.toggle-row {
++  display: flex;
++  align-items: center;
++  gap: 12px;
++  margin: 8px 0;
++  pointer-events: auto;
++  cursor: pointer;
++}
++.toggle-switch {
++  width: 44px;
++  height: 24px;
++  border-radius: 12px;
++  background: rgba(255,255,255,0.2);
++  position: relative;
++  transition: background 0.2s;
++}
++.toggle-switch.on { background: var(--accent-cyan); }
++.toggle-switch::after {
++  content: '';
++  position: absolute;
++  top: 2px;
++  left: 2px;
++  width: 20px;
++  height: 20px;
++  border-radius: 50%;
++  background: #fff;
++  transition: transform 0.2s;
++}
++.toggle-switch.on::after { transform: translateX(20px); }
++
++/* ── HUD Styles ────────────────────────────────────────────────────── */
++#hud-container {
++  z-index: var(--z-hud);
++}
++
++.hud-position {
++  position: absolute;
++  top: 16px;
++  left: 20px;
++  font-size: 42px;
++  font-weight: 900;
++  text-shadow: 2px 2px 4px #000;
++  transition: color 0.3s;
++}
++
++.hud-lap {
++  position: absolute;
++  top: 16px;
++  left: 50%;
++  transform: translateX(-50%);
++  font-size: 22px;
++  font-weight: bold;
++}
++
++.hud-timer {
++  position: absolute;
++  top: 44px;
++  left: 50%;
++  transform: translateX(-50%);
++  font-size: 16px;
++  opacity: 0.8;
++}
++
++.hud-speed {
++  position: absolute;
++  bottom: 24px;
++  left: 20px;
++  font-size: 22px;
++  font-weight: bold;
++  transition: color 0.2s;
++}
++
++.hud-item-slot {
++  position: absolute;
++  top: 16px;
++  right: 20px;
++  width: 60px;
++  height: 60px;
++  border: 2px solid rgba(255,255,255,0.25);
++  border-radius: 10px;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  font-size: 30px;
++  background: rgba(0,0,0,0.45);
++  transition: border-color 0.2s;
++  pointer-events: auto;
++}
++
++.hud-drift-bar {
++  position: absolute;
++  bottom: 24px;
++  left: 50%;
++  transform: translateX(-50%);
++  width: 180px;
++  height: 10px;
++  background: rgba(0,0,0,0.5);
++  border-radius: 5px;
++  overflow: hidden;
++}
++.hud-drift-fill {
++  height: 100%;
++  width: 0%;
++  border-radius: 5px;
++  transition: background 0.2s;
++}
++
++.hud-controls {
++  position: absolute;
++  bottom: 50px;
++  left: 20px;
++  font-size: 12px;
++  opacity: 0.5;
++}
++
++/* Final lap banner */
++.final-lap-banner {
++  position: absolute;
++  top: 80px;
++  left: 50%;
++  transform: translateX(-50%);
++  font-size: 28px;
++  font-weight: 900;
++  color: #FF4444;
++  text-shadow: 0 0 20px rgba(255,68,68,0.6);
++  animation: slideDown 0.4s ease-out, fadeIn 0.3s;
++  pointer-events: none;
++}
++
++/* ── Countdown ─────────────────────────────────────────────────────── */
++#countdown-overlay {
++  z-index: var(--z-countdown);
++}
++
++.countdown-number {
++  font-size: 140px;
++  font-weight: 900;
++  animation: countdownPop 0.8s ease-out;
++}
++
++.countdown-go {
++  font-size: 140px;
++  font-weight: 900;
++  color: var(--accent-cyan);
++  text-shadow: 0 0 40px var(--accent-cyan);
++  animation: countdownPop 0.6s ease-out;
++}
++
++/* ── Pause ─────────────────────────────────────────────────────────── */
++#pause-container {
++  z-index: var(--z-pause);
++}
++
++.pause-overlay {
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  justify-content: center;
++  height: 100vh;
++  background: rgba(0,0,0,0.65);
++  animation: fadeIn 0.15s;
++}
++
++.pause-btn {
++  font-size: 20px;
++  padding: 12px 48px;
++  border: 2px solid rgba(255,255,255,0.4);
++  border-radius: 8px;
++  margin: 8px;
++  cursor: pointer;
++  transition: background 0.15s;
++  pointer-events: auto;
++  background: transparent;
++  color: #fff;
++}
++.pause-btn:hover { background: rgba(255,255,255,0.12); }
++
++/* ── Results ───────────────────────────────────────────────────────── */
++#results-container {
++  z-index: var(--z-menu);
++}
++
++.results-overlay {
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  justify-content: center;
++  height: 100vh;
++  background: rgba(0,0,0,0.75);
++  animation: fadeIn 0.3s;
++}
++
++.results-table {
++  border-collapse: collapse;
++  margin-bottom: 20px;
++}
++.results-table th,
++.results-table td {
++  padding: 8px 20px;
++  text-align: left;
++}
++.results-table th {
++  border-bottom: 2px solid rgba(255,255,255,0.3);
++  font-size: 14px;
++  opacity: 0.7;
++  text-transform: uppercase;
++}
++.results-table .player-row {
++  background: rgba(0,221,255,0.12);
++}
++
++/* ── Minimap ───────────────────────────────────────────────────────── */
++.minimap-container {
++  position: absolute;
++  bottom: 16px;
++  right: 16px;
++  pointer-events: none;
++}
++.minimap-canvas {
++  border-radius: 8px;
++  border: 1px solid rgba(255,255,255,0.2);
++}
+\ No newline at end of file
+diff --git a/output/js/audio.js b/output/js/audio.js
+new file mode 100644
+index 0000000..0a1281c
+--- /dev/null
++++ b/output/js/audio.js
+@@ -0,0 +1,667 @@
++// audio.js – Procedural audio system for voxel kart racing game
++// Vanilla ES module. No dependencies, no build step.
++
++export function createAudioManager() {
++  let audioCtx = null;
++  let masterGain = null;
++  let musicGain = null;
++  let sfxGain = null;
++  let noiseBuffer = null;
++
++  // Volume scalars (0–1)
++  let masterVol = 1;
++  let musicVol = 1;
++  let sfxVol = 1;
++
++  // Engine state
++  let engineRunning = false;
++  let engineOsc1 = null;
++  let engineOsc2 = null;
++  let engineLFO = null;
++  let engineLFOGain = null;
++  let engineGain = null;
++
++  // Drift state
++  let driftSource = null;
++  let driftGain = null;
++
++  // Music state
++  let musicPlaying = false;
++  let musicTrack = null;
++  let musicSchedulerId = null;
++  let musicNodes = [];        // nodes to disconnect on stop
++  let musicNextBeatTime = 0;
++  let musicBeatIndex = 0;
++  let musicBeatDuration = 0;  // seconds per beat
++
++  // ─── Helpers ──────────────────────────────────────────────
++
++  function lerp(a, b, t) {
++    return a + (b - a) * Math.min(1, Math.max(0, t));
++  }
++
++  function createNoiseBuffer() {
++    const length = audioCtx.sampleRate; // 1 second
++    const buffer = audioCtx.createBuffer(1, length, audioCtx.sampleRate);
++    const data = buffer.getChannelData(0);
++    for (let i = 0; i < length; i++) {
++      data[i] = Math.random() * 2 - 1;
++    }
++    return buffer;
++  }
++
++  function noiseSrc() {
++    const src = audioCtx.createBufferSource();
++    src.buffer = noiseBuffer;
++    src.loop = true;
++    return src;
++  }
++
++  function cleanUp(node, time) {
++    // Disconnect a node after it finishes (or at a given time).
++    if (node.stop) {
++      try { node.stop(time); } catch (_) { /* already stopped */ }
++    }
++    node.onended = () => {
++      try { node.disconnect(); } catch (_) { /* ok */ }
++    };
++  }
++
++  function scheduleClean(node, stopTime) {
++    try { node.stop(stopTime); } catch (_) { /* ok */ }
++    node.onended = () => {
++      try { node.disconnect(); } catch (_) { /* ok */ }
++    };
++  }
++
++  // ─── API ──────────────────────────────────────────────────
++
++  function init() {
++    if (audioCtx) return;
++    try {
++      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
++    } catch (e) {
++      console.warn('AudioContext not supported', e);
++      return;
++    }
++
++    noiseBuffer = createNoiseBuffer();
++
++    // Master → destination
++    masterGain = audioCtx.createGain();
++    masterGain.gain.value = masterVol;
++    masterGain.connect(audioCtx.destination);
++
++    // Music bus
++    musicGain = audioCtx.createGain();
++    musicGain.gain.value = musicVol;
++    musicGain.connect(masterGain);
++
++    // SFX bus
++    sfxGain = audioCtx.createGain();
++    sfxGain.gain.value = sfxVol;
++    sfxGain.connect(masterGain);
++  }
++
++  // ─── Engine ───────────────────────────────────────────────
++
++  function startEngine() {
++    if (!audioCtx || engineRunning) return;
++    engineRunning = true;
++
++    const now = audioCtx.currentTime;
++
++    // Gain for the whole engine group
++    engineGain = audioCtx.createGain();
++    engineGain.gain.value = 0.05;
++    engineGain.connect(sfxGain);
++
++    // LFO vibrato
++    engineLFO = audioCtx.createOscillator();
++    engineLFO.type = 'sine';
++    engineLFO.frequency.value = 6;
++    engineLFOGain = audioCtx.createGain();
++    engineLFOGain.gain.value = 3; // vibrato depth in Hz
++    engineLFO.connect(engineLFOGain);
++    engineLFO.start(now);
++
++    // Primary sawtooth
++    engineOsc1 = audioCtx.createOscillator();
++    engineOsc1.type = 'sawtooth';
++    engineOsc1.frequency.value = 80;
++    engineLFOGain.connect(engineOsc1.frequency);
++
++    const osc1Gain = audioCtx.createGain();
++    osc1Gain.gain.value = 1.0;
++    engineOsc1.connect(osc1Gain);
++    osc1Gain.connect(engineGain);
++    engineOsc1.start(now);
++
++    // Harmonic at 1.5× base, 30% vol
++    engineOsc2 = audioCtx.createOscillator();
++    engineOsc2.type = 'sawtooth';
++    engineOsc2.frequency.value = 120;
++    engineLFOGain.connect(engineOsc2.frequency);
++
++    const osc2Gain = audioCtx.createGain();
++    osc2Gain.gain.value = 0.3;
++    engineOsc2.connect(osc2Gain);
++    osc2Gain.connect(engineGain);
++    engineOsc2.start(now);
++
++    // Store sub-gains for disconnect later
++    engineOsc1._subGain = osc1Gain;
++    engineOsc2._subGain = osc2Gain;
++  }
++
++  function stopEngine() {
++    if (!engineRunning) return;
++    engineRunning = false;
++    const now = audioCtx.currentTime;
++    [engineOsc1, engineOsc2, engineLFO].forEach(o => {
++      if (o) {
++        try { o.stop(now); } catch (_) { /* ok */ }
++        o.onended = () => {
++          try { o.disconnect(); } catch (_) { /* ok */ }
++          if (o._subGain) try { o._subGain.disconnect(); } catch (_) { /* ok */ }
++        };
++      }
++    });
++    if (engineLFOGain) try { engineLFOGain.disconnect(); } catch (_) { /* ok */ }
++    if (engineGain) try { engineGain.disconnect(); } catch (_) { /* ok */ }
++    engineOsc1 = engineOsc2 = engineLFO = engineLFOGain = engineGain = null;
++  }
++
++  function updateEngine(speed, maxSpeed, offRoad, boosting) {
++    if (!engineRunning || !engineOsc1) return;
++
++    const t = maxSpeed > 0 ? speed / maxSpeed : 0;
++    let baseFreq = lerp(80, 220, t);
++
++    if (offRoad) baseFreq *= 0.8;
++    if (boosting) baseFreq += 50;
++
++    const now = audioCtx.currentTime;
++    engineOsc1.frequency.setTargetAtTime(baseFreq, now, 0.03);
++    engineOsc2.frequency.setTargetAtTime(baseFreq * 1.5, now, 0.03);
++
++    const vol = lerp(0.05, 0.15, t);
++    engineGain.gain.setTargetAtTime(vol, now, 0.03);
++  }
++
++  // ─── Countdown ────────────────────────────────────────────
++
++  function playCountdownBeep(isGo) {
++    if (!audioCtx) return;
++    const now = audioCtx.currentTime;
++    const freq = isGo ? 880 : 440;
++    const dur = isGo ? 0.4 : 0.2;
++    const vol = isGo ? 0.5 : 0.3;
++
++    const osc = audioCtx.createOscillator();
++    osc.type = 'sine';
++    osc.frequency.value = freq;
++
++    const g = audioCtx.createGain();
++    g.gain.setValueAtTime(vol, now);
++    g.gain.linearRampToValueAtTime(0, now + dur);
++
++    osc.connect(g);
++    g.connect(sfxGain);
++    osc.start(now);
++    scheduleClean(osc, now + dur + 0.01);
++  }
++
++  // ─── Boost ────────────────────────────────────────────────
++
++  function playBoost() {
++    if (!audioCtx) return;
++    const now = audioCtx.currentTime;
++    const dur = 0.3;
++
++    const src = noiseSrc();
++    const filter = audioCtx.createBiquadFilter();
++    filter.type = 'bandpass';
++    filter.Q.value = 5;
++    filter.frequency.setValueAtTime(500, now);
++    filter.frequency.exponentialRampToValueAtTime(2000, now + dur);
++
++    const g = audioCtx.createGain();
++    g.gain.setValueAtTime(0.2, now);
++    g.gain.linearRampToValueAtTime(0, now + dur);
++
++    src.connect(filter);
++    filter.connect(g);
++    g.connect(sfxGain);
++    src.start(now);
++    scheduleClean(src, now + dur + 0.01);
++  }
++
++  // ─── Item Pickup ──────────────────────────────────────────
++
++  function playItemPickup() {
++    if (!audioCtx) return;
++    const now = audioCtx.currentTime;
++    const notes = [800, 1000, 1200];
++    const noteDur = 0.05;
++
++    notes.forEach((freq, i) => {
++      const osc = audioCtx.createOscillator();
++      osc.type = 'sine';
++      osc.frequency.value = freq;
++
++      const g = audioCtx.createGain();
++      const start = now + i * noteDur;
++      g.gain.setValueAtTime(0.15, start);
++      g.gain.linearRampToValueAtTime(0, start + noteDur);
++
++      osc.connect(g);
++      g.connect(sfxGain);
++      osc.start(start);
++      scheduleClean(osc, start + noteDur + 0.01);
++    });
++  }
++
++  // ─── Spark Bomb ───────────────────────────────────────────
++
++  function playSparkBomb() {
++    if (!audioCtx) return;
++    const now = audioCtx.currentTime;
++
++    // White noise burst
++    const src = noiseSrc();
++    const ng = audioCtx.createGain();
++    ng.gain.setValueAtTime(0.2, now);
++    ng.gain.linearRampToValueAtTime(0, now + 0.15);
++    src.connect(ng);
++    ng.connect(sfxGain);
++    src.start(now);
++    scheduleClean(src, now + 0.16);
++
++    // Sine ping
++    const osc = audioCtx.createOscillator();
++    osc.type = 'sine';
++    osc.frequency.value = 600;
++    const og = audioCtx.createGain();
++    og.gain.setValueAtTime(0.2, now);
++    og.gain.linearRampToValueAtTime(0, now + 0.1);
++    osc.connect(og);
++    og.connect(sfxGain);
++    osc.start(now);
++    scheduleClean(osc, now + 0.11);
++  }
++
++  // ─── Slick Puddle ─────────────────────────────────────────
++
++  function playSlickPuddle() {
++    if (!audioCtx) return;
++    const now = audioCtx.currentTime;
++
++    const src = noiseSrc();
++    const filter = audioCtx.createBiquadFilter();
++    filter.type = 'lowpass';
++    filter.frequency.value = 300;
++
++    const g = audioCtx.createGain();
++    g.gain.setValueAtTime(0.15, now);
++    g.gain.linearRampToValueAtTime(0, now + 0.15);
++
++    src.connect(filter);
++    filter.connect(g);
++    g.connect(sfxGain);
++    src.start(now);
++    scheduleClean(src, now + 0.16);
++  }
++
++  // ─── Turbo Cell ───────────────────────────────────────────
++
++  function playTurboCell() {
++    if (!audioCtx) return;
++    const now = audioCtx.currentTime;
++    const notes = [523, 659, 784]; // C5, E5, G5
++    const noteDur = 0.08;
++
++    notes.forEach((freq, i) => {
++      const osc = audioCtx.createOscillator();
++      osc.type = 'triangle';
++      osc.frequency.value = freq;
++
++      const g = audioCtx.createGain();
++      const start = now + i * noteDur;
++      g.gain.setValueAtTime(0.2, start);
++      g.gain.linearRampToValueAtTime(0, start + noteDur);
++
++      osc.connect(g);
++      g.connect(sfxGain);
++      osc.start(start);
++      scheduleClean(osc, start + noteDur + 0.01);
++    });
++  }
++
++  // ─── Wall Hit ─────────────────────────────────────────────
++
++  function playWallHit() {
++    if (!audioCtx) return;
++    const now = audioCtx.currentTime;
++
++    const osc = audioCtx.createOscillator();
++    osc.type = 'sine';
++    osc.frequency.value = 100;
++
++    const g = audioCtx.createGain();
++    g.gain.setValueAtTime(0.25, now);
++    g.gain.linearRampToValueAtTime(0, now + 0.1);
++
++    osc.connect(g);
++    g.connect(sfxGain);
++    osc.start(now);
++    scheduleClean(osc, now + 0.11);
++  }
++
++  // ─── Drift ────────────────────────────────────────────────
++
++  function playDriftStart() {
++    if (!audioCtx) return;
++    // Stop any previous drift sound
++    stopDriftInternal();
++
++    const now = audioCtx.currentTime;
++
++    driftSource = noiseSrc();
++    const filter = audioCtx.createBiquadFilter();
++    filter.type = 'bandpass';
++    filter.frequency.value = 3000;
++    filter.Q.value = 1;
++
++    driftGain = audioCtx.createGain();
++    driftGain.gain.setValueAtTime(0.08, now);
++
++    driftSource.connect(filter);
++    filter.connect(driftGain);
++    driftGain.connect(sfxGain);
++    driftSource.start(now);
++
++    // Store filter ref for cleanup
++    driftSource._filter = filter;
++  }
++
++  function playDriftEnd() {
++    if (!audioCtx || !driftSource || !driftGain) return;
++    const now = audioCtx.currentTime;
++    driftGain.gain.setTargetAtTime(0, now, 0.03); // ~0.1s fade
++    const src = driftSource;
++    const fil = driftSource._filter;
++    const g = driftGain;
++    setTimeout(() => {
++      try { src.stop(); } catch (_) { /* ok */ }
++      try { src.disconnect(); } catch (_) { /* ok */ }
++      try { fil.disconnect(); } catch (_) { /* ok */ }
++      try { g.disconnect(); } catch (_) { /* ok */ }
++    }, 150);
++    driftSource = null;
++    driftGain = null;
++  }
++
++  function stopDriftInternal() {
++    if (driftSource) {
++      try { driftSource.stop(); } catch (_) { /* ok */ }
++      try { driftSource.disconnect(); } catch (_) { /* ok */ }
++      if (driftSource._filter) try { driftSource._filter.disconnect(); } catch (_) { /* ok */ }
++    }
++    if (driftGain) try { driftGain.disconnect(); } catch (_) { /* ok */ }
++    driftSource = null;
++    driftGain = null;
++  }
++
++  // ─── Music System ─────────────────────────────────────────
++
++  const TRACKS = {
++    'sunset-circuit': {
++      bpm: 120,
++      gain: 0.12,
++      schedule: scheduleSunsetCircuit,
++    },
++    'crystal-caverns': {
++      bpm: 100,
++      gain: 0.10,
++      schedule: scheduleCrystalCaverns,
++    },
++  };
++
++  function startMusic(trackName) {
++    if (!audioCtx) return;
++    stopMusic();
++
++    const track = TRACKS[trackName];
++    if (!track) return;
++
++    musicPlaying = true;
++    musicTrack = track;
++    musicBeatDuration = 60 / track.bpm;
++    musicBeatIndex = 0;
++    musicNextBeatTime = audioCtx.currentTime + 0.05;
++
++    // Set music track gain
++    musicGain.gain.setValueAtTime(track.gain, audioCtx.currentTime);
++
++    musicSchedulerLoop();
++  }
++
++  function musicSchedulerLoop() {
++    if (!musicPlaying) return;
++
++    // Schedule notes that fall within the lookahead window
++    const lookahead = 0.15; // seconds ahead to schedule
++    while (musicNextBeatTime < audioCtx.currentTime + lookahead) {
++      musicTrack.schedule(musicNextBeatTime, musicBeatIndex);
++      musicBeatIndex++;
++      // Advance by one 8th note (half a beat) for fine-grained scheduling
++      musicNextBeatTime += musicBeatDuration / 2;
++    }
++
++    musicSchedulerId = requestAnimationFrame(musicSchedulerLoop);
++  }
++
++  function stopMusic() {
++    musicPlaying = false;
++    if (musicSchedulerId !== null) {
++      cancelAnimationFrame(musicSchedulerId);
++      musicSchedulerId = null;
++    }
++    // Stop and disconnect all scheduled music nodes
++    musicNodes.forEach(n => {
++      try { n.stop(); } catch (_) { /* ok */ }
++      try { n.disconnect(); } catch (_) { /* ok */ }
++    });
++    musicNodes = [];
++    musicTrack = null;
++  }
++
++  function musicOsc(type, freq, startTime, duration, vol) {
++    const osc = audioCtx.createOscillator();
++    osc.type = type;
++    osc.frequency.value = freq;
++
++    const g = audioCtx.createGain();
++    g.gain.setValueAtTime(vol, startTime);
++    g.gain.linearRampToValueAtTime(0, startTime + duration);
++
++    osc.connect(g);
++    g.connect(musicGain);
++    osc.start(startTime);
++    osc.stop(startTime + duration + 0.02);
++    osc.onended = () => {
++      try { osc.disconnect(); } catch (_) { /* ok */ }
++      try { g.disconnect(); } catch (_) { /* ok */ }
++      const idx = musicNodes.indexOf(osc);
++      if (idx !== -1) musicNodes.splice(idx, 1);
++    };
++    musicNodes.push(osc);
++    return osc;
++  }
++
++  function musicNoise(filterType, filterFreq, filterQ, startTime, duration, vol) {
++    const src = noiseSrc();
++    const filter = audioCtx.createBiquadFilter();
++    filter.type = filterType;
++    filter.frequency.value = filterFreq;
++    filter.Q.value = filterQ || 1;
++
++    const g = audioCtx.createGain();
++    g.gain.setValueAtTime(vol, startTime);
++    g.gain.linearRampToValueAtTime(0, startTime + duration);
++
++    src.connect(filter);
++    filter.connect(g);
++    g.connect(musicGain);
++    src.start(startTime);
++    src.stop(startTime + duration + 0.02);
++    src.onended = () => {
++      try { src.disconnect(); } catch (_) { /* ok */ }
++      try { filter.disconnect(); } catch (_) { /* ok */ }
++      try { g.disconnect(); } catch (_) { /* ok */ }
++      const idx = musicNodes.indexOf(src);
++      if (idx !== -1) musicNodes.splice(idx, 1);
++    };
++    musicNodes.push(src);
++    return src;
++  }
++
++  // ─── Sunset Circuit ──────────────────────────────────────
++  // C major, 120 BPM (beat = 0.5s, 8th = 0.25s)
++  // schedulerBeatIndex counts in 8th notes
++
++  function scheduleSunsetCircuit(time, eighthIndex) {
++    const beat = musicBeatDuration;     // 0.5s (quarter note)
++    const eighth = beat / 2;            // 0.25s
++
++    // Bass: square wave, one note every 2 beats (= 4 quarter notes = 8 eighths)
++    // Notes cycle: C3(131), G2(98), Am2(110), F2(87)
++    const bassNotes = [131, 98, 110, 87];
++    if (eighthIndex % 8 === 0) {
++      const bassIdx = Math.floor(eighthIndex / 8) % bassNotes.length;
++      musicOsc('square', bassNotes[bassIdx], time, beat * 2 * 0.9, 0.3);
++    }
++
++    // Melody: triangle pentatonic, every 8th note
++    const melodyNotes = [523, 587, 659, 784, 880];
++    const melodyIdx = eighthIndex % melodyNotes.length;
++    musicOsc('triangle', melodyNotes[melodyIdx], time, eighth * 0.8, 0.2);
++
++    // Hi-hat: filtered noise every 8th note (every scheduler tick)
++    musicNoise('highpass', 8000, 2, time, 0.03, 0.15);
++  }
++
++  // ─── Crystal Caverns ─────────────────────────────────────
++  // A minor, 100 BPM (beat = 0.6s, 8th = 0.3s)
++
++  function scheduleCrystalCaverns(time, eighthIndex) {
++    const beat = musicBeatDuration;     // 0.6s
++    const eighth = beat / 2;            // 0.3s
++
++    // Bass: sawtooth + lowpass, one note every 2 beats (= 4 eighths)
++    const bassNotes = [110, 82, 87, 73];
++    if (eighthIndex % 4 === 0) {
++      const bassIdx = Math.floor(eighthIndex / 4) % bassNotes.length;
++      const osc = audioCtx.createOscillator();
++      osc.type = 'sawtooth';
++      osc.frequency.value = bassNotes[bassIdx];
++
++      const filter = audioCtx.createBiquadFilter();
++      filter.type = 'lowpass';
++      filter.frequency.value = 200;
++
++      const g = audioCtx.createGain();
++      const dur = beat * 2 * 0.9;
++      g.gain.setValueAtTime(0.3, time);
++      g.gain.linearRampToValueAtTime(0, time + dur);
++
++      osc.connect(filter);
++      filter.connect(g);
++      g.connect(musicGain);
++      osc.start(time);
++      osc.stop(time + dur + 0.02);
++      osc.onended = () => {
++        try { osc.disconnect(); } catch (_) { /* ok */ }
++        try { filter.disconnect(); } catch (_) { /* ok */ }
++        try { g.disconnect(); } catch (_) { /* ok */ }
++        const idx = musicNodes.indexOf(osc);
++        if (idx !== -1) musicNodes.splice(idx, 1);
++      };
++      musicNodes.push(osc);
++    }
++
++    // Melody: sine arpeggios [A4, C5, E5], every 2 eighths (= quarter note)
++    const melodyNotes = [440, 523, 659];
++    if (eighthIndex % 2 === 0) {
++      const melodyIdx = Math.floor(eighthIndex / 2) % melodyNotes.length;
++      musicOsc('sine', melodyNotes[melodyIdx], time, beat * 0.8, 0.2);
++    }
++
++    // Percussion: low sine 60Hz on beats 1 and 3 (eighths 0,4 within a 8-eighth bar)
++    const barPos = eighthIndex % 8;
++    if (barPos === 0 || barPos === 4) {
++      musicOsc('sine', 60, time, 0.08, 0.25);
++    }
++  }
++
++  // ─── Volume Controls ─────────────────────────────────────
++
++  function setMasterVolume(v) {
++    masterVol = Math.max(0, Math.min(1, v));
++    if (masterGain) masterGain.gain.setValueAtTime(masterVol, audioCtx.currentTime);
++  }
++
++  function setMusicVolume(v) {
++    musicVol = Math.max(0, Math.min(1, v));
++    if (musicGain) {
++      // Scale against the track's base gain
++      const trackBase = musicTrack ? musicTrack.gain : 0.12;
++      musicGain.gain.setValueAtTime(trackBase * musicVol, audioCtx.currentTime);
++    }
++  }
++
++  function setSfxVolume(v) {
++    sfxVol = Math.max(0, Math.min(1, v));
++    if (sfxGain) sfxGain.gain.setValueAtTime(sfxVol, audioCtx.currentTime);
++  }
++
++  // ─── Suspend / Resume ────────────────────────────────────
++
++  function suspend() {
++    if (audioCtx && audioCtx.state === 'running') {
++      audioCtx.suspend();
++    }
++  }
++
++  function resume() {
++    if (audioCtx && audioCtx.state === 'suspended') {
++      audioCtx.resume();
++    }
++  }
++
++  // ─── Public Interface ────────────────────────────────────
++
++  return {
++    init,
++    startEngine,
++    stopEngine,
++    updateEngine,
++    playCountdownBeep,
++    playBoost,
++    playItemPickup,
++    playSparkBomb,
++    playSlickPuddle,
++    playTurboCell,
++    playWallHit,
++    playDriftStart,
++    playDriftEnd,
++    startMusic,
++    stopMusic,
++    setMasterVolume,
++    setMusicVolume,
++    setSfxVolume,
++    suspend,
++    resume,
++  };
++}
+diff --git a/output/js/main.js b/output/js/main.js
+index f0f6998..433128f 100644
+--- a/output/js/main.js
++++ b/output/js/main.js
+@@ -1,7 +1,6 @@
+ /**
+  * main.js — Entry point: bootstrap Three.js scene, game loop, state machine.
+- *
+- * Phases 1-6: Core engine + items + AI opponents.
++ * Phases 1-8: Full game with menus, HUD, audio, minimap, polish.
+  */
+ import * as THREE from 'three';
+ import { clamp } from './utils/mathUtils.js';
+@@ -15,8 +14,10 @@ import { createKartState, updateKartPhysics, respawnKart } from './physics.js';
+ import { createCameraController } from './camera.js';
+ import { createItemSystem } from './items.js';
+ import { createAISystem } from './ai.js';
++import { createAudioManager } from './audio.js';
++import { createMinimap } from './minimap.js';
+ 
+-/* ── Globals ───────────────────────────────────────────────────────── */
++/* ── Renderer / Scene / Camera ─────────────────────────────────────── */
+ 
+ const canvas = document.getElementById('gameCanvas');
+ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+@@ -32,20 +33,17 @@ camera.lookAt(0, 0, 0);
+ 
+ const input = InputManager.instance;
+ const cameraCtrl = createCameraController(camera);
+-
+-/* ── Resize handler ────────────────────────────────────────────────── */
++const audio = createAudioManager();
+ 
+ window.addEventListener('resize', () => {
+-  const w = window.innerWidth;
+-  const h = window.innerHeight;
+-  renderer.setSize(w, h);
+-  camera.aspect = w / h;
++  renderer.setSize(window.innerWidth, window.innerHeight);
++  camera.aspect = window.innerWidth / window.innerHeight;
+   camera.updateProjectionMatrix();
+ });
+ 
+ /* ── Game State ─────────────────────────────────────────────────────── */
+ 
+-let gameState = 'menu'; // 'menu' | 'countdown' | 'racing' | 'paused' | 'results'
++let gameState = 'menu';
+ let trackGroup = null;
+ let collisionData = null;
+ let playerKart = null;
+@@ -53,25 +51,34 @@ let raceTimer = 0;
+ let currentTrackData = null;
+ let itemSystem = null;
+ let aiSystem = null;
++let minimap = null;
+ let countdownTimer = 0;
+ let finishOrder = [];
+-let resultsTimer = 0;
++let finalLapShown = false;
+ 
+-// Track options
+ const TRACKS = { sunset: sunsetCircuit, caverns: crystalCaverns };
+ let selectedTrack = 'sunset';
+ let selectedCharacter = 'brix';
+ let selectedDifficulty = 'standard';
++let mirrorMode = false;
++let allowClones = true;
++
++/* ── DOM refs ──────────────────────────────────────────────────────── */
++
++const menuContainer = document.getElementById('menu-container');
++const hudContainer = document.getElementById('hud-container');
++const countdownOverlay = document.getElementById('countdown-overlay');
++const resultsContainer = document.getElementById('results-container');
++const pauseContainer = document.getElementById('pause-container');
+ 
+ /* ── Track Loading ──────────────────────────────────────────────────── */
+ 
+ function loadTrack(trackId) {
+-  // Clean up old systems
+   if (itemSystem) { itemSystem.destroy(); itemSystem = null; }
+   if (aiSystem) { aiSystem.destroy(); aiSystem = null; }
++  if (minimap) { minimap.destroy(); minimap = null; }
+   if (trackGroup) { scene.remove(trackGroup); trackGroup = null; }
+   if (playerKart && playerKart.mesh) { scene.remove(playerKart.mesh); }
+-
+   scene.fog = null;
+ 
+   const trackData = TRACKS[trackId];
+@@ -80,7 +87,6 @@ function loadTrack(trackId) {
+   trackGroup = result.group;
+   collisionData = result.collisionData;
+   scene.add(trackGroup);
+-
+   scene.background = new THREE.Color(trackData.lighting.skyTop);
+ }
+ 
+@@ -91,12 +97,10 @@ function spawnPlayer(characterId) {
+   const startPos = currentTrackData.startPositions[0];
+   playerKart = createKartState(charDef, startPos.x, startPos.z, startPos.heading);
+   playerKart.y = startPos.y;
+-
+   const mesh = buildKartMesh(charDef);
+   mesh.position.set(startPos.x, startPos.y, startPos.z);
+   playerKart.mesh = mesh;
+   scene.add(mesh);
+-
+   cameraCtrl.setTarget(playerKart);
+   cameraCtrl.reset();
+ }
+@@ -105,7 +109,6 @@ function spawnPlayer(characterId) {
+ 
+ function updateCheckpoints(kart, prevX, prevZ) {
+   if (!collisionData || !collisionData.checkpoints) return;
+-
+   const checkpoints = collisionData.checkpoints;
+   const prevPos = { x: prevX, z: prevZ };
+   const currPos = { x: kart.x, z: kart.z };
+@@ -113,13 +116,10 @@ function updateCheckpoints(kart, prevX, prevZ) {
+   for (let i = 0; i < checkpoints.length; i++) {
+     if (testCheckpointCrossing(prevPos, currPos, checkpoints[i])) {
+       if (i === 0) {
+-        const allHit = checkpoints.length <= 1 ||
+-          kart.checkpointsHit.size >= checkpoints.length - 1;
+-
++        const allHit = checkpoints.length <= 1 || kart.checkpointsHit.size >= checkpoints.length - 1;
+         if (allHit && kart.currentLap >= 1 && kart.lastCheckpoint !== -1) {
+           const lapTime = raceTimer - kart.lapStartTime;
+           if (lapTime < kart.bestLapTime) kart.bestLapTime = lapTime;
+-
+           if (kart.currentLap >= 3) {
+             kart.finished = true;
+             kart.finishTime = raceTimer;
+@@ -144,154 +144,40 @@ function updateCheckpoints(kart, prevX, prevZ) {
+ function updatePositions() {
+   const allKarts = getAllKarts();
+   if (allKarts.length === 0) return;
+-
+-  // Compute a progress score for each kart
+   const scored = allKarts.map(kart => {
+-    let score;
+     if (kart.finished) {
+-      // Finished karts: higher score (earlier finish = higher score)
+       const finIdx = finishOrder.indexOf(kart);
+-      score = 100000 - (finIdx >= 0 ? finIdx : 999);
+-    } else {
+-      // Progress = laps * 1000 + checkpoints * 100 + spline distance
+-      const cpCount = kart.checkpointsHit ? kart.checkpointsHit.size : 0;
+-      let tProgress = 0;
+-      if (collisionData && collisionData.curve) {
+-        tProgress = getNearestSplineT(kart.x, kart.z, collisionData.curve, collisionData.lookup);
+-      }
+-      score = (kart.currentLap - 1) * 1000 + cpCount * 100 + tProgress * 50;
++      return { kart, score: 100000 - (finIdx >= 0 ? finIdx : 999) };
+     }
+-    return { kart, score };
++    const cpCount = kart.checkpointsHit ? kart.checkpointsHit.size : 0;
++    let tProgress = 0;
++    if (collisionData && collisionData.curve) {
++      tProgress = getNearestSplineT(kart.x, kart.z, collisionData.curve, collisionData.lookup);
++    }
++    return { kart, score: (kart.currentLap - 1) * 1000 + cpCount * 100 + tProgress * 50 };
+   });
+-
+-  // Sort descending by score
+   scored.sort((a, b) => b.score - a.score);
+-
+-  // Assign places
+-  for (let i = 0; i < scored.length; i++) {
+-    scored[i].kart.currentPlace = i + 1;
+-  }
++  for (let i = 0; i < scored.length; i++) scored[i].kart.currentPlace = i + 1;
+ }
+ 
+ function getAllKarts() {
+   const karts = [];
+   if (playerKart) karts.push(playerKart);
+-  if (aiSystem) {
+-    for (const cpu of aiSystem.getCPUs()) {
+-      karts.push(cpu);
+-    }
+-  }
++  if (aiSystem) for (const cpu of aiSystem.getCPUs()) karts.push(cpu);
+   return karts;
+ }
+ 
+-/* ── HUD Display ───────────────────────────────────────────────────── */
+-
+-const hudContainer = document.getElementById('hud-container');
+-const countdownOverlay = document.getElementById('countdown-overlay');
+-const resultsContainer = document.getElementById('results-container');
+-
+-function initHUD() {
+-  hudContainer.classList.remove('hidden');
+-  hudContainer.innerHTML = `
+-    <div id="hud-position" style="position:absolute;top:20px;left:20px;font-size:36px;font-weight:bold;pointer-events:auto;color:var(--gold);text-shadow:2px 2px 4px #000;">1ST</div>
+-    <div id="hud-lap" style="position:absolute;top:20px;left:50%;transform:translateX(-50%);font-size:24px;font-weight:bold;pointer-events:auto;text-shadow:2px 2px 4px #000;">LAP 1/3</div>
+-    <div id="hud-timer" style="position:absolute;top:52px;left:50%;transform:translateX(-50%);font-size:18px;pointer-events:auto;text-shadow:1px 1px 3px #000;">0:00.000</div>
+-    <div id="hud-speed" style="position:absolute;bottom:30px;left:20px;font-size:20px;pointer-events:auto;text-shadow:1px 1px 3px #000;">0%</div>
+-    <div id="hud-drift" style="position:absolute;bottom:30px;left:50%;transform:translateX(-50%);width:200px;height:12px;background:rgba(0,0,0,0.5);border-radius:6px;display:none;pointer-events:auto;">
+-      <div id="hud-drift-fill" style="height:100%;width:0%;border-radius:6px;background:#4488FF;transition:background 0.2s;"></div>
+-    </div>
+-    <div id="hud-item" style="position:absolute;top:20px;right:20px;width:64px;height:64px;border:2px solid rgba(255,255,255,0.3);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:28px;background:rgba(0,0,0,0.4);pointer-events:auto;color:#555;">?</div>
+-    <div id="hud-info" style="position:absolute;bottom:55px;left:20px;font-size:14px;opacity:0.7;pointer-events:auto;text-shadow:1px 1px 2px #000;">W/↑: Accel | A/D: Steer | Shift/Space: Drift | E: Item | S/↓: Brake</div>
+-  `;
+-}
+-
+-function updateHUD() {
+-  if (!playerKart) return;
+-
+-  const posEl = document.getElementById('hud-position');
+-  const lapEl = document.getElementById('hud-lap');
+-  const timerEl = document.getElementById('hud-timer');
+-  const speedEl = document.getElementById('hud-speed');
+-  const driftEl = document.getElementById('hud-drift');
+-  const driftFill = document.getElementById('hud-drift-fill');
+-  const itemEl = document.getElementById('hud-item');
+-
+-  // Position display
+-  if (posEl) {
+-    const place = playerKart.currentPlace;
+-    posEl.textContent = `${place}${getOrdinal(place)}`;
+-    const colors = ['var(--gold)', 'var(--silver)', 'var(--bronze)', '#fff'];
+-    posEl.style.color = colors[Math.min(place - 1, 3)];
+-  }
+-  if (lapEl) lapEl.textContent = `LAP ${Math.min(playerKart.currentLap, 3)}/3`;
+-
+-  // Timer
+-  if (timerEl) {
+-    const mins = Math.floor(raceTimer / 60);
+-    const secs = raceTimer % 60;
+-    timerEl.textContent = `${mins}:${secs < 10 ? '0' : ''}${secs.toFixed(3)}`;
+-  }
+-
+-  // Speed
+-  if (speedEl) {
+-    const pct = Math.round(Math.abs(playerKart.speed) / playerKart.maxSpeed * 100);
+-    speedEl.textContent = `${pct}%`;
+-    speedEl.style.color = playerKart.boostTimer > 0 ? 'var(--accent-cyan)' : '#fff';
+-  }
+-
+-  // Drift bar
+-  if (driftEl && driftFill) {
+-    if (playerKart.isDrifting) {
+-      driftEl.style.display = 'block';
+-      const maxTime = 2.5;
+-      const pct = Math.min(playerKart.driftTimer / maxTime * 100, 100);
+-      driftFill.style.width = `${pct}%`;
+-      if (playerKart.driftTier >= 3) driftFill.style.background = '#FF66AA';
+-      else if (playerKart.driftTier >= 2) driftFill.style.background = '#FF8800';
+-      else driftFill.style.background = '#4488FF';
+-    } else {
+-      driftEl.style.display = 'none';
+-    }
+-  }
+-
+-  // Item slot
+-  if (itemEl) {
+-    const item = playerKart.heldItem;
+-    if (item === 'sparkBomb') {
+-      itemEl.textContent = '⚡';
+-      itemEl.style.color = '#FFFF00';
+-      itemEl.style.borderColor = '#FFFF00';
+-    } else if (item === 'slickPuddle') {
+-      itemEl.textContent = '💧';
+-      itemEl.style.color = '#00FF44';
+-      itemEl.style.borderColor = '#00FF44';
+-    } else if (item === 'turboCell') {
+-      itemEl.textContent = '▲';
+-      itemEl.style.color = '#00DDFF';
+-      itemEl.style.borderColor = '#00DDFF';
+-    } else {
+-      itemEl.textContent = '?';
+-      itemEl.style.color = '#555';
+-      itemEl.style.borderColor = 'rgba(255,255,255,0.3)';
+-    }
+-  }
+-}
+-
+-function getOrdinal(n) {
+-  const suffixes = ['TH', 'ST', 'ND', 'RD'];
+-  const v = n % 100;
+-  return suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0];
+-}
+-
+-/* ── Simple Menu ───────────────────────────────────────────────────── */
+-
+-const menuContainer = document.getElementById('menu-container');
++/* ══════════════════════════════════════════════════════════════════════
++   MENU SYSTEM
++   ══════════════════════════════════════════════════════════════════════ */
+ 
+ let menuScreen = 'title';
+ let menuTrackIdx = 0;
+ let menuCharIdx = 0;
++let menuDiffIdx = 1; // 0=chill,1=standard,2=mean
+ const trackKeys = ['sunset', 'caverns'];
+ const charKeys = ['brix', 'zippy', 'chunk', 'pixel'];
++const diffKeys = ['chill', 'standard', 'mean'];
+ 
+ function showMenu() {
+   menuContainer.style.pointerEvents = 'auto';
+@@ -299,79 +185,121 @@ function showMenu() {
+ }
+ 
+ function renderMenu() {
+-  if (menuScreen === 'title') {
+-    menuContainer.innerHTML = `
+-      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;">
+-        <h1 style="font-size:48px;letter-spacing:8px;text-transform:uppercase;margin-bottom:20px;text-shadow:3px 3px 6px #000,0 0 30px var(--accent-cyan);">FABRO RACER MINI</h1>
+-        <p style="font-size:18px;opacity:0.7;margin-bottom:40px;">A voxel kart racing game</p>
+-        <div style="font-size:24px;padding:16px 48px;border:2px solid var(--accent-cyan);border-radius:8px;cursor:pointer;animation:pulse 2s infinite;" id="btn-start">START RACE</div>
+-        <p style="font-size:14px;opacity:0.5;margin-top:20px;">Press Enter to start</p>
++  switch (menuScreen) {
++    case 'title': renderTitle(); break;
++    case 'trackSelect': renderTrackSelect(); break;
++    case 'charSelect': renderCharSelect(); break;
++    case 'options': renderOptions(); break;
++  }
++}
++
++function renderTitle() {
++  menuContainer.innerHTML = `
++    <div class="menu-screen">
++      <h1 class="menu-title">FABRO RACER MINI</h1>
++      <p class="menu-subtitle">A voxel kart racing game</p>
++      <div class="menu-btn" id="btn-start" style="animation:pulse 2s infinite;">START RACE</div>
++      <p class="menu-hint">Press Enter to start</p>
++    </div>`;
++  document.getElementById('btn-start')?.addEventListener('click', () => {
++    audio.init();
++    menuScreen = 'trackSelect'; renderMenu();
++  });
++}
++
++function renderTrackSelect() {
++  const tracks = [
++    { name: 'Sunset Circuit', desc: 'Coastal highway with hairpin, beach, cliff tunnel', diff: '★★☆', color: '#FF8844' },
++    { name: 'Crystal Caverns', desc: 'Underground mine with lava, crystals, rickety bridge', diff: '★★★', color: '#8844FF' },
++  ];
++  menuContainer.innerHTML = `
++    <div class="menu-screen">
++      <h2 style="font-size:30px;margin-bottom:28px;">SELECT TRACK</h2>
++      <div class="card-row">
++        ${tracks.map((t, i) => `
++          <div class="select-card${i === menuTrackIdx ? ' selected' : ''}" data-idx="${i}"
++               style="width:260px;${i === menuTrackIdx ? 'border-color:' + t.color + ';' : ''}">
++            <h3 style="font-size:20px;color:${t.color};margin-bottom:6px;">${t.name}</h3>
++            <p style="font-size:13px;opacity:0.65;margin-bottom:10px;">${t.desc}</p>
++            <p style="font-size:16px;">Difficulty: ${t.diff}</p>
++          </div>`).join('')}
+       </div>
+-    `;
+-    const btn = document.getElementById('btn-start');
+-    if (btn) btn.addEventListener('click', () => { menuScreen = 'trackSelect'; renderMenu(); });
+-  } else if (menuScreen === 'trackSelect') {
+-    const tracks = [
+-      { key: 'sunset', name: 'Sunset Circuit', desc: 'Coastal highway — hairpin, beach run, cliff tunnel', diff: '★★☆', color: '#FF8844' },
+-      { key: 'caverns', name: 'Crystal Caverns', desc: 'Underground mine — lava canyons, crystal grotto, rickety bridge', diff: '★★★', color: '#8844FF' },
+-    ];
+-    menuContainer.innerHTML = `
+-      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;">
+-        <h2 style="font-size:32px;margin-bottom:30px;">SELECT TRACK</h2>
+-        <div style="display:flex;gap:30px;">
+-          ${tracks.map((t, i) => `
+-            <div style="padding:24px;border:3px solid ${i === menuTrackIdx ? t.color : 'rgba(255,255,255,0.2)'};border-radius:12px;width:280px;cursor:pointer;background:${i === menuTrackIdx ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.3)'};" class="track-card" data-idx="${i}">
+-              <h3 style="font-size:22px;color:${t.color};margin-bottom:8px;">${t.name}</h3>
+-              <p style="font-size:14px;opacity:0.7;margin-bottom:12px;">${t.desc}</p>
+-              <p style="font-size:18px;">Difficulty: ${t.diff}</p>
+-            </div>
+-          `).join('')}
+-        </div>
+-        <p style="margin-top:20px;font-size:14px;opacity:0.5;">← → to select, Enter to confirm, Esc to go back</p>
++      <p class="menu-hint">← → to select · Enter to confirm · Esc back</p>
++    </div>`;
++  document.querySelectorAll('.select-card').forEach(el => {
++    el.addEventListener('click', () => { menuTrackIdx = +el.dataset.idx; selectedTrack = trackKeys[menuTrackIdx]; menuScreen = 'charSelect'; renderMenu(); });
++  });
++}
++
++function renderCharSelect() {
++  menuContainer.innerHTML = `
++    <div class="menu-screen">
++      <h2 style="font-size:30px;margin-bottom:28px;">SELECT CHARACTER</h2>
++      <div class="card-row">
++        ${CHARACTER_LIST.map((c, i) => {
++          const hex = '#' + c.color1.toString(16).padStart(6, '0');
++          const sel = i === menuCharIdx;
++          return `
++          <div class="select-card${sel ? ' selected' : ''}" data-idx="${i}"
++               style="width:170px;${sel ? 'border-color:' + hex + ';' : ''}">
++            <h3 style="font-size:18px;color:${hex};margin-bottom:6px;">${c.name}</h3>
++            ${statBars('Spd', c.speed)}${statBars('Acc', c.accel)}${statBars('Hnd', c.handling)}${statBars('Wgt', c.weight)}
++          </div>`;
++        }).join('')}
+       </div>
+-    `;
+-    document.querySelectorAll('.track-card').forEach(el => {
+-      el.addEventListener('click', () => {
+-        menuTrackIdx = parseInt(el.dataset.idx);
+-        selectedTrack = trackKeys[menuTrackIdx];
+-        menuScreen = 'charSelect';
+-        renderMenu();
+-      });
+-    });
+-  } else if (menuScreen === 'charSelect') {
+-    const chars = CHARACTER_LIST;
+-    menuContainer.innerHTML = `
+-      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;">
+-        <h2 style="font-size:32px;margin-bottom:30px;">SELECT CHARACTER</h2>
+-        <div style="display:flex;gap:20px;">
+-          ${chars.map((c, i) => `
+-            <div style="padding:20px;border:3px solid ${i === menuCharIdx ? '#' + c.color1.toString(16).padStart(6, '0') : 'rgba(255,255,255,0.2)'};border-radius:12px;width:180px;cursor:pointer;background:${i === menuCharIdx ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.3)'};" class="char-card" data-idx="${i}">
+-              <h3 style="font-size:20px;margin-bottom:8px;color:#${c.color1.toString(16).padStart(6, '0')};">${c.name}</h3>
+-              <div style="font-size:13px;">
+-                <div>Speed: ${'★'.repeat(c.speed)}${'☆'.repeat(5-c.speed)}</div>
+-                <div>Accel: ${'★'.repeat(c.accel)}${'☆'.repeat(5-c.accel)}</div>
+-                <div>Handling: ${'★'.repeat(c.handling)}${'☆'.repeat(5-c.handling)}</div>
+-                <div>Weight: ${'★'.repeat(c.weight)}${'☆'.repeat(5-c.weight)}</div>
+-              </div>
+-            </div>
+-          `).join('')}
++      <p class="menu-hint">← → to select · Enter to confirm · Esc back</p>
++    </div>`;
++  document.querySelectorAll('.select-card').forEach(el => {
++    el.addEventListener('click', () => { menuCharIdx = +el.dataset.idx; selectedCharacter = charKeys[menuCharIdx]; menuScreen = 'options'; renderMenu(); });
++  });
++}
++
++function statBars(label, val) {
++  let html = `<div style="font-size:12px;margin:3px 0;"><span style="display:inline-block;width:28px;opacity:0.7;">${label}</span>`;
++  for (let i = 1; i <= 5; i++) html += `<span class="stat-bar ${i <= val ? 'filled' : 'empty'}"></span>`;
++  return html + '</div>';
++}
++
++function renderOptions() {
++  const diffs = [
++    { key: 'chill', label: 'Chill', desc: 'Relax and have fun' },
++    { key: 'standard', label: 'Standard', desc: 'A fair race' },
++    { key: 'mean', label: 'Mean', desc: 'They want to win' },
++  ];
++  menuContainer.innerHTML = `
++    <div class="menu-screen">
++      <h2 style="font-size:30px;margin-bottom:24px;">RACE OPTIONS</h2>
++      <div class="card-row" style="margin-bottom:20px;">
++        ${diffs.map((d, i) => `
++          <div class="diff-btn${i === menuDiffIdx ? ' selected' : ''}" data-idx="${i}">
++            <div style="font-size:18px;font-weight:bold;">${d.label}</div>
++            <div style="font-size:12px;opacity:0.6;">${d.desc}</div>
++          </div>`).join('')}
++      </div>
++      <div style="margin:12px 0;">
++        <div class="toggle-row" id="toggle-mirror">
++          <div class="toggle-switch${mirrorMode ? ' on' : ''}"></div>
++          <span style="font-size:15px;">Mirror Mode</span>
++        </div>
++        <div class="toggle-row" id="toggle-clones">
++          <div class="toggle-switch${allowClones ? ' on' : ''}"></div>
++          <span style="font-size:15px;">Allow Clones</span>
+         </div>
+-        <p style="margin-top:20px;font-size:14px;opacity:0.5;">← → to select, Enter to confirm, Esc to go back</p>
+       </div>
+-    `;
+-    document.querySelectorAll('.char-card').forEach(el => {
+-      el.addEventListener('click', () => {
+-        menuCharIdx = parseInt(el.dataset.idx);
+-        selectedCharacter = charKeys[menuCharIdx];
+-        startRace();
+-      });
+-    });
+-  }
++      <div class="menu-btn" id="btn-go" style="margin-top:20px;">START RACE</div>
++      <p class="menu-hint">Esc back</p>
++    </div>`;
++  document.querySelectorAll('.diff-btn').forEach(el => el.addEventListener('click', () => {
++    menuDiffIdx = +el.dataset.idx; selectedDifficulty = diffKeys[menuDiffIdx]; renderOptions();
++  }));
++  document.getElementById('toggle-mirror')?.addEventListener('click', () => { mirrorMode = !mirrorMode; renderOptions(); });
++  document.getElementById('toggle-clones')?.addEventListener('click', () => { allowClones = !allowClones; renderOptions(); });
++  document.getElementById('btn-go')?.addEventListener('click', startRace);
+ }
+ 
+ function updateMenu() {
+   if (menuScreen === 'title') {
+-    if (input.isConfirm()) { menuScreen = 'trackSelect'; renderMenu(); }
++    if (input.isConfirm()) { audio.init(); menuScreen = 'trackSelect'; renderMenu(); }
+   } else if (menuScreen === 'trackSelect') {
+     if (input.justPressed('ArrowLeft') || input.justPressed('a') || input.justPressed('A')) { menuTrackIdx = (menuTrackIdx - 1 + trackKeys.length) % trackKeys.length; renderMenu(); }
+     if (input.justPressed('ArrowRight') || input.justPressed('d') || input.justPressed('D')) { menuTrackIdx = (menuTrackIdx + 1) % trackKeys.length; renderMenu(); }
+@@ -380,65 +308,77 @@ function updateMenu() {
+   } else if (menuScreen === 'charSelect') {
+     if (input.justPressed('ArrowLeft') || input.justPressed('a') || input.justPressed('A')) { menuCharIdx = (menuCharIdx - 1 + charKeys.length) % charKeys.length; renderMenu(); }
+     if (input.justPressed('ArrowRight') || input.justPressed('d') || input.justPressed('D')) { menuCharIdx = (menuCharIdx + 1) % charKeys.length; renderMenu(); }
+-    if (input.isConfirm()) { selectedCharacter = charKeys[menuCharIdx]; startRace(); }
++    if (input.isConfirm()) { selectedCharacter = charKeys[menuCharIdx]; menuScreen = 'options'; renderMenu(); }
+     if (input.justPressed('Escape')) { menuScreen = 'trackSelect'; renderMenu(); }
++  } else if (menuScreen === 'options') {
++    if (input.isConfirm()) startRace();
++    if (input.justPressed('Escape')) { menuScreen = 'charSelect'; renderMenu(); }
+   }
+ }
+ 
+-/* ── Race Start ─────────────────────────────────────────────────────── */
++/* ══════════════════════════════════════════════════════════════════════
++   RACE LIFECYCLE
++   ══════════════════════════════════════════════════════════════════════ */
+ 
+ function startRace() {
+   raceTimer = 0;
+   finishOrder = [];
+-  resultsTimer = 0;
++  finalLapShown = false;
+   menuContainer.innerHTML = '';
+   menuContainer.style.pointerEvents = 'none';
+ 
+   loadTrack(selectedTrack);
+   spawnPlayer(selectedCharacter);
+ 
+-  // Create item system
+   itemSystem = createItemSystem(scene, collisionData, currentTrackData);
+   itemSystem.initBoxes();
+ 
+-  // Create AI system
+   aiSystem = createAISystem(scene, collisionData, currentTrackData, selectedDifficulty);
+   aiSystem.spawnCPUs(selectedCharacter);
+ 
+   initHUD();
+ 
+-  // Start countdown
+   countdownTimer = 3.5;
+   gameState = 'countdown';
+   countdownOverlay.classList.remove('hidden');
+   countdownOverlay.style.pointerEvents = 'none';
+   updateCountdownDisplay();
++
++  audio.startEngine();
++  audio.startMusic(selectedTrack === 'sunset' ? 'Sunset Circuit' : 'Crystal Caverns');
+ }
+ 
+ /* ── Countdown ─────────────────────────────────────────────────────── */
+ 
++let lastCountdownNum = 0;
++
+ function updateCountdown(dt) {
+   countdownTimer -= dt;
++  const num = countdownTimer > 2.5 ? 3 : countdownTimer > 1.5 ? 2 : countdownTimer > 0.5 ? 1 : 0;
++  if (num !== lastCountdownNum) {
++    lastCountdownNum = num;
++    audio.playCountdownBeep(num === 0);
++  }
+   updateCountdownDisplay();
+-
+-  // Camera settles into chase position during countdown
+   cameraCtrl.update(dt);
++  if (playerKart) audio.updateEngine(0, playerKart.maxSpeed, false, false);
+ 
+   if (countdownTimer <= 0) {
+     countdownOverlay.classList.add('hidden');
+     gameState = 'racing';
++    lastCountdownNum = 0;
+   }
+ }
+ 
+ function updateCountdownDisplay() {
+   if (countdownTimer > 2.5) {
+-    countdownOverlay.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;"><span style="font-size:120px;font-weight:bold;text-shadow:4px 4px 8px #000;">3</span></div>';
++    countdownOverlay.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;"><span class="countdown-number">3</span></div>';
+   } else if (countdownTimer > 1.5) {
+-    countdownOverlay.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;"><span style="font-size:120px;font-weight:bold;text-shadow:4px 4px 8px #000;">2</span></div>';
++    countdownOverlay.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;"><span class="countdown-number">2</span></div>';
+   } else if (countdownTimer > 0.5) {
+-    countdownOverlay.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;"><span style="font-size:120px;font-weight:bold;text-shadow:4px 4px 8px #000;">1</span></div>';
++    countdownOverlay.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;"><span class="countdown-number">1</span></div>';
+   } else if (countdownTimer > 0) {
+-    countdownOverlay.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;"><span style="font-size:120px;font-weight:bold;color:var(--accent-cyan);text-shadow:4px 4px 8px #000,0 0 40px var(--accent-cyan);">GO!</span></div>';
++    countdownOverlay.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;"><span class="countdown-go">GO!</span></div>';
+   }
+ }
+ 
+@@ -446,99 +386,71 @@ function updateCountdownDisplay() {
+ 
+ function updateRacing(dt) {
+   if (!playerKart || !collisionData) return;
+-
+   raceTimer += dt;
+ 
+   // --- Player ---
+   if (!playerKart.finished) {
+     const playerInput = {
+-      accel: input.isAccel(),
+-      brake: input.isBrake(),
+-      left: input.isLeft(),
+-      right: input.isRight(),
+-      drift: input.isDrift(),
++      accel: input.isAccel(), brake: input.isBrake(),
++      left: input.isLeft(), right: input.isRight(), drift: input.isDrift(),
+     };
+-
+-    const prevX = playerKart.x;
+-    const prevZ = playerKart.z;
+-
++    const prevX = playerKart.x, prevZ = playerKart.z;
+     updateKartPhysics(playerKart, playerInput, collisionData, dt);
+ 
+-    // Respawn check
+     if (playerKart.needsRespawn) {
+       const cpIdx = Math.max(0, playerKart.lastCheckpoint);
+       const cp = collisionData.checkpoints[cpIdx];
+       if (cp) {
+         const tangent = collisionData.curve.getTangent(currentTrackData.checkpoints[cpIdx].t);
+-        respawnKart(playerKart, {
+-          x: cp.point.x,
+-          z: cp.point.z,
+-          heading: Math.atan2(tangent.x, tangent.z),
+-        }, collisionData.curve);
++        respawnKart(playerKart, { x: cp.point.x, z: cp.point.z, heading: Math.atan2(tangent.x, tangent.z) }, collisionData.curve);
+       }
+     }
+-
+     updateCheckpoints(playerKart, prevX, prevZ);
+ 
+-    // Item use
+     if (playerKart.heldItem && (input.justPressed('e') || input.justPressed('E') || input.justPressed('x') || input.justPressed('X'))) {
+-      if (itemSystem) itemSystem.useItem(playerKart, getAllKarts());
++      if (itemSystem) {
++        const item = playerKart.heldItem;
++        itemSystem.useItem(playerKart, getAllKarts());
++        if (item === 'sparkBomb') audio.playSparkBomb();
++        else if (item === 'slickPuddle') audio.playSlickPuddle();
++        else if (item === 'turboCell') audio.playTurboCell();
++      }
+     }
+   }
+ 
+-  // --- AI Opponents ---
+-  if (aiSystem) {
+-    aiSystem.update(dt, playerKart, itemSystem);
+-  }
+-
++  // --- AI ---
++  if (aiSystem) aiSystem.update(dt, playerKart, itemSystem);
+   // --- Items ---
+-  if (itemSystem) {
+-    itemSystem.update(dt, getAllKarts());
+-  }
+-
+-  // --- Position tracking ---
++  if (itemSystem) itemSystem.update(dt, getAllKarts());
++  // --- Positions ---
+   updatePositions();
+ 
+   // --- Player mesh sync ---
+   if (playerKart.mesh) {
+     playerKart.mesh.position.set(playerKart.x, playerKart.y, playerKart.z);
+     playerKart.mesh.rotation.y = playerKart.heading;
+-
+-    if (playerKart.isDrifting) {
+-      playerKart.mesh.rotation.z = -playerKart.driftDirection * 0.15;
+-    } else {
+-      playerKart.mesh.rotation.z *= 0.9;
+-    }
+-
+-    if (playerKart.invincibleTimer > 0) {
+-      playerKart.mesh.visible = Math.floor(playerKart.invincibleTimer * 10) % 2 === 0;
+-    } else {
+-      playerKart.mesh.visible = true;
+-    }
++    playerKart.mesh.rotation.z = playerKart.isDrifting ? -playerKart.driftDirection * 0.15 : playerKart.mesh.rotation.z * 0.9;
++    if (playerKart.invincibleTimer > 0) playerKart.mesh.visible = Math.floor(playerKart.invincibleTimer * 10) % 2 === 0;
++    else playerKart.mesh.visible = true;
+   }
+ 
++  // --- Audio ---
++  audio.updateEngine(Math.abs(playerKart.speed), playerKart.maxSpeed, playerKart.isOffRoad, playerKart.boostTimer > 0);
++
+   // --- Camera ---
+   cameraCtrl.update(dt);
+-
+   // --- HUD ---
+   updateHUD();
+-
+-  // --- Finish detection ---
++  // --- Minimap ---
++  if (minimap) minimap.update(getAllKarts(), playerKart);
++  // --- Finish ---
+   checkRaceFinish();
+ 
+   // --- Pause ---
+-  if (input.isPause()) {
+-    gameState = 'paused';
+-    showPause();
+-  }
+-
+-  // Fullscreen toggle
++  if (input.isPause()) { gameState = 'paused'; showPause(); audio.suspend(); }
+   if (input.isFullscreen()) {
+-    if (!document.fullscreenElement) {
+-      document.documentElement.requestFullscreen().catch(() => {});
+-    } else {
+-      document.exitFullscreen();
+-    }
++    if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
++    else document.exitFullscreen();
+   }
+ }
+ 
+@@ -548,143 +460,186 @@ function checkRaceFinish() {
+   const allKarts = getAllKarts();
+   const allFinished = allKarts.every(k => k.finished);
+ 
+-  if (allFinished && gameState === 'racing') {
+-    showResults();
+-    return;
+-  }
++  if (allFinished && gameState === 'racing') { showResults(); return; }
+ 
+-  // If player finished, wait for CPUs or 15s timeout
+   if (playerKart.finished) {
+-    const timeSincePlayerFinish = raceTimer - playerKart.finishTime;
+-    if (timeSincePlayerFinish > 15) {
+-      for (const k of allKarts) {
+-        if (!k.finished) {
+-          k.finished = true;
+-          k.finishTime = raceTimer;
+-          if (!finishOrder.includes(k)) finishOrder.push(k);
+-        }
+-      }
+-      showResults();
+-      return;
++    if (raceTimer - playerKart.finishTime > 15) {
++      for (const k of allKarts) if (!k.finished) { k.finished = true; k.finishTime = raceTimer; if (!finishOrder.includes(k)) finishOrder.push(k); }
++      showResults(); return;
+     }
+   }
+ 
+-  // If all CPUs finished but player hasn't, show results after 15s
+   const cpuKarts = allKarts.filter(k => k !== playerKart);
+-  const allCPUsFinished = cpuKarts.length > 0 && cpuKarts.every(k => k.finished);
+-  if (allCPUsFinished && !playerKart.finished) {
+-    const lastCPUFinishTime = Math.max(...cpuKarts.map(k => k.finishTime));
+-    const timeSinceLastCPU = raceTimer - lastCPUFinishTime;
+-    if (timeSinceLastCPU > 15) {
+-      playerKart.finished = true;
+-      playerKart.finishTime = raceTimer;
++  if (cpuKarts.length > 0 && cpuKarts.every(k => k.finished) && !playerKart.finished) {
++    const lastCPU = Math.max(...cpuKarts.map(k => k.finishTime));
++    if (raceTimer - lastCPU > 15) {
++      playerKart.finished = true; playerKart.finishTime = raceTimer;
+       if (!finishOrder.includes(playerKart)) finishOrder.push(playerKart);
+       showResults();
+     }
+   }
+ }
+ 
+-/* ── Results Screen ────────────────────────────────────────────────── */
+-
+-function showResults() {
+-  gameState = 'results';
+-  resultsContainer.classList.remove('hidden');
+-  resultsContainer.style.pointerEvents = 'auto';
++/* ══════════════════════════════════════════════════════════════════════
++   HUD
++   ══════════════════════════════════════════════════════════════════════ */
+ 
+-  const allKarts = getAllKarts();
+-  // Sort by finish order
+-  const sorted = [...finishOrder];
+-  // Add any karts not in finishOrder
+-  for (const k of allKarts) {
+-    if (!sorted.includes(k)) sorted.push(k);
++function initHUD() {
++  hudContainer.classList.remove('hidden');
++  hudContainer.innerHTML = `
++    <div class="hud-position" id="hud-position">1ST</div>
++    <div class="hud-lap" id="hud-lap">LAP 1/3</div>
++    <div class="hud-timer" id="hud-timer">0:00.000</div>
++    <div class="hud-speed" id="hud-speed">0%</div>
++    <div class="hud-item-slot" id="hud-item">?</div>
++    <div class="hud-drift-bar" id="hud-drift" style="display:none;">
++      <div class="hud-drift-fill" id="hud-drift-fill"></div>
++    </div>
++    <div class="hud-controls" id="hud-controls">W/↑ Accel · A/D Steer · Shift Drift · E Item · Esc Pause</div>
++    <div id="hud-final-lap" style="display:none;" class="final-lap-banner">🏁 FINAL LAP! 🏁</div>
++    <div class="minimap-container" id="minimap-container"></div>
++  `;
++  // Create minimap
++  const mmContainer = document.getElementById('minimap-container');
++  if (mmContainer && collisionData && currentTrackData) {
++    minimap = createMinimap(mmContainer, collisionData, currentTrackData);
+   }
++}
+ 
+-  const rows = sorted.map((k, i) => {
+-    const place = i + 1;
+-    const time = k.finishTime > 0 ? formatTime(k.finishTime) : 'DNF';
+-    const isPlayer = k === playerKart;
+-    const highlight = isPlayer ? 'background:rgba(0,221,255,0.15);' : '';
+-    return `<tr style="${highlight}">
+-      <td style="padding:8px 16px;font-size:20px;font-weight:bold;">${place}${getOrdinal(place)}</td>
+-      <td style="padding:8px 16px;font-size:18px;">${isPlayer ? '★ ' : ''}${k.characterName}</td>
+-      <td style="padding:8px 16px;font-size:18px;">${time}</td>
+-    </tr>`;
+-  }).join('');
++function updateHUD() {
++  if (!playerKart) return;
++  const posEl = document.getElementById('hud-position');
++  const lapEl = document.getElementById('hud-lap');
++  const timerEl = document.getElementById('hud-timer');
++  const speedEl = document.getElementById('hud-speed');
++  const driftEl = document.getElementById('hud-drift');
++  const driftFill = document.getElementById('hud-drift-fill');
++  const itemEl = document.getElementById('hud-item');
++  const finalLapEl = document.getElementById('hud-final-lap');
+ 
+-  resultsContainer.innerHTML = `
+-    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:rgba(0,0,0,0.7);">
+-      <h2 style="font-size:36px;margin-bottom:20px;">RACE RESULTS</h2>
+-      <table style="border-collapse:collapse;margin-bottom:20px;">
+-        <tr style="border-bottom:2px solid rgba(255,255,255,0.3);">
+-          <th style="padding:8px 16px;text-align:left;">Place</th>
+-          <th style="padding:8px 16px;text-align:left;">Racer</th>
+-          <th style="padding:8px 16px;text-align:left;">Time</th>
+-        </tr>
+-        ${rows}
+-      </table>
+-      ${playerKart.bestLapTime < Infinity ? `<p style="font-size:16px;opacity:0.7;margin-bottom:20px;">Best Lap: ${formatTime(playerKart.bestLapTime)}</p>` : ''}
+-      <div style="display:flex;gap:20px;">
+-        <div style="font-size:20px;padding:12px 40px;border:2px solid var(--accent-cyan);border-radius:8px;cursor:pointer;" id="btn-race-again">Race Again</div>
+-        <div style="font-size:20px;padding:12px 40px;border:2px solid rgba(255,255,255,0.5);border-radius:8px;cursor:pointer;" id="btn-back-menu">Back to Menu</div>
+-      </div>
+-    </div>
+-  `;
+-  document.getElementById('btn-race-again')?.addEventListener('click', () => { hideResults(); startRace(); });
+-  document.getElementById('btn-back-menu')?.addEventListener('click', () => { hideResults(); goToMenu(); });
++  // Position
++  if (posEl) {
++    const p = playerKart.currentPlace;
++    posEl.textContent = `${p}${getOrdinal(p)}`;
++    posEl.style.color = [,'var(--gold)','var(--silver)','var(--bronze)','#fff'][p] || '#fff';
++  }
++  // Lap
++  const lap = Math.min(playerKart.currentLap, 3);
++  if (lapEl) lapEl.textContent = `LAP ${lap}/3`;
++  // Final lap banner
++  if (lap === 3 && !finalLapShown && finalLapEl) {
++    finalLapShown = true;
++    finalLapEl.style.display = 'block';
++    setTimeout(() => { if (finalLapEl) finalLapEl.style.display = 'none'; }, 3000);
++  }
++  // Timer
++  if (timerEl) {
++    const m = Math.floor(raceTimer / 60), s = raceTimer % 60;
++    timerEl.textContent = `${m}:${s < 10 ? '0' : ''}${s.toFixed(3)}`;
++  }
++  // Speed
++  if (speedEl) {
++    speedEl.textContent = `${Math.round(Math.abs(playerKart.speed) / playerKart.maxSpeed * 100)}%`;
++    speedEl.style.color = playerKart.boostTimer > 0 ? 'var(--accent-cyan)' : '#fff';
++  }
++  // Drift bar
++  if (driftEl && driftFill) {
++    if (playerKart.isDrifting) {
++      driftEl.style.display = 'block';
++      driftFill.style.width = `${Math.min(playerKart.driftTimer / 2.5 * 100, 100)}%`;
++      driftFill.style.background = playerKart.driftTier >= 3 ? '#FF66AA' : playerKart.driftTier >= 2 ? '#FF8800' : '#4488FF';
++    } else driftEl.style.display = 'none';
++  }
++  // Item slot
++  if (itemEl) {
++    const item = playerKart.heldItem;
++    if (item === 'sparkBomb') { itemEl.textContent = '⚡'; itemEl.style.color = '#FFFF00'; itemEl.style.borderColor = '#FFFF00'; }
++    else if (item === 'slickPuddle') { itemEl.textContent = '💧'; itemEl.style.color = '#00FF44'; itemEl.style.borderColor = '#00FF44'; }
++    else if (item === 'turboCell') { itemEl.textContent = '▲'; itemEl.style.color = '#00DDFF'; itemEl.style.borderColor = '#00DDFF'; }
++    else { itemEl.textContent = '?'; itemEl.style.color = '#555'; itemEl.style.borderColor = 'rgba(255,255,255,0.25)'; }
++  }
+ }
+ 
+-function hideResults() {
+-  resultsContainer.classList.add('hidden');
+-  resultsContainer.style.pointerEvents = 'none';
++function getOrdinal(n) {
++  const s = ['TH','ST','ND','RD']; const v = n % 100;
++  return s[(v-20)%10] || s[v] || s[0];
+ }
+ 
+-function formatTime(seconds) {
+-  const mins = Math.floor(seconds / 60);
+-  const secs = seconds % 60;
+-  return `${mins}:${secs < 10 ? '0' : ''}${secs.toFixed(3)}`;
++function formatTime(sec) {
++  const m = Math.floor(sec / 60), s = sec % 60;
++  return `${m}:${s < 10 ? '0' : ''}${s.toFixed(3)}`;
+ }
+ 
+ /* ── Pause ─────────────────────────────────────────────────────────── */
+ 
+-const pauseContainer = document.getElementById('pause-container');
+-
+ function showPause() {
+   pauseContainer.classList.remove('hidden');
+   pauseContainer.style.pointerEvents = 'auto';
+   pauseContainer.innerHTML = `
+-    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:rgba(0,0,0,0.6);">
+-      <h2 style="font-size:36px;margin-bottom:30px;">PAUSED</h2>
+-      <div style="font-size:20px;padding:12px 40px;border:2px solid rgba(255,255,255,0.5);border-radius:8px;margin:8px;cursor:pointer;" id="btn-resume">Resume</div>
+-      <div style="font-size:20px;padding:12px 40px;border:2px solid rgba(255,255,255,0.5);border-radius:8px;margin:8px;cursor:pointer;" id="btn-restart">Restart Race</div>
+-      <div style="font-size:20px;padding:12px 40px;border:2px solid rgba(255,255,255,0.5);border-radius:8px;margin:8px;cursor:pointer;" id="btn-quit">Quit to Menu</div>
+-    </div>
+-  `;
++    <div class="pause-overlay">
++      <h2 style="font-size:36px;margin-bottom:24px;">PAUSED</h2>
++      <div class="pause-btn" id="btn-resume">Resume</div>
++      <div class="pause-btn" id="btn-restart">Restart Race</div>
++      <div class="pause-btn" id="btn-quit">Quit to Menu</div>
++    </div>`;
+   document.getElementById('btn-resume')?.addEventListener('click', resumeRace);
+   document.getElementById('btn-restart')?.addEventListener('click', () => { hidePause(); startRace(); });
+   document.getElementById('btn-quit')?.addEventListener('click', () => { hidePause(); goToMenu(); });
+ }
+ 
+-function resumeRace() {
+-  hidePause();
+-  gameState = 'racing';
+-}
++function resumeRace() { hidePause(); gameState = 'racing'; audio.resume(); }
++function hidePause() { pauseContainer.classList.add('hidden'); pauseContainer.style.pointerEvents = 'none'; }
+ 
+-function hidePause() {
+-  pauseContainer.classList.add('hidden');
+-  pauseContainer.style.pointerEvents = 'none';
++/* ── Results ───────────────────────────────────────────────────────── */
++
++function showResults() {
++  gameState = 'results';
++  audio.stopEngine();
++  audio.stopMusic();
++  resultsContainer.classList.remove('hidden');
++  resultsContainer.style.pointerEvents = 'auto';
++
++  const sorted = [...finishOrder];
++  for (const k of getAllKarts()) if (!sorted.includes(k)) sorted.push(k);
++
++  const rows = sorted.map((k, i) => {
++    const pl = i + 1;
++    const time = k.finishTime > 0 ? formatTime(k.finishTime) : 'DNF';
++    const cls = k === playerKart ? ' class="player-row"' : '';
++    return `<tr${cls}><td style="font-weight:bold;">${pl}${getOrdinal(pl)}</td><td>${k === playerKart ? '★ ' : ''}${k.characterName}</td><td>${time}</td></tr>`;
++  }).join('');
++
++  resultsContainer.innerHTML = `
++    <div class="results-overlay">
++      <h2 style="font-size:36px;margin-bottom:16px;">RACE RESULTS</h2>
++      <table class="results-table"><tr><th>Place</th><th>Racer</th><th>Time</th></tr>${rows}</table>
++      ${playerKart.bestLapTime < Infinity ? `<p style="font-size:14px;opacity:0.6;margin-bottom:16px;">Best Lap: ${formatTime(playerKart.bestLapTime)}</p>` : ''}
++      <div style="display:flex;gap:16px;">
++        <div class="menu-btn" id="btn-race-again">Race Again</div>
++        <div class="menu-btn secondary" id="btn-back-menu">Back to Menu</div>
++      </div>
++    </div>`;
++  document.getElementById('btn-race-again')?.addEventListener('click', () => { hideResults(); startRace(); });
++  document.getElementById('btn-back-menu')?.addEventListener('click', () => { hideResults(); goToMenu(); });
+ }
+ 
++function hideResults() { resultsContainer.classList.add('hidden'); resultsContainer.style.pointerEvents = 'none'; }
++
+ function goToMenu() {
+   gameState = 'menu';
+   hudContainer.classList.add('hidden');
+   hideResults();
++  audio.stopEngine(); audio.stopMusic();
+   if (itemSystem) { itemSystem.destroy(); itemSystem = null; }
+   if (aiSystem) { aiSystem.destroy(); aiSystem = null; }
++  if (minimap) { minimap.destroy(); minimap = null; }
+   menuScreen = 'title';
+   showMenu();
+ }
+ 
+-/* ── Game Loop ─────────────────────────────────────────────────────── */
++/* ══════════════════════════════════════════════════════════════════════
++   GAME LOOP
++   ══════════════════════════════════════════════════════════════════════ */
+ 
+ let lastTime = 0;
+ 
+@@ -693,25 +648,15 @@ function gameLoop(timestamp) {
+   lastTime = timestamp;
+ 
+   switch (gameState) {
+-    case 'menu':
+-      updateMenu();
+-      break;
+-    case 'countdown':
+-      updateCountdown(dt);
+-      break;
+-    case 'racing':
+-      updateRacing(dt);
+-      break;
+-    case 'paused':
+-      if (input.isPause()) resumeRace();
+-      break;
++    case 'menu': updateMenu(); break;
++    case 'countdown': updateCountdown(dt); break;
++    case 'racing': updateRacing(dt); break;
++    case 'paused': if (input.isPause()) resumeRace(); break;
+     case 'results':
+-      // Allow navigation in results
+       if (input.isConfirm()) { hideResults(); startRace(); }
+       if (input.justPressed('Escape')) { hideResults(); goToMenu(); }
+       break;
+   }
+-
+   renderer.render(scene, camera);
+   input.endFrame();
+   requestAnimationFrame(gameLoop);
+@@ -723,41 +668,26 @@ window.render_game_to_text = function () {
+   const p = playerKart;
+   const cpuKarts = aiSystem ? aiSystem.getCPUs() : [];
+   const activeItems = itemSystem ? itemSystem.getActiveItems() : [];
+-
+   return JSON.stringify({
+     mode: gameState,
+     track: currentTrackData ? currentTrackData.name : null,
+     difficulty: selectedDifficulty,
+-    race: p ? {
+-      lap: p.currentLap,
+-      totalLaps: 3,
+-      timer: raceTimer.toFixed(3),
+-      finished: p.finished,
+-    } : null,
++    race: p ? { lap: p.currentLap, totalLaps: 3, timer: raceTimer.toFixed(3), finished: p.finished } : null,
+     player: p ? {
+       character: p.characterName,
+       position: { x: p.x.toFixed(1), y: p.y.toFixed(1), z: p.z.toFixed(1) },
+-      speed: p.speed.toFixed(1),
+-      maxSpeed: p.maxSpeed.toFixed(1),
+-      heading: p.heading.toFixed(2),
+-      lap: p.currentLap,
+-      checkpoint: p.lastCheckpoint,
+-      place: p.currentPlace,
+-      item: p.heldItem,
+-      drifting: p.isDrifting,
+-      driftTier: p.driftTier,
+-      boostTimer: p.boostTimer.toFixed(2),
+-      offRoad: p.isOffRoad,
++      speed: p.speed.toFixed(1), maxSpeed: p.maxSpeed.toFixed(1),
++      heading: p.heading.toFixed(2), lap: p.currentLap,
++      checkpoint: p.lastCheckpoint, place: p.currentPlace,
++      item: p.heldItem, drifting: p.isDrifting,
++      driftTier: p.driftTier, boostTimer: p.boostTimer.toFixed(2), offRoad: p.isOffRoad,
+     } : null,
+     cpus: cpuKarts.map(cpu => ({
+       character: cpu.characterName,
+       position: { x: cpu.x.toFixed(1), y: cpu.y.toFixed(1), z: cpu.z.toFixed(1) },
+-      speed: cpu.speed.toFixed(1),
+-      lap: cpu.currentLap,
+-      checkpoint: cpu.lastCheckpoint,
+-      place: cpu.currentPlace,
+-      item: cpu.heldItem,
+-      finished: cpu.finished,
++      speed: cpu.speed.toFixed(1), lap: cpu.currentLap,
++      checkpoint: cpu.lastCheckpoint, place: cpu.currentPlace,
++      item: cpu.heldItem, finished: cpu.finished,
+     })),
+     items: activeItems.map(item => ({
+       type: item.type,
+@@ -770,28 +700,21 @@ window.advanceTime = function (ms) {
+   const steps = Math.ceil(ms / 16.67);
+   for (let i = 0; i < steps; i++) {
+     const stepDt = Math.min(16.67, ms - i * 16.67) / 1000;
+-    if (gameState === 'racing') {
+-      updateRacing(stepDt);
+-    } else if (gameState === 'countdown') {
+-      updateCountdown(stepDt);
+-    }
++    if (gameState === 'racing') updateRacing(stepDt);
++    else if (gameState === 'countdown') updateCountdown(stepDt);
+   }
+   return window.render_game_to_text();
+ };
+ 
+-// Direct boost test hook
+ window._testGrantBoost = function (tier) {
+   if (!playerKart) return 'no kart';
+   const rewards = [null, { d: 0.7, m: 1.3 }, { d: 1.1, m: 1.4 }, { d: 1.5, m: 1.5 }];
+   const r = rewards[tier];
+-  if (r) {
+-    playerKart.boostTimer += r.d;
+-    playerKart.boostMultiplier = r.m;
+-  }
++  if (r) { playerKart.boostTimer += r.d; playerKart.boostMultiplier = r.m; }
+   return window.render_game_to_text();
+ };
+ 
+ /* ── Boot ──────────────────────────────────────────────────────────── */
+ 
+ showMenu();
+-requestAnimationFrame(gameLoop);
+\ No newline at end of file
++requestAnimationFrame(gameLoop);
+diff --git a/output/js/minimap.js b/output/js/minimap.js
+new file mode 100644
+index 0000000..9a6f102
+--- /dev/null
++++ b/output/js/minimap.js
+@@ -0,0 +1,124 @@
++import * as THREE from 'three';
++
++const CANVAS_SIZE = 150;
++const MARGIN = 5;
++const DRAW_SIZE = CANVAS_SIZE - MARGIN * 2; // 140
++const TRACK_SAMPLES = 200;
++
++const DOT_COLORS = ['#FFFFFF', '#FF4444', '#4488FF', '#44FF44'];
++const DOT_RADII  = [5, 4, 4, 4];
++
++/**
++ * Creates a minimap that renders a top-down view of the track with racer dots.
++ * @param {HTMLElement} containerEl - DOM element to append the canvas to
++ * @param {{ curve: THREE.CatmullRomCurve3, widthProfile: any }} collisionData
++ * @param {{ controlPoints: any[], name: string }} trackData
++ */
++export function createMinimap(containerEl, collisionData, trackData) {
++  const canvas = document.createElement('canvas');
++  canvas.width = CANVAS_SIZE;
++  canvas.height = CANVAS_SIZE;
++  canvas.className = 'minimap-canvas';
++
++  const wrapper = document.createElement('div');
++  wrapper.className = 'minimap-container';
++  wrapper.appendChild(canvas);
++  containerEl.appendChild(wrapper);
++
++  const ctx = canvas.getContext('2d');
++
++  // Sample the track curve to get 2D points (X, Z)
++  const trackPoints = [];
++  for (let i = 0; i <= TRACK_SAMPLES; i++) {
++    const t = i / TRACK_SAMPLES;
++    const p = collisionData.curve.getPointAt(t);
++    trackPoints.push({ x: p.x, z: p.z });
++  }
++
++  // Compute bounding box
++  let minX = Infinity, maxX = -Infinity;
++  let minZ = Infinity, maxZ = -Infinity;
++  for (const p of trackPoints) {
++    if (p.x < minX) minX = p.x;
++    if (p.x > maxX) maxX = p.x;
++    if (p.z < minZ) minZ = p.z;
++    if (p.z > maxZ) maxZ = p.z;
++  }
++
++  const rangeX = maxX - minX || 1;
++  const rangeZ = maxZ - minZ || 1;
++  const range = Math.max(rangeX, rangeZ);
++
++  // Center offset so the track is centered in the canvas
++  const offsetX = (range - rangeX) / 2;
++  const offsetZ = (range - rangeZ) / 2;
++
++  function mapX(worldX) {
++    return ((worldX - minX + offsetX) / range) * DRAW_SIZE + MARGIN;
++  }
++
++  function mapZ(worldZ) {
++    return ((worldZ - minZ + offsetZ) / range) * DRAW_SIZE + MARGIN;
++  }
++
++  // Pre-compute mapped track points
++  const mappedTrack = trackPoints.map(p => ({ x: mapX(p.x), y: mapZ(p.z) }));
++
++  function drawTrackOutline() {
++    ctx.beginPath();
++    ctx.moveTo(mappedTrack[0].x, mappedTrack[0].y);
++    for (let i = 1; i < mappedTrack.length; i++) {
++      ctx.lineTo(mappedTrack[i].x, mappedTrack[i].y);
++    }
++    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
++    ctx.lineWidth = 2;
++    ctx.stroke();
++  }
++
++  function drawDot(worldX, worldZ, color, radius) {
++    const cx = mapX(worldX);
++    const cz = mapZ(worldZ);
++    ctx.beginPath();
++    ctx.arc(cx, cz, radius, 0, Math.PI * 2);
++    ctx.fillStyle = color;
++    ctx.fill();
++  }
++
++  function update(allKarts, playerKart) {
++    // Clear canvas
++    ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
++
++    // Background
++    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
++    ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
++
++    // Track outline
++    drawTrackOutline();
++
++    // Draw CPU karts first (so player draws on top)
++    let colorIndex = 0;
++    for (const kart of allKarts) {
++      if (kart === playerKart) continue;
++      colorIndex++;
++      const idx = Math.min(colorIndex, DOT_COLORS.length - 1);
++      const pos = kart.position || kart.mesh?.position;
++      if (pos) {
++        drawDot(pos.x, pos.z, DOT_COLORS[idx], DOT_RADII[idx]);
++      }
++    }
++
++    // Draw player on top
++    if (playerKart) {
++      const pos = playerKart.position || playerKart.mesh?.position;
++      if (pos) {
++        drawDot(pos.x, pos.z, DOT_COLORS[0], DOT_RADII[0]);
++      }
++    }
++  }
++
++  function destroy() {
++    wrapper.remove();
++  }
++
++  return { update, destroy };
++}
+diff --git a/output/textures/menu-bg.png b/output/textures/menu-bg.png
+new file mode 100644
+index 0000000..ec5f115
+Binary files /dev/null and b/output/textures/menu-bg.png differ
+diff --git a/output/textures/skybox-snow.png b/output/textures/skybox-snow.png
+new file mode 100644
+index 0000000..f97b81f
+Binary files /dev/null and b/output/textures/skybox-snow.png differ
+diff --git a/output/textures/skybox-tropical.png b/output/textures/skybox-tropical.png
+new file mode 100644
+index 0000000..a0ddc30
+Binary files /dev/null and b/output/textures/skybox-tropical.png differ

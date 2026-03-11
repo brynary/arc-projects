@@ -1,0 +1,5 @@
+{
+  "command": "test -f output/index.html && echo 'index.html exists' \\\n&& grep -q 'three' output/index.html output/js/*.js 2>/dev/null \\\n&& echo 'Three.js references found' \\\n&& echo 'OK'",
+  "language": "shell",
+  "timeout_ms": null
+}
