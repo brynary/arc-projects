@@ -1,0 +1,406 @@
+diff --git a/.workflow/spec-review.md b/.workflow/spec-review.md
+new file mode 100644
+index 0000000..2d5f886
+--- /dev/null
++++ b/.workflow/spec-review.md
+@@ -0,0 +1,146 @@
++# Spec Review — Fabro Racer
++
++## Summary
++
++The spec is impressively thorough — 4 tracks, 8 characters, 6 items, drift mechanics, AI, HUD, audio, and camera are all covered in actionable detail. However, there are **3 internal contradictions**, **5 completeness gaps**, and **12 missing edge cases** that would cause ambiguity or bugs during implementation.
++
++---
++
++## 1. Internal Contradictions
++
++### 1A. Tusk's stat budget is broken
++
++The spec self-corrects mid-document but arrives at **12 stat points** (3+2+2+5=12) instead of the universal budget of 14. The "remaining 2 points expressed as the trait" is a hand-wave — no other character spends stat budget on traits. Tusk is objectively weaker than every other racer.
++
++**Fix:** Raise Tusk to 14 stat points (Speed 3, Acceleration 3, Handling 3, Weight 5) and keep the Immovable trait as a free character flavor, consistent with how all characters have AI personality traits at no stat cost.
++
++### 1B. Base top speed vs. stat formula mismatch
++
++Section 2 says "Base top speed: 90 units/s" but the Stat Effects formula says `topSpeed = 75 + (Speed × 6)`, giving a range of 81–105. A Speed-3 character gets 93, not 90. The two sources disagree.
++
++**Fix:** Remove the hardcoded "90 units/s" from section 2 and reference the formula. State that section 2 values are *approximate for a median character (Speed 3 → 93 units/s)*.
++
++### 1C. Boost stacking contradiction in Turbo Pepper
++
++Section 2 says "Boosts do **not** stack. A new boost replaces the current one." But the Turbo Pepper entry says "Stacks with drift boost if timed right" then immediately contradicts itself: "(boosts don't stack — pepper replaces current boost, but if used at drift release, the longer boost wins)."
++
++**Fix:** State a single clear rule: "When a new boost triggers, if an existing boost is active, the boost with the higher multiplier wins. If equal, the boost with more remaining duration wins." Remove the word "stacks."
++
++---
++
++## 2. Completeness Gaps
++
++### 2A. Respawn behavior unspecified
++
++Checkpoints are the respawn source, but no details on: facing direction, initial speed, invincibility frames, held item retention, vertical offset. Implementers will guess differently.
++
++**Fix:** Add a respawn specification: face the track forward direction at the checkpoint, speed = 0, 2s invincibility (translucent blink visual), retain held item, placed 2 units above road surface with gravity.
++
++### 2B. Item box respawn timing missing
++
++Item boxes are collected and "respawn" but no cooldown is specified.
++
++**Fix:** Add: "Item boxes respawn 8 seconds after collection. During respawn, the box is invisible and non-interactive, then fades in over 0.5s."
++
++### 2C. Mirror mode details absent
++
++Listed as a toggle with "Flips the track left↔right" but no implementation details. AI splines, shortcuts, hazard placements, start positions, and checkpoint normals all need mirroring.
++
++**Fix:** Add: "Mirror mode negates the X component of all track data: center spline points, AI splines, scenery positions, hazard positions, item box positions, start positions, and checkpoint normals. Drift zones and segment data are unchanged."
++
++### 2D. Start boost mechanic is confusingly worded
++
++"If the player holds accelerate and releases at 'GO'" — releasing accelerate at GO makes no sense because you'd want to keep accelerating. The penalty for "holding too early with no release" is contradictory since you must release eventually.
++
++**Fix:** Rewrite to: "During countdown, pressing accelerate before GO causes tire-spin (0.5s delayed start). Pressing accelerate during the 0.3s window starting at GO grants a start boost (equivalent to Tier 2 drift boost). Not pressing accelerate at GO = normal start."
++
++### 2E. No specification for position calculation precision
++
++The spec says position is based on "further checkpoint + further past it" but doesn't define "further past." Is it distance along the spline from the last checkpoint? Euclidean distance to the next?
++
++**Fix:** Add: "Position is calculated as: (current lap × total checkpoints) + (last passed checkpoint index) + (fraction of distance from last checkpoint to next checkpoint along the racing line spline). Higher value = higher position."
++
++---
++
++## 3. Missing Edge Cases
++
++### 3A. Race finish ties
++
++Two karts crossing the finish line on the same physics frame have no tiebreaker. This will happen, especially with CPU karts.
++
++**Fix:** Add: "If two karts finish on the same frame, the one closer to the finish line (further past it) ranks higher. If still tied, the kart with the lower racer index ranks higher."
++
++### 3B. Homing Pigeon used from 1st place
++
++The AI won't do this, but a human player can. Spec doesn't define behavior when there's no kart ahead to target.
++
++**Fix:** Add: "If used from 1st place, the Homing Pigeon flies forward along the track as an unguided projectile (no homing). It can still hit a kart if one happens to be ahead on the track layout (e.g., a lapped kart, though lapping isn't expected in 3 laps)."
++
++### 3C. Multiple simultaneous item effects
++
++A kart can be hit by a Fizz Bomb while already sliding on an Oil Slick. No interaction rule is defined.
++
++**Fix:** Add: "Item effects do not stack. A new item hit replaces any active item debuff. The new effect's full duration applies from the moment of the new hit."
++
++### 3D. Global fallback respawn
++
++On Sunset Bay and Mossy Canyon, there's no explicit "fall off the world" hazard like Neon Grid's void or Volcano Peak's lava. But a physics glitch could push a kart out of bounds.
++
++**Fix:** Add: "All tracks have a global Y-axis kill plane at Y = -50. Any kart falling below it respawns at their last checkpoint with a 1.5s penalty, identical to lava/void respawns."
++
++### 3E. Shortcuts bypassing checkpoints
++
++If a shortcut path skips a checkpoint, the lap validation system would reject the lap. The spec doesn't guarantee shortcuts don't skip checkpoints.
++
++**Fix:** Add: "Track designers must ensure all shortcuts pass through every checkpoint in order. Checkpoints should be placed at track-wide cross-sections that shortcuts cannot bypass."
++
++### 3F. Off-road drift interaction
++
++Can a player initiate a drift while off-road? Does the drift's "maintains speed better" benefit apply on top of the off-road penalty?
++
++**Fix:** Add: "Drifting can be initiated and maintained while off-road. The off-road speed penalty applies to the drift's effective top speed. Drift's reduced speed loss from turning still applies (5% vs 15%)."
++
++### 3G. Pause during non-racing states
++
++Can the player pause during countdown or the celebration camera? Spec only says "during a race."
++
++**Fix:** Add: "Pause is available from COUNTDOWN through RACE_FINISH states. During COUNTDOWN, the countdown timer pauses. During RACE_FINISH, the celebration camera pauses."
++
++### 3H. Player finishes last — celebration behavior
++
++The celebration camera "orbits around player kart" regardless of position. Celebrating an 8th place finish feels wrong.
++
++**Fix:** Add: "If the player finishes 4th or worse, skip the celebration orbit — cut directly to the results screen after a 1s delay."
++
++### 3I. Allow Clones OFF — selection behavior
++
++With 8 characters and 8 racers (1 human + 7 CPU), all characters are needed. Is CPU selection of the remaining 7 characters random order, or deterministic?
++
++**Fix:** Add: "When Allow Clones is OFF, the 7 non-player characters fill the CPU slots in a random order. When ON, each CPU slot picks a random character independently."
++
++### 3J. Fizz Bomb wall bounce limit
++
++The spec says Fizz Bomb "Bounces off walls once." What about hitting scenery objects? Can it bounce off a kart's shield?
++
++**Fix:** Add: "Fizz Bomb bounces off track walls once, then continues in a straight line until hitting a kart or reaching max range. It passes through scenery objects. On hitting a Shield Bubble, the bomb is destroyed (consumed by the shield)."
++
++### 3K. Item projectile-to-projectile collision
++
++Can two Fizz Bombs collide? Can a Fizz Bomb destroy an Oil Slick on the track?
++
++**Fix:** Add: "Item projectiles do not interact with each other. A Fizz Bomb passes through Oil Slicks and other Fizz Bombs."
++
++### 3L. Kart behavior after race completion
++
++When a racer finishes (crosses line on lap 3), do they keep driving? Do they become intangible? Can they still be hit by items?
++
++**Fix:** Add: "After crossing the finish line on lap 3, a kart becomes intangible (no collisions, no item interactions) and continues driving along the racing line at 80% speed as a visual element until the results screen appears."
++
++---
++
++## 4. Minor Clarifications Needed
++
++- **Section 2 Turn rate formula vs prose**: Section 2 says "~60°/s at top speed, ~90°/s at low speed" but the stat formula gives 51–75°/s at top speed with no mention of speed-dependent scaling. Add: "At low speed (< 30% top speed), turn rate is 1.5× the stat-derived value."
++- **150 units rubber banding threshold**: No frame of reference for players or implementers. Add a comment: "(approximately 10–12% of average track length)."
++- **Hazard timing**: Specify that hazard cycles run on global time (not per-lap), so they're consistent but not predictable per lap.
++- **Timer format**: Section 9 says "M:SS.mmm" but the HUD diagram shows "1:23.4" (one decimal). Pick one — recommend M:SS.s (one decimal) for HUD display, full precision for results screen.
+diff --git a/.workflow/spec.md b/.workflow/spec.md
+index 3379f2e..788c6e9 100644
+--- a/.workflow/spec.md
++++ b/.workflow/spec.md
+@@ -131,11 +131,11 @@ States:
+ 
+ | Parameter | Value |
+ |---|---|
+-| **Base top speed** | 90 units/s (modified by character Speed stat) |
+-| **Acceleration** | 0→top in ~1.8s (modified by character Acceleration stat) |
++| **Base top speed** | ~93 units/s for a median character (Speed 3). Actual value from formula: `75 + (Speed × 6)` → range 81–105 units/s. |
++| **Acceleration** | 0→top in ~1.3–2.4s depending on character. Actual value from formula: `accel = 30 + (Accel × 8)` → range 38–70 units/s². |
+ | **Braking decel** | 3× acceleration rate |
+ | **Coasting decel** | 0.5× acceleration rate (no input = gentle slowdown) |
+-| **Turning radius** | Responsive — full lock turns ~60°/s at top speed, ~90°/s at low speed |
++| **Turning radius** | Responsive — full lock turns at the stat-derived turn rate at top speed (see Stat Effects), 1.5× faster at low speed (< 30% top speed). ~90°/s at low speed for Handling 3. |
+ | **Reverse speed** | 30% of top speed |
+ | **Gravity** | 30 units/s² (for ramps and falls) |
+ 
+@@ -171,7 +171,7 @@ Drifting is the core skill mechanic. It lets players take corners faster and ear
+ - Releasing before 0.5s of drift: no boost awarded (prevents spam).
+ - Visual/audio feedback on tier transitions: spark color change + chime sound.
+ - Boost is applied as a speed multiplier that decays linearly over the boost duration back to base speed.
+-- Boosts do **not** stack. A new boost replaces the current one.
++- Boosts do **not** stack. When a new boost triggers while one is active, the boost with the higher speed multiplier wins. If multipliers are equal, the boost with the longer remaining duration wins. The losing boost is discarded.
+ 
+ ### Collisions
+ 
+@@ -189,11 +189,14 @@ Drifting is the core skill mechanic. It lets players take corners faster and ear
+ - Off-road surfaces (grass, sand, dirt) reduce top speed by 40%.
+ - During an active boost, off-road penalty is halved (only 20% reduction).
+ - Visual: kart bounces slightly more, dust particles kick up.
++- Drifting can be initiated and maintained while off-road. The off-road speed penalty applies to the drift's effective top speed. Drift's reduced speed loss from turning still applies (5% vs 15%).
+ 
+ ### Start Boost
+ 
+-- During the 3-2-1-GO countdown, if the player holds accelerate and releases at "GO" (within a 0.3s window), they get a start boost equivalent to Tier 2 drift boost.
+-- Holding too early with no release: kart spins tires and has a 0.5s delayed start (minor penalty).
++- During the 3-2-1-GO countdown, karts are stationary and accelerate input is monitored.
++- Pressing accelerate **during the 0.3s window starting at "GO"** grants a start boost equivalent to Tier 2 drift boost.
++- Pressing accelerate **before** "GO" causes a tire-spin: the kart has a 0.5s delayed start (cannot move for 0.5s after GO) and receives no start boost.
++- Not pressing accelerate at all: normal start with no boost and no penalty.
+ 
+ ---
+ 
+@@ -265,7 +268,7 @@ All 4 tracks are unlocked from the start. Each is 3 laps.
+ 9. Short straight back to the bridge.
+ 
+ **Hazards:**
+-- **Falling rocks**: At the stone corridor (segment 4), small boulders tumble from above at intervals (~5s cycle). Contact = 0.6s slowdown. Telegraphed by pebble particles 1s before.
++- **Falling rocks**: At the stone corridor (segment 4), small boulders tumble from above at intervals (~5s cycle, running on global time — not per-lap). Contact = 0.6s slowdown. Telegraphed by pebble particles 1s before.
+ - **River splash zones**: At the bridge start and near the waterfall, puddles on the road cause a 0.3s slip (slight lateral push, no steering loss).
+ - **Mushroom bounce pads**: In the mushroom grove, 3 large mushroom caps sit on the road edges. Hitting one bounces the kart upward and sideways — fun but costs ~0.5s.
+ 
+@@ -352,7 +355,7 @@ All 4 tracks are unlocked from the start. Each is 3 laps.
+ 9. Short straight through the village back to start/finish.
+ 
+ **Hazards:**
+-- **Lava geysers**: At the summit (segment 6), 3 geyser spots erupt on a staggered 4s cycle. Each geyser is active for 1.5s. Contact = 1.0s spin and speed loss. Telegraphed by bubbling animation 1s before eruption.
++- **Lava geysers**: At the summit (segment 6), 3 geyser spots erupt on a staggered 4s cycle (running on global time — not per-lap, so timing varies each lap). Each geyser is active for 1.5s. Contact = 1.0s spin and speed loss. Telegraphed by bubbling animation 1s before eruption.
+ - **Falling lava rocks**: On the plunge (segment 7), small flaming rocks drop from above every ~3s. Contact = 0.4s wobble. Shadows on the ground telegraph landing spots.
+ - **Lava river**: Left edge of segment 2. Driving into lava = immediate respawn, 1.5s penalty. There's a guardrail but it has gaps.
+ 
+@@ -428,24 +431,12 @@ Stats are on a 1–5 scale. Total stat points per character: 14 (balanced budget
+ |---|---|
+ | **Appearance** | Blue-grey mammoth with tiny tusks and a fur-lined helmet. Massive tank-like kart. |
+ | **Speed** | ★★★☆☆ (3) |
+-| **Acceleration** | ★☆☆☆☆ (1) |
+-| **Handling** | ★★☆☆☆ (2) |
+-| **Weight** | ★★★★★ (5) + ★★★ (3 bonus from special trait) |
+-| **Total stats** | 14 (Weight 5 is in-budget; the +3 bonus is a character trait, not a stat point) |
+-| **AI Personality** | Bully — drives wide to block, aims to body-check lighter karts, doesn't drift much, relies on weight to hold position. |
+-
+-*Note: Tusk's effective weight for collision calculations is 8 (5 base + 3 trait bonus), making Tusk exceptionally hard to push. Tusk's stat budget is still 14 (3+1+2+5=11... let's recalculate):*
+-
+-**Corrected Tusk stats:**
+-
+-| Stat | Value |
+-|---|---|
+-| **Speed** | ★★★☆☆ (3) |
+-| **Acceleration** | ★★☆☆☆ (2) |
+-| **Handling** | ★★☆☆☆ (2) |
++| **Acceleration** | ★★★☆☆ (3) |
++| **Handling** | ★★★☆☆ (3) |
+ | **Weight** | ★★★★★ (5) |
+-| **Trait** | Immovable — takes 50% less knockback from collisions. |
+-| **Budget** | 3+2+2+5 = 12. Remaining 2 points expressed as the trait. |
++| **Trait** | Immovable — takes 50% less knockback from collisions (free trait, not deducted from stat budget). |
++| **Budget** | 3+3+3+5 = 14. |
++| **AI Personality** | Bully — drives wide to block, aims to body-check lighter karts, doesn't drift much, relies on weight to hold position. |
+ 
+ ### Character 6: Zippy
+ 
+@@ -486,7 +477,7 @@ Stats are on a 1–5 scale. Total stat points per character: 14 (balanced budget
+ |---|---|
+ | **Speed** | Modifies base top speed: `topSpeed = 75 + (Speed × 6)` → range 81–105 units/s |
+ | **Acceleration** | Modifies acceleration: `accel = 30 + (Accel × 8)` → range 38–70 units/s² |
+-| **Handling** | Modifies turn rate: `turnRate = 45 + (Handling × 6)` deg/s → range 51–75 deg/s at top speed |
++| **Handling** | Modifies turn rate at top speed: `turnRate = 45 + (Handling × 6)` deg/s → range 51–75 deg/s at top speed. At low speed (< 30% top speed), turn rate is 1.5× this value. Speed-dependent interpolation between the two. |
+ | **Weight** | Modifies collision knockback: heavier karts push lighter ones. Also affects drift initiation (heavier = wider drift arc). `knockback = 6 - Weight` (lower = less knockback received) |
+ 
+ ---
+@@ -495,6 +486,8 @@ Stats are on a 1–5 scale. Total stat points per character: 14 (balanced budget
+ 
+ One-item capacity. Picking up a new item box when holding an item does nothing (the box is not consumed — it stays for others). Items are activated with a single button press.
+ 
++**Item Box Respawn**: Item boxes respawn 8 seconds after collection. During respawn, the box is invisible and non-interactive, then fades in over 0.5s.
++
+ ### Position-Weighted Distribution
+ 
+ Items are drawn from a weighted pool based on the player's current race position:
+@@ -512,7 +505,7 @@ Items are drawn from a weighted pool based on the player's current race position
+ |---|---|
+ | **Appearance** | Glowing green sphere with fizz bubbles, ~1.5 voxels diameter |
+ | **Effect** | Fires forward in a straight line at 1.5× kart speed. On contact with a kart: target wobbles side-to-side for 1.0s (reduced steering precision by 60%, but steering is NOT disabled). Speed reduced by 20% during wobble. |
+-| **Range** | Travels 250 units then despawns. Bounces off walls once. |
++| **Range** | Travels 250 units then despawns. Bounces off track walls once (then continues straight). Passes through scenery objects. |
+ | **Counterplay** | Visible and audible in flight. Can be blocked by a held Shield Bubble. |
+ 
+ ### Item 2: Oil Slick (Offensive)
+@@ -537,7 +530,7 @@ Items are drawn from a weighted pool based on the player's current race position
+ | Property | Detail |
+ |---|---|
+ | **Appearance** | Red chili pepper voxel model, glows with heat waves |
+-| **Effect** | Instant Tier-3-equivalent boost (1.5s, 1.45× speed). Stacks with drift boost if timed right (boosts don't stack — pepper replaces current boost, but if used at drift release, the longer boost wins). |
++| **Effect** | Instant Tier-3-equivalent boost (1.5s, 1.45× speed). When triggered while a drift boost is active, the standard boost conflict rule applies (higher multiplier wins; if equal, longer remaining duration wins). |
+ | **Tactical use** | Best used on straights or to recover from setbacks. |
+ 
+ ### Item 5: Homing Pigeon (Offensive)
+@@ -548,6 +541,7 @@ Items are drawn from a weighted pool based on the player's current race position
+ | **Effect** | Flies toward the kart in the position directly ahead of the user, following the track. On contact: target's kart bounces upward slightly (1.5 voxels) and slows by 25% for 1.2s. Target retains full steering. |
+ | **Travel speed** | 1.8× kart speed. Takes ~2-5s to reach target depending on gap. |
+ | **Counterplay** | Audible approaching chirps give ~1.5s warning. Blocked by Shield Bubble. Can be dodged with precise boost timing (the pigeon has a turning radius and can overshoot boosting karts). |
++| **Edge case** | If used from 1st place (no kart ahead), the pigeon flies forward as an unguided projectile with no homing behavior. It can still hit a kart if one happens to be in its path. |
+ 
+ ### Item 6: Shortcut Star (Utility)
+ 
+@@ -570,6 +564,17 @@ Items are drawn from a weighted pool based on the player's current race position
+ 
+ All items confirm to the constraint: **max loss of control ≤ 1.2s, max steering disabled = 0s (steering is never fully disabled), max steering reduction ≤ 0.6s of significant impairment.**
+ 
++### Item Effect Stacking
++
++Item debuffs do **not** stack. If a kart is hit by a new item while already affected by an item debuff (e.g., Fizz Bomb wobble while already on an Oil Slick slide), the new effect replaces the existing one. The new effect's full duration starts from the moment of the new hit.
++
++### Item Projectile Interactions
++
++- Item projectiles do not interact with each other. A Fizz Bomb passes through Oil Slicks on the track and through other Fizz Bombs.
++- Fizz Bomb passes through scenery objects and hazards.
++- On hitting a Shield Bubble, the Fizz Bomb and Homing Pigeon are destroyed (consumed by the shield). The shield also pops.
++- Oil Slick on the track is consumed when any non-shielded kart drives over it. Shielded karts trigger the shield pop instead.
++
+ ---
+ 
+ ## 6. AI Behavior
+@@ -592,7 +597,7 @@ All items confirm to the constraint: **max loss of control ≤ 1.2s, max steerin
+ Rubber banding modifies AI speed based on distance to the player:
+ - **AI far ahead of player**: AI speed reduced by up to 8% (Chill), 5% (Standard), 2% (Mean).
+ - **AI far behind player**: AI speed increased by up to 5% (Chill), 3% (Standard), 1% (Mean).
+-- "Far" = more than 150 units of track distance.
++- "Far" = more than 150 units of track distance (approximately 10–12% of average track length).
+ - Rubber banding is smooth — it ramps gradually, never snaps.
+ 
+ ### Spline Following
+@@ -647,6 +652,14 @@ At designated drift zones (marked per-track):
+ 4. **Finish**: When the player crosses the finish line on lap 3, brief celebration camera (orbit around player kart, 3s). CPU karts continue finishing in the background.
+ 5. **Results**: Standings screen shows all 8 positions with character icons, names, and finish times. Options: "Race Again" (same settings) / "Change Track" (back to track select) / "Main Menu."
+ 
++### Race Finish Ties
++
++If two karts cross the finish line on the same physics frame, the kart closer to the finish line (further past it by track distance) ranks higher. If still tied, the kart with the lower racer index ranks higher.
++
++### Celebration Camera Rules
++
++If the player finishes 1st–3rd, the celebration orbit camera plays for 3s. If the player finishes 4th–8th, the celebration orbit is skipped — cut directly to the results screen after a 1s delay.
++
+ ### Checkpoint System
+ 
+ Each track is divided into checkpoints (invisible planes across the track width) to:
+@@ -657,6 +670,23 @@ Each track is divided into checkpoints (invisible planes across the track width)
+ 
+ Checkpoint count per track: ~12–20 depending on track length.
+ 
++### Position Calculation
++
++Position is calculated as: `(currentLap × totalCheckpoints) + lastPassedCheckpointIndex + fractionToNextCheckpoint`. The fraction is measured as the distance traveled along the racing line spline from the last checkpoint toward the next. Higher value = higher race position.
++
++### Respawn Rules
++
++When a kart is respawned (falling off the track, entering lava, or falling below the global Y-axis kill plane at Y = -50):
++- Kart is placed at the last passed checkpoint, 2 units above the road surface, facing the track-forward direction.
++- Speed is reset to 0.
++- Kart is invincible for 2s after respawn (translucent blinking visual, no item or collision interactions).
++- Held items are retained.
++- A 1.5s time penalty is added (kart is frozen in place for 1.5s before regaining control).
++
++### Post-Finish Kart Behavior
++
++After a racer crosses the finish line on lap 3, the kart becomes intangible (no collisions, no item interactions) and continues driving along the racing line at 80% speed as a visual element until the results screen appears.
++
+ ---
+ 
+ ## 8. Pre-Race Flow & Menus
+@@ -694,13 +724,13 @@ Checkpoint count per track: ~12–20 depending on track length.
+ 
+ After confirming a character:
+ - **Difficulty**: Three large buttons — Chill 😌 / Standard 🏁 / Mean 😈
+-- **Mirror Mode toggle**: Flips the track left↔right. Off by default.
+-- **Allow Clones toggle**: If off (default), CPU characters are all unique (no duplicates of the player's choice or each other). If on, CPU characters are random and may include duplicates.
++- **Mirror Mode toggle**: Flips the track left↔right. Off by default. Implementation: negate the X component of all track data (center spline points, AI splines, scenery positions, hazard positions, item box positions, start positions, and checkpoint normals). Drift zones and segment metadata are unchanged.
++- **Allow Clones toggle**: If off (default), the 7 non-player characters fill the CPU slots in a shuffled random order (all unique, no duplicates). If on, each CPU slot picks a random character independently (duplicates allowed, including duplicates of the player's character).
+ - **Start Race** button.
+ 
+ ### In-Race Pause Menu
+ 
+-Pressing Escape during a race:
++Pressing Escape during COUNTDOWN, RACING, or RACE_FINISH states:
+ - Game freezes (physics stop, timers pause).
+ - Semi-transparent dark overlay.
+ - Three options:
+@@ -760,9 +790,10 @@ All HUD elements are HTML/CSS overlaid on the Three.js canvas, NOT rendered in 3
+ ### Timer
+ 
+ - Top-right, below lap counter.
+-- Running race time in M:SS.mmm format.
++- Running race time in M:SS.s format (one decimal place) during gameplay.
+ - On lap completion, briefly shows the lap split time in a smaller font below (fades after 3s).
+ - Best lap time shown in gold if it beats the previous best.
++- Results screen shows full precision: M:SS.sss (three decimal places).
+ 
+ ### Minimap
+ 
+@@ -1016,6 +1047,14 @@ The track builder (`track.js`) takes a track definition and:
+ - Hazard collision: sphere-sphere or sphere-box checks.
+ - Item projectile collision: ray-sphere check (Fizz Bomb) or sphere-sphere (Oil Slick, Pigeon).
+ 
++### Global Kill Plane
++
++All tracks have a global Y-axis kill plane at Y = -50. Any kart falling below it triggers a respawn at their last checkpoint (see Race Structure § Respawn Rules).
++
++### Shortcut and Checkpoint Design Rule
++
++All shortcuts must pass through every checkpoint in order. Checkpoints are placed at track-wide cross-sections that shortcuts cannot bypass. Track designers must verify this constraint for every shortcut.
++
+ ---
+ 
+ ## 15. Performance Considerations
+@@ -1106,4 +1145,4 @@ Minimal data saved to `localStorage` under the key `fabroRacer`:
+ 3. **Goofy, not punishing.** Items cause chaos and laughs, not controller-throwing rage. Recovery is always fast.
+ 4. **Pack racing.** Rubber banding and wide tracks ensure karts stay in a group. Exciting finishes are the norm.
+ 5. **Instant play.** No loading screens, no tutorials, no mandatory cutscenes. Title → select → race in under 10 seconds.
+-6. **Voxel charm.** The blocky aesthetic is a feature, not a limitation. Lean into it — chunky animations, blocky particles, toy-like proportions.
++6. **Voxel charm.** The blocky aesthetic is a feature, not a limitation. Lean into it — chunky animations, blocky particles, toy-like proportions.
+\ No newline at end of file
