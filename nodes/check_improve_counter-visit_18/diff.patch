@@ -1,0 +1,7 @@
+diff --git a/.workflow/improve_counter b/.workflow/improve_counter
+index 98d9bcb..3c03207 100644
+--- a/.workflow/improve_counter
++++ b/.workflow/improve_counter
+@@ -1 +1 @@
+-17
++18
