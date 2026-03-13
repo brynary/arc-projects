@@ -1,0 +1,17 @@
+version = 1
+graph = "workflow.dot"
+
+[llm]
+model = "claude-opus-4-6"
+
+[sandbox]
+provider = "daytona"
+
+[sandbox.daytona]
+auto_stop_interval = 60
+
+[sandbox.daytona.labels]
+project = "solitaire"
+
+[sandbox.daytona.snapshot]
+name = "daytona-medium"
