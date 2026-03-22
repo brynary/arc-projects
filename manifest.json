@@ -1,0 +1,13 @@
+{
+  "run_id": "01KMBRJ90514T4TQDY9CYWMKQ8",
+  "workflow_name": "BuildSolitaire",
+  "goal": "Build a terminal-based solitaire (Klondike) game in Python",
+  "start_time": "2026-03-22T21:52:39.010727Z",
+  "node_count": 20,
+  "edge_count": 31,
+  "run_branch": "fabro/run/01KMBRJ90514T4TQDY9CYWMKQ8",
+  "base_sha": "fa430560badd60e605e9f8840a9967bcc16a1ac4",
+  "base_branch": "main",
+  "workflow_slug": "20260322-01KMBRJ90514T4TQDY9CYWMKQ8",
+  "host_repo_path": "/Users/bhelmkamp/p/brynary/arc-projects"
+}
