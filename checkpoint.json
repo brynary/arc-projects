@@ -1,0 +1,59 @@
+{
+  "timestamp": "2026-03-25T19:35:51.041204Z",
+  "current_node": "expand_spec",
+  "completed_nodes": [
+    "start",
+    "expand_spec"
+  ],
+  "node_retries": {
+    "expand_spec": 1,
+    "start": 1
+  },
+  "context_values": {
+    "failure_class": "",
+    "internal.node_visit_count": 1,
+    "graph.fallback_retry_target": "impl_logic",
+    "internal.fidelity": "compact",
+    "internal.retry_count.expand_spec": 1,
+    "graph.model_stylesheet": "\n            *       { llm_model: claude-sonnet; llm_provider: anthropic; }\n            .hard   { llm_model: claude-opus;   llm_provider: anthropic; }\n            .verify { llm_model: claude-haiku;  llm_provider: anthropic; }\n        ",
+    "graph.goal": "Build a terminal-based solitaire (Klondike) game in Python",
+    "internal.work_dir": "/private/var/folders/nm/bd2dwzy52t1ckn3tklsfmy1c0000gn/T/fabro-dry-run/01KMK7Y0CYYD4Q6F6XWSEYGJQ2/worktree",
+    "graph.default_max_retry": "3",
+    "current_node": "expand_spec",
+    "failure_signature": "",
+    "internal.thread_id": "start",
+    "response.expand_spec": "[Simulated] Response for stage: expand_spec",
+    "outcome": "success",
+    "last_stage": "expand_spec",
+    "thread.start.current_node": "expand_spec",
+    "last_response": "[Simulated] Response for stage: expand_spec",
+    "graph.retry_target": "impl_setup",
+    "internal.retry_count.start": 1,
+    "graph.rankdir": "LR",
+    "internal.run_id": "01KMK7Y0CYYD4Q6F6XWSEYGJQ2",
+    "current.preamble": "Goal: Build a terminal-based solitaire (Klondike) game in Python\n"
+  },
+  "logs": [],
+  "node_outcomes": {
+    "expand_spec": {
+      "status": "success",
+      "context_updates": {
+        "last_response": "[Simulated] Response for stage: expand_spec",
+        "response.expand_spec": "[Simulated] Response for stage: expand_spec",
+        "last_stage": "expand_spec"
+      },
+      "notes": "[Simulated] expand_spec",
+      "duration_ms": 0
+    },
+    "start": {
+      "status": "success",
+      "notes": "[Simulated] start",
+      "duration_ms": 0
+    }
+  },
+  "next_node_id": "impl_setup",
+  "node_visits": {
+    "expand_spec": 1,
+    "start": 1
+  }
+}
