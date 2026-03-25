@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-03-25T19:36:08.625239Z",
-  "current_node": "review",
+  "timestamp": "2026-03-25T19:36:08.683297Z",
+  "current_node": "check_review",
   "completed_nodes": [
     "start",
     "expand_spec",
@@ -19,7 +19,8 @@
     "impl_integration",
     "verify_integration",
     "check_integration",
-    "review"
+    "review",
+    "check_review"
   ],
   "node_retries": {
     "verify_ui": 1,
@@ -35,6 +36,7 @@
     "impl_data": 1,
     "check_data": 1,
     "verify_integration": 1,
+    "check_review": 1,
     "review": 1,
     "verify_setup": 1,
     "expand_spec": 1,
@@ -44,7 +46,7 @@
   "context_values": {
     "graph.default_max_retry": "3",
     "internal.fidelity": "compact",
-    "internal.thread_id": "hard",
+    "internal.thread_id": "review",
     "outcome": "success",
     "response.expand_spec": "[Simulated] Response for stage: expand_spec",
     "response.impl_setup": "[Simulated] Response for stage: impl_setup",
@@ -52,7 +54,7 @@
     "internal.retry_count.impl_setup": 1,
     "response.verify_integration": "[Simulated] Response for stage: verify_integration",
     "last_stage": "review",
-    "current_node": "review",
+    "current_node": "check_review",
     "thread.verify_ui.current_node": "check_ui",
     "graph.rankdir": "LR",
     "internal.retry_count.impl_data": 1,
@@ -62,7 +64,7 @@
     "response.impl_ui": "[Simulated] Response for stage: impl_ui",
     "internal.retry_count.check_ui": 1,
     "thread.verify_data.current_node": "check_data",
-    "current.preamble": "Goal: Build a terminal-based solitaire (Klondike) game in Python\n\n## Completed stages\n- **expand_spec**: success\n- **impl_setup**: success\n- **verify_setup**: success\n- **check_setup**: success\n- **impl_data**: success\n- **verify_data**: success\n- **check_data**: success\n- **impl_logic**: success\n- **verify_logic**: success\n- **check_logic**: success\n- **impl_ui**: success\n- **verify_ui**: success\n- **check_ui**: success\n- **impl_integration**: success\n- **verify_integration**: success\n- **check_integration**: success\n",
+    "current.preamble": "Goal: Build a terminal-based solitaire (Klondike) game in Python\n\n## Completed stages\n- **expand_spec**: success\n- **impl_setup**: success\n- **verify_setup**: success\n- **check_setup**: success\n- **impl_data**: success\n- **verify_data**: success\n- **check_data**: success\n- **impl_logic**: success\n- **verify_logic**: success\n- **check_logic**: success\n- **impl_ui**: success\n- **verify_ui**: success\n- **check_ui**: success\n- **impl_integration**: success\n- **verify_integration**: success\n- **check_integration**: success\n- **review**: success\n",
     "response.verify_logic": "[Simulated] Response for stage: verify_logic",
     "internal.retry_count.check_integration": 1,
     "internal.work_dir": "/private/var/folders/nm/bd2dwzy52t1ckn3tklsfmy1c0000gn/T/fabro-dry-run/01KMK7YG83SMY3HMQ5M3KGHCHE/worktree",
@@ -82,6 +84,7 @@
     "internal.run_id": "01KMK7YG83SMY3HMQ5M3KGHCHE",
     "thread.hard.current_node": "review",
     "internal.retry_count.start": 1,
+    "thread.review.current_node": "check_review",
     "graph.model_stylesheet": "\n            *       { llm_model: claude-sonnet; llm_provider: anthropic; }\n            .hard   { llm_model: claude-opus;   llm_provider: anthropic; }\n            .verify { llm_model: claude-haiku;  llm_provider: anthropic; }\n        ",
     "response.impl_integration": "[Simulated] Response for stage: impl_integration",
     "thread.verify.current_node": "verify_integration",
@@ -99,6 +102,7 @@
     "internal.retry_count.review": 1,
     "graph.fallback_retry_target": "impl_logic",
     "thread.check_setup.current_node": "impl_data",
+    "internal.retry_count.check_review": 1,
     "thread.verify_setup.current_node": "check_setup",
     "last_response": "[Simulated] Response for stage: review"
   },
@@ -189,6 +193,11 @@
       "notes": "[Simulated] verify_integration",
       "duration_ms": 0
     },
+    "check_review": {
+      "status": "success",
+      "notes": "[Simulated] check_review",
+      "duration_ms": 0
+    },
     "verify_setup": {
       "status": "success",
       "context_updates": {
@@ -255,7 +264,7 @@
       "duration_ms": 0
     }
   },
-  "next_node_id": "check_review",
+  "next_node_id": "exit",
   "node_visits": {
     "check_logic": 1,
     "verify_setup": 1,
@@ -272,6 +281,7 @@
     "check_ui": 1,
     "impl_integration": 1,
     "impl_ui": 1,
+    "check_review": 1,
     "impl_logic": 1,
     "review": 1,
     "start": 1
