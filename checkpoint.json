@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-03-25T19:36:08.391368Z",
-  "current_node": "check_ui",
+  "timestamp": "2026-03-25T19:36:08.450174Z",
+  "current_node": "impl_integration",
   "completed_nodes": [
     "start",
     "expand_spec",
@@ -15,15 +15,12 @@
     "check_logic",
     "impl_ui",
     "verify_ui",
-    "check_ui"
+    "check_ui",
+    "impl_integration"
   ],
   "node_retries": {
-    "check_data": 1,
     "verify_ui": 1,
     "check_setup": 1,
-    "check_ui": 1,
-    "verify_setup": 1,
-    "expand_spec": 1,
     "impl_setup": 1,
     "check_logic": 1,
     "start": 1,
@@ -31,12 +28,17 @@
     "impl_logic": 1,
     "verify_logic": 1,
     "impl_ui": 1,
-    "impl_data": 1
+    "impl_data": 1,
+    "check_data": 1,
+    "verify_setup": 1,
+    "expand_spec": 1,
+    "check_ui": 1,
+    "impl_integration": 1
   },
   "context_values": {
     "graph.default_max_retry": "3",
     "internal.fidelity": "compact",
-    "internal.thread_id": "verify_ui",
+    "internal.thread_id": "check_ui",
     "internal.run_id": "01KMK7YG83SMY3HMQ5M3KGHCHE",
     "outcome": "success",
     "response.expand_spec": "[Simulated] Response for stage: expand_spec",
@@ -49,10 +51,11 @@
     "response.verify_data": "[Simulated] Response for stage: verify_data",
     "internal.retry_count.check_data": 1,
     "thread.hard.current_node": "impl_ui",
-    "last_stage": "verify_ui",
+    "response.impl_integration": "[Simulated] Response for stage: impl_integration",
+    "last_stage": "impl_integration",
     "thread.verify.current_node": "verify_ui",
     "response.impl_data": "[Simulated] Response for stage: impl_data",
-    "current_node": "check_ui",
+    "current_node": "impl_integration",
     "internal.retry_count.check_logic": 1,
     "internal.retry_count.check_setup": 1,
     "graph.rankdir": "LR",
@@ -65,14 +68,16 @@
     "response.impl_ui": "[Simulated] Response for stage: impl_ui",
     "internal.retry_count.check_ui": 1,
     "failure_class": "",
-    "current.preamble": "Goal: Build a terminal-based solitaire (Klondike) game in Python\n\n## Completed stages\n- **expand_spec**: success\n- **impl_setup**: success\n- **verify_setup**: success\n- **check_setup**: success\n- **impl_data**: success\n- **verify_data**: success\n- **check_data**: success\n- **impl_logic**: success\n- **verify_logic**: success\n- **check_logic**: success\n- **impl_ui**: success\n- **verify_ui**: success\n",
+    "current.preamble": "Goal: Build a terminal-based solitaire (Klondike) game in Python\n\n## Completed stages\n- **expand_spec**: success\n- **impl_setup**: success\n- **verify_setup**: success\n- **check_setup**: success\n- **impl_data**: success\n- **verify_data**: success\n- **check_data**: success\n- **impl_logic**: success\n- **verify_logic**: success\n- **check_logic**: success\n- **impl_ui**: success\n- **verify_ui**: success\n- **check_ui**: success\n",
     "graph.goal": "Build a terminal-based solitaire (Klondike) game in Python",
     "thread.verify_data.current_node": "check_data",
     "thread.start.current_node": "expand_spec",
     "response.verify_logic": "[Simulated] Response for stage: verify_logic",
     "internal.work_dir": "/private/var/folders/nm/bd2dwzy52t1ckn3tklsfmy1c0000gn/T/fabro-dry-run/01KMK7YG83SMY3HMQ5M3KGHCHE/worktree",
     "internal.retry_count.verify_ui": 1,
+    "internal.retry_count.impl_integration": 1,
     "internal.retry_count.verify_setup": 1,
+    "thread.check_ui.current_node": "impl_integration",
     "thread.verify_logic.current_node": "check_logic",
     "thread.expand_spec.current_node": "impl_setup",
     "graph.fallback_retry_target": "impl_logic",
@@ -83,7 +88,7 @@
     "internal.retry_count.impl_logic": 1,
     "response.verify_ui": "[Simulated] Response for stage: verify_ui",
     "graph.retry_target": "impl_setup",
-    "last_response": "[Simulated] Response for stage: verify_ui"
+    "last_response": "[Simulated] Response for stage: impl_integration"
   },
   "logs": [],
   "node_outcomes": {
@@ -107,34 +112,24 @@
       "notes": "[Simulated] impl_setup",
       "duration_ms": 0
     },
-    "verify_setup": {
-      "status": "success",
-      "context_updates": {
-        "last_response": "[Simulated] Response for stage: verify_setup",
-        "last_stage": "verify_setup",
-        "response.verify_setup": "[Simulated] Response for stage: verify_setup"
-      },
-      "notes": "[Simulated] verify_setup",
-      "duration_ms": 0
-    },
     "check_setup": {
       "status": "success",
       "notes": "[Simulated] check_setup",
       "duration_ms": 0
     },
-    "verify_data": {
-      "status": "success",
-      "context_updates": {
-        "response.verify_data": "[Simulated] Response for stage: verify_data",
-        "last_response": "[Simulated] Response for stage: verify_data",
-        "last_stage": "verify_data"
-      },
-      "notes": "[Simulated] verify_data",
-      "duration_ms": 0
-    },
     "check_data": {
       "status": "success",
       "notes": "[Simulated] check_data",
+      "duration_ms": 0
+    },
+    "impl_integration": {
+      "status": "success",
+      "context_updates": {
+        "last_response": "[Simulated] Response for stage: impl_integration",
+        "last_stage": "impl_integration",
+        "response.impl_integration": "[Simulated] Response for stage: impl_integration"
+      },
+      "notes": "[Simulated] impl_integration",
       "duration_ms": 0
     },
     "impl_data": {
@@ -150,6 +145,31 @@
     "check_ui": {
       "status": "success",
       "notes": "[Simulated] check_ui",
+      "duration_ms": 0
+    },
+    "check_logic": {
+      "status": "success",
+      "notes": "[Simulated] check_logic",
+      "duration_ms": 0
+    },
+    "verify_setup": {
+      "status": "success",
+      "context_updates": {
+        "last_response": "[Simulated] Response for stage: verify_setup",
+        "last_stage": "verify_setup",
+        "response.verify_setup": "[Simulated] Response for stage: verify_setup"
+      },
+      "notes": "[Simulated] verify_setup",
+      "duration_ms": 0
+    },
+    "verify_data": {
+      "status": "success",
+      "context_updates": {
+        "response.verify_data": "[Simulated] Response for stage: verify_data",
+        "last_response": "[Simulated] Response for stage: verify_data",
+        "last_stage": "verify_data"
+      },
+      "notes": "[Simulated] verify_data",
       "duration_ms": 0
     },
     "expand_spec": {
@@ -170,11 +190,6 @@
         "last_stage": "impl_logic"
       },
       "notes": "[Simulated] impl_logic",
-      "duration_ms": 0
-    },
-    "check_logic": {
-      "status": "success",
-      "notes": "[Simulated] check_logic",
       "duration_ms": 0
     },
     "impl_ui": {
@@ -203,20 +218,21 @@
       "duration_ms": 0
     }
   },
-  "next_node_id": "impl_integration",
+  "next_node_id": "verify_integration",
   "node_visits": {
+    "check_logic": 1,
+    "verify_setup": 1,
+    "impl_data": 1,
     "check_setup": 1,
     "expand_spec": 1,
     "verify_logic": 1,
     "impl_setup": 1,
     "verify_data": 1,
-    "verify_setup": 1,
     "check_data": 1,
-    "check_logic": 1,
-    "impl_data": 1,
-    "impl_ui": 1,
     "verify_ui": 1,
     "check_ui": 1,
+    "impl_integration": 1,
+    "impl_ui": 1,
     "impl_logic": 1,
     "start": 1
   }
