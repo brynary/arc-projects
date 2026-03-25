@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-03-25T19:36:08.450174Z",
-  "current_node": "impl_integration",
+  "timestamp": "2026-03-25T19:36:08.508001Z",
+  "current_node": "verify_integration",
   "completed_nodes": [
     "start",
     "expand_spec",
@@ -16,7 +16,8 @@
     "impl_ui",
     "verify_ui",
     "check_ui",
-    "impl_integration"
+    "impl_integration",
+    "verify_integration"
   ],
   "node_retries": {
     "verify_ui": 1,
@@ -30,6 +31,7 @@
     "impl_ui": 1,
     "impl_data": 1,
     "check_data": 1,
+    "verify_integration": 1,
     "verify_setup": 1,
     "expand_spec": 1,
     "check_ui": 1,
@@ -38,7 +40,7 @@
   "context_values": {
     "graph.default_max_retry": "3",
     "internal.fidelity": "compact",
-    "internal.thread_id": "check_ui",
+    "internal.thread_id": "verify",
     "internal.run_id": "01KMK7YG83SMY3HMQ5M3KGHCHE",
     "outcome": "success",
     "response.expand_spec": "[Simulated] Response for stage: expand_spec",
@@ -52,10 +54,11 @@
     "internal.retry_count.check_data": 1,
     "thread.hard.current_node": "impl_ui",
     "response.impl_integration": "[Simulated] Response for stage: impl_integration",
-    "last_stage": "impl_integration",
-    "thread.verify.current_node": "verify_ui",
+    "last_stage": "verify_integration",
+    "thread.verify.current_node": "verify_integration",
     "response.impl_data": "[Simulated] Response for stage: impl_data",
-    "current_node": "impl_integration",
+    "response.verify_integration": "[Simulated] Response for stage: verify_integration",
+    "current_node": "verify_integration",
     "internal.retry_count.check_logic": 1,
     "internal.retry_count.check_setup": 1,
     "graph.rankdir": "LR",
@@ -68,7 +71,7 @@
     "response.impl_ui": "[Simulated] Response for stage: impl_ui",
     "internal.retry_count.check_ui": 1,
     "failure_class": "",
-    "current.preamble": "Goal: Build a terminal-based solitaire (Klondike) game in Python\n\n## Completed stages\n- **expand_spec**: success\n- **impl_setup**: success\n- **verify_setup**: success\n- **check_setup**: success\n- **impl_data**: success\n- **verify_data**: success\n- **check_data**: success\n- **impl_logic**: success\n- **verify_logic**: success\n- **check_logic**: success\n- **impl_ui**: success\n- **verify_ui**: success\n- **check_ui**: success\n",
+    "current.preamble": "Goal: Build a terminal-based solitaire (Klondike) game in Python\n\n## Completed stages\n- **expand_spec**: success\n- **impl_setup**: success\n- **verify_setup**: success\n- **check_setup**: success\n- **impl_data**: success\n- **verify_data**: success\n- **check_data**: success\n- **impl_logic**: success\n- **verify_logic**: success\n- **check_logic**: success\n- **impl_ui**: success\n- **verify_ui**: success\n- **check_ui**: success\n- **impl_integration**: success\n",
     "graph.goal": "Build a terminal-based solitaire (Klondike) game in Python",
     "thread.verify_data.current_node": "check_data",
     "thread.start.current_node": "expand_spec",
@@ -86,9 +89,10 @@
     "thread.check_setup.current_node": "impl_data",
     "response.impl_logic": "[Simulated] Response for stage: impl_logic",
     "internal.retry_count.impl_logic": 1,
+    "internal.retry_count.verify_integration": 1,
     "response.verify_ui": "[Simulated] Response for stage: verify_ui",
     "graph.retry_target": "impl_setup",
-    "last_response": "[Simulated] Response for stage: impl_integration"
+    "last_response": "[Simulated] Response for stage: verify_integration"
   },
   "logs": [],
   "node_outcomes": {
@@ -150,6 +154,16 @@
     "check_logic": {
       "status": "success",
       "notes": "[Simulated] check_logic",
+      "duration_ms": 0
+    },
+    "verify_integration": {
+      "status": "success",
+      "context_updates": {
+        "last_stage": "verify_integration",
+        "last_response": "[Simulated] Response for stage: verify_integration",
+        "response.verify_integration": "[Simulated] Response for stage: verify_integration"
+      },
+      "notes": "[Simulated] verify_integration",
       "duration_ms": 0
     },
     "verify_setup": {
@@ -218,11 +232,12 @@
       "duration_ms": 0
     }
   },
-  "next_node_id": "verify_integration",
+  "next_node_id": "check_integration",
   "node_visits": {
     "check_logic": 1,
     "verify_setup": 1,
     "impl_data": 1,
+    "verify_integration": 1,
     "check_setup": 1,
     "expand_spec": 1,
     "verify_logic": 1,
