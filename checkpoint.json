@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-03-25T20:35:01.135055Z",
-  "current_node": "verify_logic",
+  "timestamp": "2026-03-25T20:35:01.190525Z",
+  "current_node": "check_logic",
   "completed_nodes": [
     "start",
     "expand_spec",
@@ -11,7 +11,8 @@
     "verify_data",
     "check_data",
     "impl_logic",
-    "verify_logic"
+    "verify_logic",
+    "check_logic"
   ],
   "node_retries": {
     "start": 1,
@@ -23,6 +24,7 @@
     "impl_setup": 1,
     "expand_spec": 1,
     "verify_setup": 1,
+    "check_logic": 1,
     "check_data": 1
   },
   "context_values": {
@@ -35,7 +37,7 @@
     "response.verify_data": "[Simulated] Response for stage: verify_data",
     "thread.hard.current_node": "impl_logic",
     "internal.retry_count.verify_setup": 1,
-    "internal.thread_id": "verify",
+    "internal.thread_id": "verify_logic",
     "internal.node_visit_count": 1,
     "failure_class": "",
     "internal.retry_count.verify_logic": 1,
@@ -50,9 +52,11 @@
     "failure_signature": "",
     "internal.retry_count.check_setup": 1,
     "response.impl_data": "[Simulated] Response for stage: impl_data",
+    "internal.retry_count.check_logic": 1,
     "internal.retry_count.impl_setup": 1,
-    "current_node": "verify_logic",
+    "current_node": "check_logic",
     "internal.retry_count.check_data": 1,
+    "thread.verify_logic.current_node": "check_logic",
     "response.expand_spec": "[Simulated] Response for stage: expand_spec",
     "graph.fallback_retry_target": "impl_logic",
     "internal.retry_count.impl_logic": 1,
@@ -64,7 +68,7 @@
     "internal.retry_count.impl_data": 1,
     "response.impl_logic": "[Simulated] Response for stage: impl_logic",
     "graph.rankdir": "LR",
-    "current.preamble": "Goal: Build a terminal-based solitaire (Klondike) game in Python\n\n## Completed stages\n- **expand_spec**: success\n- **impl_setup**: success\n- **verify_setup**: success\n- **check_setup**: success\n- **impl_data**: success\n- **verify_data**: success\n- **check_data**: success\n- **impl_logic**: success\n",
+    "current.preamble": "Goal: Build a terminal-based solitaire (Klondike) game in Python\n\n## Completed stages\n- **expand_spec**: success\n- **impl_setup**: success\n- **verify_setup**: success\n- **check_setup**: success\n- **impl_data**: success\n- **verify_data**: success\n- **check_data**: success\n- **impl_logic**: success\n- **verify_logic**: success\n",
     "response.verify_setup": "[Simulated] Response for stage: verify_setup",
     "internal.retry_count.verify_data": 1,
     "thread.start.current_node": "expand_spec"
@@ -84,6 +88,11 @@
     "start": {
       "status": "success",
       "notes": "[Simulated] start",
+      "duration_ms": 0
+    },
+    "check_logic": {
+      "status": "success",
+      "notes": "[Simulated] check_logic",
       "duration_ms": 0
     },
     "verify_data": {
@@ -157,7 +166,7 @@
       "duration_ms": 0
     }
   },
-  "next_node_id": "check_logic",
+  "next_node_id": "impl_ui",
   "node_visits": {
     "impl_setup": 1,
     "verify_data": 1,
@@ -168,6 +177,7 @@
     "start": 1,
     "check_setup": 1,
     "verify_logic": 1,
-    "verify_setup": 1
+    "verify_setup": 1,
+    "check_logic": 1
   }
 }
