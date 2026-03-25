@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-03-25T19:35:51.623629Z",
-  "current_node": "verify_data",
+  "timestamp": "2026-03-25T19:35:51.740379Z",
+  "current_node": "check_data",
   "completed_nodes": [
     "start",
     "expand_spec",
@@ -8,21 +8,24 @@
     "verify_setup",
     "check_setup",
     "impl_data",
-    "verify_data"
+    "verify_data",
+    "check_data"
   ],
   "node_retries": {
     "verify_setup": 1,
     "impl_setup": 1,
     "expand_spec": 1,
-    "check_setup": 1,
+    "check_data": 1,
     "impl_data": 1,
     "verify_data": 1,
+    "check_setup": 1,
     "start": 1
   },
   "context_values": {
     "failure_class": "",
     "internal.node_visit_count": 1,
     "graph.fallback_retry_target": "impl_logic",
+    "internal.retry_count.check_data": 1,
     "response.impl_setup": "[Simulated] Response for stage: impl_setup",
     "graph.model_stylesheet": "\n            *       { llm_model: claude-sonnet; llm_provider: anthropic; }\n            .hard   { llm_model: claude-opus;   llm_provider: anthropic; }\n            .verify { llm_model: claude-haiku;  llm_provider: anthropic; }\n        ",
     "graph.goal": "Build a terminal-based solitaire (Klondike) game in Python",
@@ -39,15 +42,16 @@
     "graph.retry_target": "impl_setup",
     "internal.retry_count.start": 1,
     "internal.retry_count.verify_data": 1,
-    "current.preamble": "Goal: Build a terminal-based solitaire (Klondike) game in Python\n\n## Completed stages\n- **expand_spec**: success\n- **impl_setup**: success\n- **verify_setup**: success\n- **check_setup**: success\n- **impl_data**: success\n",
+    "current.preamble": "Goal: Build a terminal-based solitaire (Klondike) game in Python\n\n## Completed stages\n- **expand_spec**: success\n- **impl_setup**: success\n- **verify_setup**: success\n- **check_setup**: success\n- **impl_data**: success\n- **verify_data**: success\n",
+    "thread.verify_data.current_node": "check_data",
     "internal.fidelity": "compact",
     "internal.retry_count.verify_setup": 1,
     "internal.work_dir": "/private/var/folders/nm/bd2dwzy52t1ckn3tklsfmy1c0000gn/T/fabro-dry-run/01KMK7Y0CYYD4Q6F6XWSEYGJQ2/worktree",
     "response.impl_data": "[Simulated] Response for stage: impl_data",
-    "current_node": "verify_data",
+    "current_node": "check_data",
     "internal.retry_count.impl_setup": 1,
     "internal.retry_count.check_setup": 1,
-    "internal.thread_id": "verify",
+    "internal.thread_id": "verify_data",
     "last_stage": "verify_data",
     "thread.start.current_node": "expand_spec",
     "response.verify_data": "[Simulated] Response for stage: verify_data",
@@ -58,16 +62,6 @@
   },
   "logs": [],
   "node_outcomes": {
-    "verify_data": {
-      "status": "success",
-      "context_updates": {
-        "last_response": "[Simulated] Response for stage: verify_data",
-        "last_stage": "verify_data",
-        "response.verify_data": "[Simulated] Response for stage: verify_data"
-      },
-      "notes": "[Simulated] verify_data",
-      "duration_ms": 0
-    },
     "impl_setup": {
       "status": "success",
       "context_updates": {
@@ -83,6 +77,16 @@
       "notes": "[Simulated] start",
       "duration_ms": 0
     },
+    "verify_data": {
+      "status": "success",
+      "context_updates": {
+        "last_response": "[Simulated] Response for stage: verify_data",
+        "last_stage": "verify_data",
+        "response.verify_data": "[Simulated] Response for stage: verify_data"
+      },
+      "notes": "[Simulated] verify_data",
+      "duration_ms": 0
+    },
     "expand_spec": {
       "status": "success",
       "context_updates": {
@@ -93,11 +97,6 @@
       "notes": "[Simulated] expand_spec",
       "duration_ms": 0
     },
-    "check_setup": {
-      "status": "success",
-      "notes": "[Simulated] check_setup",
-      "duration_ms": 0
-    },
     "verify_setup": {
       "status": "success",
       "context_updates": {
@@ -106,6 +105,16 @@
         "response.verify_setup": "[Simulated] Response for stage: verify_setup"
       },
       "notes": "[Simulated] verify_setup",
+      "duration_ms": 0
+    },
+    "check_data": {
+      "status": "success",
+      "notes": "[Simulated] check_data",
+      "duration_ms": 0
+    },
+    "check_setup": {
+      "status": "success",
+      "notes": "[Simulated] check_setup",
       "duration_ms": 0
     },
     "impl_data": {
@@ -119,11 +128,12 @@
       "duration_ms": 0
     }
   },
-  "next_node_id": "check_data",
+  "next_node_id": "impl_logic",
   "node_visits": {
     "expand_spec": 1,
     "start": 1,
     "check_setup": 1,
+    "check_data": 1,
     "verify_data": 1,
     "verify_setup": 1,
     "impl_setup": 1,
